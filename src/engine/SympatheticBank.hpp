@@ -10,6 +10,8 @@ namespace pianocraft {
 class SympatheticBank {
 public:
     void prepare(double sampleRate, const InstrumentModel& model);
+    // Follows the strings' current tuning and decay without silencing what is ringing.
+    void update(double sampleRate, const InstrumentModel& model);
     void reset();
     std::array<double, 3> process(const std::array<double, 3>& input,
                                   const std::array<double, instrumentKeyCount>& undamped,

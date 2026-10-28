@@ -10,8 +10,8 @@ namespace {
 
 constexpr double pi = 3.141592653589793238462643383279502884;
 
-void setPole(ModeCoefficients& mode, const Voicing& voicing, double sampleRate) {
-    const double frequency = mode.baseFrequency + mode.beatHz * voicing.detune;
+void setPole(ModeCoefficients& mode, const Voicing& voicing, double tuning, double sampleRate) {
+    const double frequency = (mode.baseFrequency + mode.beatHz * voicing.detune) * tuning;
     const double decaySeconds = mode.baseDecaySeconds * voicing.sustain;
     const double releaseSeconds = mode.baseReleaseSeconds * voicing.release;
     const double omega = 2.0 * pi * frequency / sampleRate;
@@ -48,7 +48,9 @@ InstrumentModel::InstrumentModel(double sampleRate) {
 
     static_assert(hasMeasuredCalibration);
     static_assert(measuredCalibration.size() == instrumentKeyCount);
+    // Headroom for tuning up to +8% (466 Hz master tune with double stretch) below Nyquist.
     const double maximumFrequency = std::min(18000.0, sampleRate * 0.45);
+    measuredA4_ = measuredCalibration[69 - 21].fundamental;
     for (std::size_t index = 0; index < keys_.size(); ++index) {
         auto& key = keys_[index];
         const auto& calibration = measuredCalibration[index];
@@ -66,6 +68,7 @@ InstrumentModel::InstrumentModel(double sampleRate) {
         }
         key.midi = static_cast<int>(index) + 21;
         key.fundamental = calibration.fundamental;
+        key.stretchOctaves = std::log2(calibration.fundamental / measuredA4_) - (key.midi - 69) / 12.0;
         key.inharmonicity = calibration.inharmonicity;
         key.strikePosition = std::clamp(0.115 + (key.midi - 60) * 0.00045, 0.075, 0.145);
         key.hammerStiffness = calibration.hammerStiffness;
@@ -217,10 +220,15 @@ InstrumentModel::InstrumentModel(double sampleRate) {
 }
 
 void InstrumentModel::setVoicing(const Voicing& voicing) {
-    for (auto& key : keys_) {
+    for (std::size_t keyIndex = 0; keyIndex < keys_.size(); ++keyIndex) {
+        auto& key = keys_[keyIndex];
+        // Every partial of a key moves together, so inharmonicity is kept.
+        const double tuning = std::exp2((voicing.stretch - 1.0) * key.stretchOctaves) *
+            voicing.masterTune / measuredA4_;
+        key.fundamental = measuredCalibration[keyIndex].fundamental * tuning;
         for (std::size_t index = 0; index < key.modeCount; ++index) {
             auto& mode = key.modes[index];
-            setPole(mode, voicing, sampleRate_);
+            setPole(mode, voicing, tuning, sampleRate_);
             mode.excitation = mode.baseExcitation * (mode.secondary ? voicing.aftersound : 1.0);
         }
     }

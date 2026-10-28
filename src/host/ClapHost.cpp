@@ -43,7 +43,7 @@ constexpr clap_id pid(ParameterId id) noexcept
 }
 
 // Listed by group; hosts identify parameters by id, so the order is free.
-constexpr std::array<ParameterSpec, 13> parameterSpecs{{
+constexpr std::array<ParameterSpec, 15> parameterSpecs{{
     {pid(ParameterId::hammerHardness), "Hammer Hardness", "Hammer", 0.25, 2.0, 1.0, continuousFlags},
     {pid(ParameterId::dynamicRange), "Dynamic Range", "Hammer", 0.0, 2.0, 1.0, continuousFlags},
     {pid(ParameterId::velocityBrightness), "Velocity Brightness", "Hammer", 0.0, 2.0, 1.0, continuousFlags},
@@ -53,6 +53,8 @@ constexpr std::array<ParameterSpec, 13> parameterSpecs{{
     {pid(ParameterId::unisonDetune), "Unison Detune", "Strings", 0.0, 3.0, 1.0, continuousFlags},
     {pid(ParameterId::aftersound), "Aftersound", "Strings", 0.0, 2.0, 1.0, continuousFlags},
     {pid(ParameterId::sympatheticLevel), "Sympathetic Level", "Strings", 0.0, 1.0, 0.35, continuousFlags},
+    {pid(ParameterId::masterTune), "Master Tune", "Tuning", 415.0, 466.0, 440.0, continuousFlags},
+    {pid(ParameterId::stretch), "Stretch", "Tuning", 0.0, 2.0, 1.0, continuousFlags},
     {pid(ParameterId::bodyLevel), "Body Level", "Mix", 0.0, 2.0, 1.0, continuousFlags},
     {pid(ParameterId::micPosition), "Mic Position", "Mix", 0.0, 2.0, 0.0, choiceFlags},
     {pid(ParameterId::stereoWidth), "Stereo Width", "Mix", 0.0, 2.0, 1.0, continuousFlags},
@@ -71,7 +73,8 @@ constexpr std::array<RemotePage, 2> remotePages{{
               pid(ParameterId::stereoWidth), pid(ParameterId::outputGain)}},
     {"Voicing", {pid(ParameterId::unisonDetune), pid(ParameterId::aftersound),
                  pid(ParameterId::damperRelease), pid(ParameterId::hammerNoise),
-                 pid(ParameterId::micPosition), CLAP_INVALID_ID, CLAP_INVALID_ID, CLAP_INVALID_ID}},
+                 pid(ParameterId::micPosition), pid(ParameterId::masterTune), pid(ParameterId::stretch),
+                 CLAP_INVALID_ID}},
 }};
 
 constexpr std::size_t invalidParameterIndex = parameterSpecs.size();

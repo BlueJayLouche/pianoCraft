@@ -17,7 +17,7 @@ namespace {
 // More slots than keys: a restrike reuses its key's voice, so even a fully pedalled keyboard
 // never forces an audible voice to be cut.
 constexpr std::size_t voiceCount = 96;
-constexpr std::size_t parameterCount = 14;
+constexpr std::size_t parameterCount = 16;
 
 std::size_t parameterIndex(ParameterId id) {
     return static_cast<std::size_t>(id) < parameterCount ? static_cast<std::size_t>(id) : 0;
@@ -136,15 +136,23 @@ struct PianoEngine::Impl {
                         ParameterId::hammerNoise}) {
             parameters[parameterIndex(id)] = 1.0;
         }
+        parameters[parameterIndex(ParameterId::masterTune)] = 440.0;
+        parameters[parameterIndex(ParameterId::stretch)] = 1.0;
     }
 
     // ponytail: recomputed on the audio thread at the next render() after a change, at most once
     // per block: ~65 us, worst ~200 us at 48 kHz. Move off-thread if fast voicing automation glitches.
     void applyVoicing() {
-        model->setVoicing({parameters[parameterIndex(ParameterId::sustainLength)],
-                           parameters[parameterIndex(ParameterId::damperRelease)],
-                           parameters[parameterIndex(ParameterId::unisonDetune)],
-                           parameters[parameterIndex(ParameterId::aftersound)]});
+        const auto value = [this](ParameterId id) { return parameters[parameterIndex(id)]; };
+        Voicing voicing;
+        voicing.sustain = value(ParameterId::sustainLength);
+        voicing.release = value(ParameterId::damperRelease);
+        voicing.detune = value(ParameterId::unisonDetune);
+        voicing.aftersound = value(ParameterId::aftersound);
+        voicing.masterTune = value(ParameterId::masterTune);
+        voicing.stretch = value(ParameterId::stretch);
+        model->setVoicing(voicing);
+        sympathetic.update(sampleRate, *model);
         voicingDirty = false;
     }
 
@@ -485,9 +493,16 @@ void PianoEngine::setParameter(ParameterId id, double value) {
         case ParameterId::unisonDetune:
             value = std::clamp(value, 0.0, 3.0);
             break;
+        case ParameterId::masterTune:
+            value = std::clamp(value, 415.0, 466.0);
+            break;
+        case ParameterId::stretch:
+            value = std::clamp(value, 0.0, 2.0);
+            break;
     }
     const bool voicing = id == ParameterId::sustainLength || id == ParameterId::damperRelease ||
-        id == ParameterId::unisonDetune || id == ParameterId::aftersound;
+        id == ParameterId::unisonDetune || id == ParameterId::aftersound ||
+        id == ParameterId::masterTune || id == ParameterId::stretch;
     if (voicing && value != impl_->parameters[parameterIndex(id)]) {
         impl_->voicingDirty = true;
     }

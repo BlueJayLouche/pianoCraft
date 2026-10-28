@@ -466,6 +466,50 @@ void pedalsAreContinuous() {
     require(trebleShare(soft) < trebleShare(normal) * 0.8, "Soft pedal is not darker");
 }
 
+// Master Tune sets A4 exactly; Stretch 0 is equal temperament and 2 doubles the recorded stretch.
+void tuningControls() {
+    pianocraft::InstrumentModel model(48000.0);
+    require(std::abs(model.key(69).fundamental - 440.0) < 1.0e-9, "Default A4 is not 440 Hz");
+    const double partial = model.key(69).modes[0].frequency;
+
+    pianocraft::Voicing voicing;
+    voicing.masterTune = 415.0;
+    voicing.stretch = 0.0;
+    model.setVoicing(voicing);
+    for (int key = 21; key <= 108; ++key) {
+        const double expected = 415.0 * std::exp2((key - 69) / 12.0);
+        require(std::abs(model.key(key).fundamental / expected - 1.0) < 1.0e-9,
+                "Stretch 0 is not equal temperament at key " + std::to_string(key));
+    }
+    require(std::abs(model.key(69).modes[0].frequency / partial - 415.0 / 440.0) < 1.0e-9,
+            "Partials do not follow the tuning");
+
+    const auto cents = [&](int key, double stretch) {
+        voicing.masterTune = 440.0;
+        voicing.stretch = stretch;
+        model.setVoicing(voicing);
+        return 1200.0 * std::log2(model.key(key).fundamental / (440.0 * std::exp2((key - 69) / 12.0)));
+    };
+    require(cents(108, 1.0) > 20.0 && std::abs(cents(108, 2.0) - 2.0 * cents(108, 1.0)) < 1.0e-6,
+            "Stretch 2 does not double the recorded stretch");
+
+    // The engine plays it: A4's period moves from 48000/440 to 48000/415 samples.
+    const auto periodicity = [](double tune, int lag) {
+        pianocraft::PianoEngine engine;
+        engine.prepare(48000.0);
+        engine.setParameter(pianocraft::ParameterId::masterTune, tune);
+        engine.noteOn(note(69), 0.6);
+        const auto output = render(engine, 24000, 64);
+        double sum = 0.0;
+        for (std::size_t index = 9600; index + 2 * lag < output.size(); index += 2) {
+            sum += static_cast<double>(output[index]) * output[index + 2 * lag];
+        }
+        return sum;
+    };
+    require(periodicity(415.0, 116) > periodicity(415.0, 109) && periodicity(440.0, 109) > periodicity(440.0, 116),
+            "Master Tune does not move the played pitch");
+}
+
 int main() {
     try {
         modelIsStable();
@@ -482,6 +526,7 @@ int main() {
         louderIsBrighter();
         voicingControls();
         pedalsAreContinuous();
+        tuningControls();
         std::cout << "All engine tests passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -20,6 +20,8 @@ enum class ParameterId : std::uint32_t {
     unisonDetune = 11,
     aftersound = 12,
     hammerNoise = 13,
+    masterTune = 14,
+    stretch = 15,
 };
 
 struct NoteAddress {

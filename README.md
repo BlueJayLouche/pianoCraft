@@ -50,13 +50,18 @@ cmake --install build --config Release
 ```
 
 Rescan plug-ins in Bitwig Studio and insert PianoCraft on an instrument track.
-There is no custom editor. Bitwig shows the parameters in three groups (Hammer,
-Strings, Mix) and maps two remote-control pages onto its device knobs:
+There is no custom editor. Bitwig shows the parameters in four groups (Hammer,
+Strings, Tuning, Mix) and maps two remote-control pages onto its device knobs:
 
 - **Main:** Hammer Hardness, Dynamic Range (pp-ff loudness spread), Velocity
   Brightness, Sustain Length, Sympathetic Level, Body Level, Stereo Width, Output Gain.
 - **Voicing:** Unison Detune (beat speed; 0 is perfectly in tune), Aftersound
-  (the long second-stage tail), Damper Release, Hammer Noise, Mic Position.
+  (the long second-stage tail), Damper Release, Hammer Noise, Mic Position,
+  Master Tune (A4 in Hz), Stretch (1 is the recorded piano's octave stretch,
+  0 equal temperament, 2 double).
+
+The recorded piano sat at A4 = 439.02 Hz; Master Tune puts A4 exactly where it
+says, so the default plays 3.9 cents above the recordings.
 
 The sustain pedal (CC64) is continuous: dampers start lifting at a quarter of
 the travel and are fully off at three quarters, so a continuous pedal can
@@ -65,7 +70,8 @@ pedals behave as before. CC67 is the soft pedal: like an upright's, it shortens
 the hammer throw, so notes come out softer and darker.
 
 At 1.0 every voicing control is the calibrated piano. Sustain Length, Damper
-Release, Unison Detune and Aftersound recompute the string model when changed,
+Release, Unison Detune, Aftersound and the tuning controls recompute the string
+model (and the sympathetic strings with it) when changed,
 so they suit setting by hand more than fast automation.
 
 ## Calibration and provenance

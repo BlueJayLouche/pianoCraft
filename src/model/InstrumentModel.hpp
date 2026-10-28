@@ -42,6 +42,8 @@ struct KeyModel {
     double hammerStiffnessScale = 1.0;
     double outputGain = 1.0;
     double sympatheticDrive = 1.0;
+    // Measured deviation from equal temperament relative to the piano's own A4, in octaves.
+    double stretchOctaves = 0.0;
     // Butterworth high-pass at 0.7 f0 on the voice output, as b0, b1, b2, a1, a2.
     std::array<double, 5> bridgeHighpass{1.0, 0.0, 0.0, 0.0, 0.0};
     double leftGain = 0.707;
@@ -60,6 +62,8 @@ struct Voicing {
     double release = 1.0;    // damper release times
     double detune = 1.0;     // unison partner beat rates
     double aftersound = 1.0; // unison partner level: the long second-stage tail
+    double masterTune = 440.0; // A4 in Hz
+    double stretch = 1.0;    // 1 keeps the recorded piano's stretch, 0 is equal temperament
 };
 
 class InstrumentModel {
@@ -76,6 +80,7 @@ public:
 private:
     std::array<KeyModel, instrumentKeyCount> keys_{};
     double sampleRate_ = 48000.0;
+    double measuredA4_ = 440.0;
     MicPosition micPosition_ = MicPosition::spacedPair;
 };
 

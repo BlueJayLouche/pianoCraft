@@ -68,7 +68,7 @@ int main(int argc, char** argv) {
     check(!load(blob({{1, 0.5}, {1, 0.5}})), "duplicate parameter rejected");
     check(!load(blob({{1, 0.5}}, true)), "trailing byte rejected");
     std::vector<std::pair<uint32_t,double>> all;
-    for (uint32_t id = 1; id <= 14; ++id) all.push_back({id, 1.0});
+    for (uint32_t id = 1; id <= params->count(plugin) + 1; ++id) all.push_back({id, 1.0});
     check(!load(blob(all)), "too many records rejected");
     check(!load(blob({{99, 1.0}})), "unknown parameter rejected");
     check(!load(blob({{5, 7.0}})), "out-of-range mic rejected");
