@@ -10,8 +10,10 @@ namespace {
 
 constexpr double pi = 3.141592653589793238462643383279502884;
 
-void setPole(ModeCoefficients& mode, double frequency, double decaySeconds,
-             double releaseSeconds, double sampleRate) {
+void setPole(ModeCoefficients& mode, const Voicing& voicing, double sampleRate) {
+    const double frequency = mode.baseFrequency + mode.beatHz * voicing.detune;
+    const double decaySeconds = mode.baseDecaySeconds * voicing.sustain;
+    const double releaseSeconds = mode.baseReleaseSeconds * voicing.release;
     const double omega = 2.0 * pi * frequency / sampleRate;
     const double sustainRadius = std::exp(-6.907755278982138 / (decaySeconds * sampleRate));
     const double releaseRadius = std::exp(-6.907755278982138 / (releaseSeconds * sampleRate));
@@ -120,10 +122,12 @@ InstrumentModel::InstrumentModel(double sampleRate) {
 
         const auto addPrimary = [&](double k, double frequency) {
             auto& mode = key.modes[key.modeCount++];
-            setPole(mode, frequency, promptDecaySeconds(frequency), releaseSeconds(k), sampleRate);
+            mode.baseFrequency = frequency;
+            mode.baseDecaySeconds = promptDecaySeconds(frequency);
+            mode.baseReleaseSeconds = releaseSeconds(k);
             const double strikeWeight = std::sin(k * pi * key.strikePosition);
             const double finiteHammerWidth = std::exp(-0.00045 * k * k);
-            mode.excitation = normalization * strikeWeight * finiteHammerWidth;
+            mode.baseExcitation = normalization * strikeWeight * finiteHammerWidth;
             mode.output = 1.0 / (1.0 + 0.018 * k);
             mode.secondary = false;
             ++key.primaryModeCount;
@@ -169,9 +173,10 @@ InstrumentModel::InstrumentModel(double sampleRate) {
             }
             const auto& primary = key.modes[primaryIndices[partialIndex]];
             auto& mode = key.modes[key.modeCount++];
-            setPole(mode, calibrated.secondaryFrequency, calibrated.secondaryDecaySeconds,
-                    primary.decaySeconds * 0.12, sampleRate);
-            mode.excitation = primary.excitation * calibrated.secondaryGain;
+            mode.baseFrequency = calibrated.secondaryFrequency;
+            mode.baseDecaySeconds = calibrated.secondaryDecaySeconds;
+            mode.baseReleaseSeconds = primary.baseDecaySeconds * 0.12;
+            mode.baseExcitation = primary.baseExcitation * calibrated.secondaryGain;
             mode.output = primary.output * 0.9;
             mode.secondary = true;
             ++secondaryCount;
@@ -198,19 +203,32 @@ InstrumentModel::InstrumentModel(double sampleRate) {
             const double beatHz = (0.18 + 0.0006 * calibrated.frequency) * (0.6 + 0.8 * spread);
             const auto& primary = key.modes[primaryIndices[partialIndex]];
             auto& mode = key.modes[key.modeCount++];
-            setPole(mode, calibrated.frequency + (spread < 0.5 ? beatHz : -beatHz),
-                    std::max(aftersoundDecaySeconds(calibrated.frequency), primary.decaySeconds),
-                    releaseSeconds(k), sampleRate);
-            mode.excitation = primary.excitation * partnerGain;
+            mode.baseFrequency = calibrated.frequency;
+            mode.beatHz = spread < 0.5 ? beatHz : -beatHz;
+            mode.baseDecaySeconds = std::max(aftersoundDecaySeconds(calibrated.frequency), primary.baseDecaySeconds);
+            mode.baseReleaseSeconds = releaseSeconds(k);
+            mode.baseExcitation = primary.baseExcitation * partnerGain;
             mode.output = primary.output;
             mode.secondary = true;
             ++secondaryCount;
         }
     }
-    setMicPosition(MicPosition::spacedPair);
+    setVoicing(Voicing{});
+}
+
+void InstrumentModel::setVoicing(const Voicing& voicing) {
+    for (auto& key : keys_) {
+        for (std::size_t index = 0; index < key.modeCount; ++index) {
+            auto& mode = key.modes[index];
+            setPole(mode, voicing, sampleRate_);
+            mode.excitation = mode.baseExcitation * (mode.secondary ? voicing.aftersound : 1.0);
+        }
+    }
+    setMicPosition(micPosition_);
 }
 
 void InstrumentModel::setMicPosition(MicPosition position) {
+    micPosition_ = position;
     for (std::size_t index = 0; index < keys_.size(); ++index) {
         auto& key = keys_[index];
         const auto& calibration = measuredCalibration[index];

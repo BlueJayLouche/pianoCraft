@@ -17,7 +17,7 @@ namespace {
 // More slots than keys: a restrike reuses its key's voice, so even a fully pedalled keyboard
 // never forces an audible voice to be cut.
 constexpr std::size_t voiceCount = 96;
-constexpr std::size_t parameterCount = 7;
+constexpr std::size_t parameterCount = 14;
 
 std::size_t parameterIndex(ParameterId id) {
     return static_cast<std::size_t>(id) < parameterCount ? static_cast<std::size_t>(id) : 0;
@@ -116,6 +116,7 @@ struct PianoEngine::Impl {
     double smoothedGain = 0.7;
     double smoothedWidth = 1.0;
     MicPosition micPosition = MicPosition::spacedPair;
+    bool voicingDirty = true;
     // ponytail: three one-pole high-passes at 100 Hz stand in for the soundboard's weak
     // radiation of low fundamentals; replace with a radiation model if the bass needs more.
     static constexpr std::size_t highpassStages = 3;
@@ -131,6 +132,21 @@ struct PianoEngine::Impl {
         parameters[parameterIndex(ParameterId::bodyLevel)] = 1.0;
         parameters[parameterIndex(ParameterId::micPosition)] = 0.0;
         parameters[parameterIndex(ParameterId::stereoWidth)] = 1.0;
+        for (auto id : {ParameterId::dynamicRange, ParameterId::velocityBrightness, ParameterId::sustainLength,
+                        ParameterId::damperRelease, ParameterId::unisonDetune, ParameterId::aftersound,
+                        ParameterId::hammerNoise}) {
+            parameters[parameterIndex(id)] = 1.0;
+        }
+    }
+
+    // ponytail: recomputed on the audio thread at the next render() after a change, at most once
+    // per block: ~65 us, worst ~200 us at 48 kHz. Move off-thread if fast voicing automation glitches.
+    void applyVoicing() {
+        model->setVoicing({parameters[parameterIndex(ParameterId::sustainLength)],
+                           parameters[parameterIndex(ParameterId::damperRelease)],
+                           parameters[parameterIndex(ParameterId::unisonDetune)],
+                           parameters[parameterIndex(ParameterId::aftersound)]});
+        voicingDirty = false;
     }
 
     void applyMicPosition() {
@@ -248,7 +264,13 @@ struct PianoEngine::Impl {
         voice.age = 0;
         const double normalizedVelocity = velocity / referenceVelocity;
         const double referenceGain = 0.18 + 0.82 * std::pow(referenceVelocity, 1.35);
-        voice.velocityGain = referenceGain * std::pow(normalizedVelocity, voice.key->velocityGainExponent) *
+        const auto hammerSpeed = [](double v) { return 0.35 + 2.4 * std::pow(v, 0.85); };
+        // Dynamic Range scales each note's dB distance from mf: the gain law's share directly, and
+        // the hammer speed's own share through a compensating gain.
+        const double dynamics = parameters[parameterIndex(ParameterId::dynamicRange)];
+        voice.velocityGain = referenceGain *
+            std::pow(normalizedVelocity, voice.key->velocityGainExponent * dynamics) *
+            std::pow(hammerSpeed(velocity) / hammerSpeed(referenceVelocity), dynamics - 1.0) *
             voice.key->outputGain;
         // Effective excitation parameters, grid-fitted on octave-band spectra; recordings can't
         // separate mass from stiffness. Lighter, stiffer toward the treble keeps contact near 1-5 ms;
@@ -258,14 +280,15 @@ struct PianoEngine::Impl {
             voice.key->hammerStiffness * voice.key->hammerStiffnessScale *
             std::pow(normalizedVelocity, voice.key->velocityBrightnessExponent);
         voice.hammer.position = voice.displacement - 0.004;
-        voice.hammer.velocity = 0.35 + 2.4 * std::pow(velocity, 0.85);
+        voice.hammer.velocity = hammerSpeed(velocity);
         voice.hammer.mass = 0.012 * std::pow(0.5, registerPosition);
         voice.hammer.active = true;
         // Velocity EQ (the excitation-filter fallback in the research notes): +-8 dB per doubling
         // of velocity above 1 kHz, flat at mf. The hammer alone brightened 7.4 dB too little from
         // pp to ff, and making it stiffen with velocity gave erratic per-note spectra.
         voice.velocityShelf = highShelf(std::min(1000.0, 0.45 * sampleRate),
-                                        8.0 * std::log2(std::max(velocity, 0.01) / referenceVelocity),
+                                        8.0 * parameters[parameterIndex(ParameterId::velocityBrightness)] *
+                                            std::log2(std::max(velocity, 0.01) / referenceVelocity),
                                         sampleRate);
     }
 
@@ -347,7 +370,8 @@ struct PianoEngine::Impl {
         // The impact also knocks the board through the action and frame; scaled by force alone, not
         // by the key level law. Fitted to the recordings' broadband energy 20-100 ms after the
         // strike, which was 8 dB short.
-        const double knock = force * voice.chokeGain * 0.0267;
+        const double knock = force * voice.chokeGain * 0.0267 *
+            parameters[parameterIndex(ParameterId::hammerNoise)];
         const VoiceSample sample{
             radiated(voice, bridge, 0) * gain, radiated(voice, bridgeRight, 1) * gain, bridge * gain, knock};
         voice.level = std::max({std::abs(sample.left), std::abs(sample.right), voice.level * 0.99995});
@@ -368,6 +392,7 @@ void PianoEngine::prepare(double sampleRate) {
     impl_->soundboard.prepare(sampleRate);
     impl_->sympathetic.prepare(sampleRate, *impl_->model);
     impl_->applyMicPosition();
+    impl_->voicingDirty = true;
     impl_->resetVoices();
 }
 
@@ -455,8 +480,24 @@ void PianoEngine::setParameter(ParameterId id, double value) {
             value = std::clamp(std::round(value), 0.0, 2.0);
             break;
         case ParameterId::stereoWidth:
+        case ParameterId::dynamicRange:
+        case ParameterId::velocityBrightness:
+        case ParameterId::aftersound:
+        case ParameterId::hammerNoise:
             value = std::clamp(value, 0.0, 2.0);
             break;
+        case ParameterId::sustainLength:
+        case ParameterId::damperRelease:
+            value = std::clamp(value, 0.25, 4.0);
+            break;
+        case ParameterId::unisonDetune:
+            value = std::clamp(value, 0.0, 3.0);
+            break;
+    }
+    const bool voicing = id == ParameterId::sustainLength || id == ParameterId::damperRelease ||
+        id == ParameterId::unisonDetune || id == ParameterId::aftersound;
+    if (voicing && value != impl_->parameters[parameterIndex(id)]) {
+        impl_->voicingDirty = true;
     }
     impl_->parameters[parameterIndex(id)] = value;
     // Hosts resend every parameter on any change, so only recompute coefficients on a real
@@ -479,6 +520,9 @@ void PianoEngine::render(float* left, float* right, std::uint32_t frameCount) {
     std::fill_n(right, frameCount, 0.0f);
     if (impl_->model == nullptr) {
         return;
+    }
+    if (impl_->voicingDirty) {
+        impl_->applyVoicing();
     }
 
     const double targetGain = impl_->parameters[parameterIndex(ParameterId::outputGain)];

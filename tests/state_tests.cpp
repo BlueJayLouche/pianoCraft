@@ -45,6 +45,17 @@ int main(int argc, char** argv) {
     check(load(blob({{1, 1.3}, {2, 0.8}, {3, 0.6}, {4, 1.5}})), "old 4-parameter state loads");
     check(value(1) == 1.3 && value(2) == 0.8 && value(3) == 0.6 && value(4) == 1.5, "old values restored");
     check(value(5) == 0.0 && value(6) == 1.0, "new parameters default (Spaced Pair, width 1)");
+    check(value(7) == 1.0 && value(9) == 1.0 && value(13) == 1.0, "voicing parameters default to 1");
+    auto* remote = static_cast<const clap_plugin_remote_controls_t*>(plugin->get_extension(plugin, CLAP_EXT_REMOTE_CONTROLS));
+    clap_remote_controls_page_t page{};
+    bool pagesValid = remote != nullptr && remote->count(plugin) == 2;
+    for (uint32_t p = 0; pagesValid && p < 2; ++p) {
+        pagesValid = remote->get(plugin, p, &page);
+        for (clap_id id : page.param_ids) {
+            double v; pagesValid = pagesValid && (id == CLAP_INVALID_ID || params->get_value(plugin, id, &v));
+        }
+    }
+    check(pagesValid, "remote-control pages reference real parameters");
     // Current state round-trips.
     check(load(blob({{1, 0.5}, {2, 1.0}, {3, 0.35}, {4, 1.0}, {5, 2.0}, {6, 0.4}})), "6-parameter state loads");
     Buffer out; clap_ostream_t os{&out, writeFn}; state->save(plugin, &os);
@@ -56,7 +67,10 @@ int main(int argc, char** argv) {
     // Malformed input is rejected.
     check(!load(blob({{1, 0.5}, {1, 0.5}})), "duplicate parameter rejected");
     check(!load(blob({{1, 0.5}}, true)), "trailing byte rejected");
-    check(!load(blob({{1,1},{2,1},{3,0.3},{4,1},{5,0},{6,1},{7,1}})), "too many records rejected");
+    std::vector<std::pair<uint32_t,double>> all;
+    for (uint32_t id = 1; id <= 14; ++id) all.push_back({id, 1.0});
+    check(!load(blob(all)), "too many records rejected");
+    check(!load(blob({{99, 1.0}})), "unknown parameter rejected");
     check(!load(blob({{5, 7.0}})), "out-of-range mic rejected");
     check(!load(blob({})), "zero records rejected");
     plugin->destroy(plugin); entry->deinit();

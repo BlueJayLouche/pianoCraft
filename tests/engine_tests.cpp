@@ -7,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -358,6 +359,75 @@ void louderIsBrighter() {
 
 } // namespace
 
+// Each voicing control moves the sound the way its name says.
+void voicingControls() {
+    using pianocraft::ParameterId;
+    // Returns the RMS of the first 0.5 s and of the following second (released at 0.5 s if asked).
+    const auto play = [](ParameterId id, double value, int key, double velocity, bool release) {
+        pianocraft::PianoEngine engine;
+        engine.prepare(48000.0);
+        engine.setParameter(id, value);
+        engine.noteOn(note(key), velocity);
+        const auto head = render(engine, 24000, 64);
+        if (release) {
+            engine.noteOff(note(key), 0.0);
+        }
+        return std::pair{head, render(engine, 48000, 64)};
+    };
+    const auto dB = [](double a, double b) { return 20.0 * std::log10(a / b); };
+    const auto tail = [&](ParameterId id, double value, int key, bool release) {
+        const auto after = play(id, value, key, 0.6, release).second;
+        return rms(std::vector<float>(after.begin() + 24000, after.end()));  // 0.75-1.5 s
+    };
+    const auto check = [&](const char* name, double measured, double minimum) {
+        require(measured > minimum, std::string(name) + ": " + std::to_string(measured) + " dB");
+    };
+
+    check("Sustain Length 3 vs 1, held tail", dB(tail(ParameterId::sustainLength, 3.0, 72, false),
+                                                tail(ParameterId::sustainLength, 1.0, 72, false)), 3.0);
+    check("Damper Release 4 vs 1, released tail", dB(tail(ParameterId::damperRelease, 4.0, 60, true),
+                                                    tail(ParameterId::damperRelease, 1.0, 60, true)), 6.0);
+    // The partner beats against the prompt sound early on; its own tail dominates after ~2 s.
+    const auto lateTail = [](double aftersound) {
+        pianocraft::PianoEngine engine;
+        engine.prepare(48000.0);
+        engine.setParameter(ParameterId::aftersound, aftersound);
+        engine.noteOn(note(84), 0.6);
+        render(engine, 96000, 64);
+        return rms(render(engine, 48000, 64));
+    };
+    check("Aftersound 1 vs 0, treble tail at 2-3 s", dB(lateTail(1.0), lateTail(0.0)), 6.0);
+
+    const auto spread = [&](double dynamics) {
+        return dB(rms(play(ParameterId::dynamicRange, dynamics, 60, 0.95, false).first),
+                  rms(play(ParameterId::dynamicRange, dynamics, 60, 0.3, false).first));
+    };
+    const double normal = spread(1.0);
+    check("Dynamic Range 2 widens ff-pp", spread(2.0) - 1.6 * normal, 0.0);
+    check("Dynamic Range 0 narrows ff-pp", 0.4 * normal - spread(0.0), 0.0);
+
+    const auto brightening = [&](double amount) {
+        return 10.0 * std::log10(trebleShare(play(ParameterId::velocityBrightness, amount, 60, 0.95, false).first) /
+                                 trebleShare(play(ParameterId::velocityBrightness, amount, 60, 0.3, false).first));
+    };
+    check("Velocity Brightness 2 vs 0, ff-pp brightening", brightening(2.0) - brightening(0.0), 6.0);
+
+    // Detune and noise have no simple level signature; they must change the sound audibly.
+    const auto changes = [&](ParameterId id, double low, double high, int key) {
+        const auto a = play(id, low, key, 0.6, false).second;
+        const auto b = play(id, high, key, 0.6, false).second;
+        std::vector<float> difference(a.size());
+        std::transform(a.begin(), a.end(), b.begin(), difference.begin(), std::minus<>());
+        return dB(rms(a), rms(difference));
+    };
+    check("Unison Detune 3 vs 0 differs by more than -20 dB", 20.0 - changes(ParameterId::unisonDetune, 0.0, 3.0, 60), 0.0);
+    const auto knock = [&](double noise) { return play(ParameterId::hammerNoise, noise, 60, 0.95, false).first; };
+    std::vector<float> knockDifference(knock(0.0));
+    const auto loud = knock(2.0);
+    std::transform(knockDifference.begin(), knockDifference.end(), loud.begin(), knockDifference.begin(), std::minus<>());
+    check("Hammer Noise 2 vs 0 differs by more than -30 dB", 30.0 - dB(rms(loud), rms(knockDifference)), 0.0);
+}
+
 int main() {
     try {
         modelIsStable();
@@ -372,6 +442,7 @@ int main() {
         notesSustainInStereo();
         micPositionsAndWidth();
         louderIsBrighter();
+        voicingControls();
         std::cout << "All engine tests passed\n";
         return 0;
     } catch (const std::exception& error) {

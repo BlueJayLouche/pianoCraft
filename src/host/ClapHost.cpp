@@ -25,6 +25,7 @@ using pianocraft::PianoEngine;
 struct ParameterSpec {
     clap_id id;
     const char* name;
+    const char* module;
     double minimum;
     double maximum;
     double defaultValue;
@@ -36,13 +37,41 @@ constexpr clap_param_info_flags choiceFlags =
     CLAP_PARAM_IS_AUTOMATABLE | CLAP_PARAM_IS_STEPPED | CLAP_PARAM_IS_ENUM;
 constexpr std::array<const char*, 3> micPositionNames{"Spaced Pair", "Coincident", "Player"};
 
-constexpr std::array<ParameterSpec, 6> parameterSpecs{{
-    {static_cast<clap_id>(ParameterId::outputGain), "Output Gain", 0.0, 2.0, 0.7, continuousFlags},
-    {static_cast<clap_id>(ParameterId::hammerHardness), "Hammer Hardness", 0.25, 2.0, 1.0, continuousFlags},
-    {static_cast<clap_id>(ParameterId::sympatheticLevel), "Sympathetic Level", 0.0, 1.0, 0.35, continuousFlags},
-    {static_cast<clap_id>(ParameterId::bodyLevel), "Body Level", 0.0, 2.0, 1.0, continuousFlags},
-    {static_cast<clap_id>(ParameterId::micPosition), "Mic Position", 0.0, 2.0, 0.0, choiceFlags},
-    {static_cast<clap_id>(ParameterId::stereoWidth), "Stereo Width", 0.0, 2.0, 1.0, continuousFlags},
+constexpr clap_id pid(ParameterId id) noexcept
+{
+    return static_cast<clap_id>(id);
+}
+
+// Listed by group; hosts identify parameters by id, so the order is free.
+constexpr std::array<ParameterSpec, 13> parameterSpecs{{
+    {pid(ParameterId::hammerHardness), "Hammer Hardness", "Hammer", 0.25, 2.0, 1.0, continuousFlags},
+    {pid(ParameterId::dynamicRange), "Dynamic Range", "Hammer", 0.0, 2.0, 1.0, continuousFlags},
+    {pid(ParameterId::velocityBrightness), "Velocity Brightness", "Hammer", 0.0, 2.0, 1.0, continuousFlags},
+    {pid(ParameterId::hammerNoise), "Hammer Noise", "Hammer", 0.0, 2.0, 1.0, continuousFlags},
+    {pid(ParameterId::sustainLength), "Sustain Length", "Strings", 0.25, 4.0, 1.0, continuousFlags},
+    {pid(ParameterId::damperRelease), "Damper Release", "Strings", 0.25, 4.0, 1.0, continuousFlags},
+    {pid(ParameterId::unisonDetune), "Unison Detune", "Strings", 0.0, 3.0, 1.0, continuousFlags},
+    {pid(ParameterId::aftersound), "Aftersound", "Strings", 0.0, 2.0, 1.0, continuousFlags},
+    {pid(ParameterId::sympatheticLevel), "Sympathetic Level", "Strings", 0.0, 1.0, 0.35, continuousFlags},
+    {pid(ParameterId::bodyLevel), "Body Level", "Mix", 0.0, 2.0, 1.0, continuousFlags},
+    {pid(ParameterId::micPosition), "Mic Position", "Mix", 0.0, 2.0, 0.0, choiceFlags},
+    {pid(ParameterId::stereoWidth), "Stereo Width", "Mix", 0.0, 2.0, 1.0, continuousFlags},
+    {pid(ParameterId::outputGain), "Output Gain", "Mix", 0.0, 2.0, 0.7, continuousFlags},
+}};
+
+struct RemotePage {
+    const char* name;
+    std::array<clap_id, CLAP_REMOTE_CONTROLS_COUNT> parameters;
+};
+
+constexpr std::array<RemotePage, 2> remotePages{{
+    {"Main", {pid(ParameterId::hammerHardness), pid(ParameterId::dynamicRange),
+              pid(ParameterId::velocityBrightness), pid(ParameterId::sustainLength),
+              pid(ParameterId::sympatheticLevel), pid(ParameterId::bodyLevel),
+              pid(ParameterId::stereoWidth), pid(ParameterId::outputGain)}},
+    {"Voicing", {pid(ParameterId::unisonDetune), pid(ParameterId::aftersound),
+                 pid(ParameterId::damperRelease), pid(ParameterId::hammerNoise),
+                 pid(ParameterId::micPosition), CLAP_INVALID_ID, CLAP_INVALID_ID, CLAP_INVALID_ID}},
 }};
 
 constexpr std::size_t invalidParameterIndex = parameterSpecs.size();
@@ -492,6 +521,7 @@ private:
         info->flags = spec.flags;
         info->cookie = nullptr;
         copyText(info->name, sizeof(info->name), spec.name);
+        copyText(info->module, sizeof(info->module), spec.module);
         info->min_value = spec.minimum;
         info->max_value = spec.maximum;
         info->default_value = spec.defaultValue;
@@ -652,6 +682,25 @@ private:
         return true;
     }
 
+    static std::uint32_t remoteControlsCount(const clap_plugin_t*) noexcept
+    {
+        return static_cast<std::uint32_t>(remotePages.size());
+    }
+
+    static bool remoteControlsGet(const clap_plugin_t*, std::uint32_t index,
+                                  clap_remote_controls_page_t* page) noexcept
+    {
+        if (index >= remotePages.size() || page == nullptr) {
+            return false;
+        }
+        std::memset(page, 0, sizeof(*page));
+        copyText(page->section_name, sizeof(page->section_name), "Piano");
+        page->page_id = index;
+        copyText(page->page_name, sizeof(page->page_name), remotePages[index].name);
+        std::copy(remotePages[index].parameters.begin(), remotePages[index].parameters.end(), page->param_ids);
+        return true;
+    }
+
     static const void* getExtension(const clap_plugin_t* plugin, const char* id) noexcept
     {
         if (id == nullptr) {
@@ -668,6 +717,9 @@ private:
         }
         if (std::strcmp(id, CLAP_EXT_STATE) == 0) {
             return &state_;
+        }
+        if (std::strcmp(id, CLAP_EXT_REMOTE_CONTROLS) == 0 || std::strcmp(id, CLAP_EXT_REMOTE_CONTROLS_COMPAT) == 0) {
+            return &remoteControls_;
         }
         (void)plugin;
         return nullptr;
@@ -689,6 +741,7 @@ private:
     static const clap_plugin_note_ports_t notePorts_;
     static const clap_plugin_params_t params_;
     static const clap_plugin_state_t state_;
+    static const clap_plugin_remote_controls_t remoteControls_;
 };
 
 constexpr const char* const pluginFeatures[] = {
@@ -733,6 +786,11 @@ const clap_plugin_params_t Adapter::params_ = {
 const clap_plugin_state_t Adapter::state_ = {
     &Adapter::stateSave,
     &Adapter::stateLoad,
+};
+
+const clap_plugin_remote_controls_t Adapter::remoteControls_ = {
+    &Adapter::remoteControlsCount,
+    &Adapter::remoteControlsGet,
 };
 
 std::uint32_t pluginCount(const clap_plugin_factory_t*) noexcept

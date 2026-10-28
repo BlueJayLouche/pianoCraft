@@ -50,8 +50,17 @@ cmake --install build --config Release
 ```
 
 Rescan plug-ins in Bitwig Studio and insert PianoCraft on an instrument track.
-The first version uses Bitwig's generic parameter controls; no custom editor is
-required.
+There is no custom editor. Bitwig shows the parameters in three groups (Hammer,
+Strings, Mix) and maps two remote-control pages onto its device knobs:
+
+- **Main:** Hammer Hardness, Dynamic Range (pp-ff loudness spread), Velocity
+  Brightness, Sustain Length, Sympathetic Level, Body Level, Stereo Width, Output Gain.
+- **Voicing:** Unison Detune (beat speed; 0 is perfectly in tune), Aftersound
+  (the long second-stage tail), Damper Release, Hammer Noise, Mic Position.
+
+At 1.0 every voicing control is the calibrated piano. Sustain Length, Damper
+Release, Unison Detune and Aftersound recompute the string model when changed,
+so they suit setting by hand more than fast automation.
 
 ## Calibration and provenance
 

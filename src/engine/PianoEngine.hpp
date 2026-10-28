@@ -13,6 +13,13 @@ enum class ParameterId : std::uint32_t {
     bodyLevel = 4,
     micPosition = 5,
     stereoWidth = 6,
+    dynamicRange = 7,
+    velocityBrightness = 8,
+    sustainLength = 9,
+    damperRelease = 10,
+    unisonDetune = 11,
+    aftersound = 12,
+    hammerNoise = 13,
 };
 
 struct NoteAddress {

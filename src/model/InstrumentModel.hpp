@@ -22,6 +22,13 @@ struct ModeCoefficients {
     double frequency = 0.0;
     double decaySeconds = 0.0;
     bool secondary = false;
+    // Voicing-independent values; setVoicing() derives the poles, frequency, decay and
+    // excitation above from them.
+    double baseFrequency = 0.0;
+    double beatHz = 0.0; // signed detune of a unison partner from baseFrequency
+    double baseDecaySeconds = 0.0;
+    double baseReleaseSeconds = 0.0;
+    double baseExcitation = 0.0;
 };
 
 struct KeyModel {
@@ -47,6 +54,14 @@ struct KeyModel {
 
 enum class MicPosition { spacedPair = 0, coincident = 1, player = 2 };
 
+// User voicing on top of the measured model; 1.0 everywhere is the calibrated piano.
+struct Voicing {
+    double sustain = 1.0;    // every string decay time
+    double release = 1.0;    // damper release times
+    double detune = 1.0;     // unison partner beat rates
+    double aftersound = 1.0; // unison partner level: the long second-stage tail
+};
+
 class InstrumentModel {
 public:
     explicit InstrumentModel(double sampleRate);
@@ -54,10 +69,14 @@ public:
     const KeyModel& key(int midi) const;
     // Recomputes key panning and each partial's right-channel phase (one sin/cos per mode).
     void setMicPosition(MicPosition position);
+    // Recomputes every mode's pole and partner excitation, then the mic phases (which depend on
+    // frequency).
+    void setVoicing(const Voicing& voicing);
 
 private:
     std::array<KeyModel, instrumentKeyCount> keys_{};
     double sampleRate_ = 48000.0;
+    MicPosition micPosition_ = MicPosition::spacedPair;
 };
 
 } // namespace pianocraft
