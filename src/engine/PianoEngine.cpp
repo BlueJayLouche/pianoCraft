@@ -15,7 +15,7 @@ namespace pianocraft {
 namespace {
 
 constexpr std::size_t voiceCount = 64;
-constexpr std::size_t parameterCount = 5;
+constexpr std::size_t parameterCount = 7;
 
 std::size_t parameterIndex(ParameterId id) {
     return static_cast<std::size_t>(id) < parameterCount ? static_cast<std::size_t>(id) : 0;
@@ -83,6 +83,13 @@ struct PianoEngine::Impl {
     SympatheticBank sympathetic;
     double sampleRate = 48000.0;
     double smoothedGain = 0.7;
+    double smoothedWidth = 1.0;
+    MicPosition micPosition = MicPosition::spacedPair;
+    // ponytail: two one-pole high-passes at 100 Hz stand in for the soundboard's weak
+    // radiation of low fundamentals; replace with a radiation model if the bass needs more.
+    std::array<double, 4> highpassInput{};
+    std::array<double, 4> highpassOutput{};
+    double highpassCoefficient = 1.0;
 
     Impl() {
         parameters.fill(0.0);
@@ -90,6 +97,15 @@ struct PianoEngine::Impl {
         parameters[parameterIndex(ParameterId::hammerHardness)] = 1.0;
         parameters[parameterIndex(ParameterId::sympatheticLevel)] = 0.35;
         parameters[parameterIndex(ParameterId::bodyLevel)] = 1.0;
+        parameters[parameterIndex(ParameterId::micPosition)] = 0.0;
+        parameters[parameterIndex(ParameterId::stereoWidth)] = 1.0;
+    }
+
+    void applyMicPosition() {
+        micPosition = static_cast<MicPosition>(
+            static_cast<int>(parameters[parameterIndex(ParameterId::micPosition)]));
+        model->setMicPosition(micPosition);
+        soundboard.setMicPosition(micPosition);
     }
 
     void resetVoices() {
@@ -98,21 +114,37 @@ struct PianoEngine::Impl {
         }
         sustain.fill(false);
         undamped.fill(false);
+        if (model != nullptr) {
+            updateUndamped();
+        }
         soundboard.reset();
         sympathetic.reset();
+        highpassInput.fill(0.0);
+        highpassOutput.fill(0.0);
         smoothedGain = parameters[parameterIndex(ParameterId::outputGain)];
+        smoothedWidth = parameters[parameterIndex(ParameterId::stereoWidth)];
     }
 
-    void updateUndamped() {
-        if (std::any_of(sustain.begin(), sustain.end(), [](bool engaged) { return engaged; })) {
-            undamped.fill(true);
-            return;
+    double highpass(double sample, std::size_t channel) {
+        for (std::size_t stage = channel * 2; stage < channel * 2 + 2; ++stage) {
+            const double output = highpassCoefficient * (highpassOutput[stage] + sample - highpassInput[stage]);
+            highpassInput[stage] = sample;
+            highpassOutput[stage] = std::abs(output) < 1.0e-30 ? 0.0 : output;
+            sample = highpassOutput[stage];
         }
-        undamped.fill(false);
+        return sample;
+    }
+
+    // Strings free to ring sympathetically: all of them with the pedal down, otherwise the
+    // damperless top keys. A string already sounding as a voice is excluded so it is not doubled.
+    void updateUndamped() {
+        const bool pedal = std::any_of(sustain.begin(), sustain.end(), [](bool engaged) { return engaged; });
+        for (std::size_t index = 0; index < undamped.size(); ++index) {
+            undamped[index] = pedal || !model->key(static_cast<int>(index) + 21).hasDamper;
+        }
         for (const auto& voice : voices) {
-            if (voice.active && voice.key != nullptr &&
-                (voice.keyDown || !voice.key->hasDamper)) {
-                undamped[voice.address.key - 21] = true;
+            if (voice.active && voice.key != nullptr) {
+                undamped[voice.address.key - 21] = false;
             }
         }
     }
@@ -183,11 +215,15 @@ struct PianoEngine::Impl {
         const double referenceGain = 0.18 + 0.82 * std::pow(referenceVelocity, 1.35);
         voice.velocityGain = referenceGain * std::pow(normalizedVelocity, voice.key->velocityGainExponent) *
             voice.key->outputGain;
-        voice.stiffness = voice.key->hammerStiffness * voice.key->hammerStiffnessScale *
+        // Lighter, stiffer hammers toward the treble keep string contact near 1-5 ms; the old
+        // 18 g / 60 kN hammer stayed on for 8-15 ms and never excited the upper partials.
+        const double registerPosition = (address.key - 21) / 87.0;
+        voice.stiffness = 8.0 * std::pow(4.0, registerPosition) *
+            voice.key->hammerStiffness * voice.key->hammerStiffnessScale *
             std::pow(normalizedVelocity, voice.key->velocityBrightnessExponent);
         voice.hammer.position = voice.displacement - 0.004;
         voice.hammer.velocity = 0.35 + 2.4 * std::pow(velocity, 0.85);
-        voice.hammer.mass = 0.018;
+        voice.hammer.mass = 0.012 * std::pow(0.5, registerPosition);
         voice.hammer.active = true;
     }
 
@@ -198,7 +234,7 @@ struct PianoEngine::Impl {
         }
     }
 
-    double processVoice(Voice& voice) {
+    std::array<double, 2> processVoice(Voice& voice) {
         const auto& key = *voice.key;
         const double hardness = parameters[parameterIndex(ParameterId::hammerHardness)];
         double force = 0.0;
@@ -221,6 +257,7 @@ struct PianoEngine::Impl {
             voice.releaseBlend = std::min(1.0, voice.releaseBlend + 40.0 / sampleRate);
         }
         double bridge = 0.0;
+        double bridgeRight = 0.0;
         double displacement = 0.0;
         for (std::size_t index = 0; index < key.modeCount; ++index) {
             const auto& coefficients = key.modes[index];
@@ -235,6 +272,7 @@ struct PianoEngine::Impl {
             state.y2 = state.y1;
             state.y1 = std::abs(output) < 1.0e-30 ? 0.0 : output;
             bridge += state.y1 * coefficients.output;
+            bridgeRight += state.y1 * coefficients.outputRight + state.y2 * coefficients.outputRightPrevious;
             if (!coefficients.secondary) {
                 displacement += state.y1;
             }
@@ -246,12 +284,13 @@ struct PianoEngine::Impl {
             voice.chokeGain *= 0.9995;
             if (voice.chokeGain < 0.0001) {
                 voice.active = false;
-                return 0.0;
+                return {};
             }
         }
 
-        const double sample = bridge * voice.velocityGain * voice.chokeGain;
-        voice.level = std::max(std::abs(sample), voice.level * 0.99995);
+        const double gain = voice.velocityGain * voice.chokeGain;
+        const std::array<double, 2> sample{bridge * gain, bridgeRight * gain};
+        voice.level = std::max({std::abs(sample[0]), std::abs(sample[1]), voice.level * 0.99995});
         if (!voice.hammer.active && voice.level < 1.0e-8 && voice.age > sampleRate) {
             voice.active = false;
         }
@@ -265,8 +304,10 @@ PianoEngine::~PianoEngine() = default;
 void PianoEngine::prepare(double sampleRate) {
     impl_->model = std::make_unique<InstrumentModel>(sampleRate);
     impl_->sampleRate = sampleRate;
+    impl_->highpassCoefficient = 1.0 / (1.0 + 2.0 * 3.141592653589793 * 100.0 / sampleRate);
     impl_->soundboard.prepare(sampleRate);
     impl_->sympathetic.prepare(sampleRate, *impl_->model);
+    impl_->applyMicPosition();
     impl_->resetVoices();
 }
 
@@ -350,8 +391,20 @@ void PianoEngine::setParameter(ParameterId id, double value) {
         case ParameterId::bodyLevel:
             value = std::clamp(value, 0.0, 2.0);
             break;
+        case ParameterId::micPosition:
+            value = std::clamp(std::round(value), 0.0, 2.0);
+            break;
+        case ParameterId::stereoWidth:
+            value = std::clamp(value, 0.0, 2.0);
+            break;
     }
     impl_->parameters[parameterIndex(id)] = value;
+    // Hosts resend every parameter on any change, so only recompute coefficients on a real
+    // mic change. Switching mid-note can click; it is a setup choice, not a performance one.
+    if (id == ParameterId::micPosition && impl_->model != nullptr &&
+        static_cast<int>(value) != static_cast<int>(impl_->micPosition)) {
+        impl_->applyMicPosition();
+    }
 }
 
 double PianoEngine::parameterValue(ParameterId id) const {
@@ -371,6 +424,7 @@ void PianoEngine::render(float* left, float* right, std::uint32_t frameCount) {
     const double targetGain = impl_->parameters[parameterIndex(ParameterId::outputGain)];
     const double sympatheticLevel = impl_->parameters[parameterIndex(ParameterId::sympatheticLevel)];
     const double bodyLevel = impl_->parameters[parameterIndex(ParameterId::bodyLevel)];
+    const double targetWidth = impl_->parameters[parameterIndex(ParameterId::stereoWidth)];
     for (std::uint32_t frame = 0; frame < frameCount; ++frame) {
         std::array<double, 3> regionLeft{};
         std::array<double, 3> regionRight{};
@@ -380,24 +434,32 @@ void PianoEngine::render(float* left, float* right, std::uint32_t frameCount) {
                 continue;
             }
             const std::size_t region = voice.address.key < 48 ? 0 : (voice.address.key < 72 ? 1 : 2);
-            const double sample = impl_->processVoice(voice);
-            const double sampleLeft = sample * voice.key->leftGain;
-            const double sampleRight = sample * voice.key->rightGain;
+            const auto sample = impl_->processVoice(voice);
+            const double sampleLeft = sample[0] * voice.key->leftGain;
+            const double sampleRight = sample[1] * voice.key->rightGain;
             regionLeft[region] += sampleLeft;
             regionRight[region] += sampleRight;
-            regionMono[region] += 0.5 * (sampleLeft + sampleRight);
+            // Sympathetic strings hear the bridge, not the per-channel radiation phase.
+            regionMono[region] += 0.5 * sample[0] * (voice.key->leftGain + voice.key->rightGain);
         }
         const auto resonance = impl_->sympathetic.process(regionMono, impl_->undamped, sympatheticLevel);
+        std::array<double, 3> bridge{};
         for (std::size_t region = 0; region < 3; ++region) {
             regionLeft[region] += resonance[region] * 0.707;
             regionRight[region] += resonance[region] * 0.707;
+            bridge[region] = regionMono[region] + resonance[region];
         }
         double mixedLeft = 0.0;
         double mixedRight = 0.0;
-        impl_->soundboard.process(regionLeft, regionRight, bodyLevel, mixedLeft, mixedRight);
+        impl_->soundboard.process(regionLeft, regionRight, bridge, bodyLevel, mixedLeft, mixedRight);
         impl_->smoothedGain += 0.0002 * (targetGain - impl_->smoothedGain);
-        const double outputLeft = mixedLeft * impl_->smoothedGain;
-        const double outputRight = mixedRight * impl_->smoothedGain;
+        impl_->smoothedWidth += 0.0002 * (targetWidth - impl_->smoothedWidth);
+        const double filteredLeft = impl_->highpass(mixedLeft, 0);
+        const double filteredRight = impl_->highpass(mixedRight, 1);
+        const double mid = 0.5 * (filteredLeft + filteredRight);
+        const double side = 0.5 * (filteredLeft - filteredRight) * impl_->smoothedWidth;
+        const double outputLeft = (mid + side) * impl_->smoothedGain;
+        const double outputRight = (mid - side) * impl_->smoothedGain;
         left[frame] = std::abs(outputLeft) < 1.0e-20 ? 0.0F : static_cast<float>(outputLeft);
         right[frame] = std::abs(outputRight) < 1.0e-20 ? 0.0F : static_cast<float>(outputRight);
     }

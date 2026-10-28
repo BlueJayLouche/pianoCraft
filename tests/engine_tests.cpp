@@ -200,6 +200,18 @@ void sympatheticIsSelective() {
     }
     require(releasedEnergy < openEnergy * 0.01, "Damped sympathetic response did not release");
     require(bank.process(input, undamped, 0.0)[1] == 0.0, "Zero sympathy level produced output");
+
+    // The board is shared: a treble-region drive must reach an open bass string.
+    bank.reset();
+    undamped.fill(false);
+    undamped[36 - 21] = true;
+    input = {0.0, 0.0, 1.0};
+    double bassEnergy = 0.0;
+    for (std::size_t frame = 0; frame < 4096; ++frame) {
+        bassEnergy += std::abs(bank.process(input, undamped, 1.0)[0]);
+        input[2] = 0.0;
+    }
+    require(bassEnergy > 0.0, "Treble drive did not reach an open bass string");
 }
 
 void bodyAndSympatheticAffectOutput() {
@@ -221,6 +233,101 @@ void bodyAndSympatheticAffectOutput() {
             " resonant=" + std::to_string(peak(b)));
 }
 
+void trebleIsBalancedAndClear() {
+    const auto play = [](std::int16_t key) {
+        pianocraft::PianoEngine engine;
+        engine.prepare(48000.0);
+        engine.noteOn(note(key), 0.63);
+        return render(engine, 24000, 64);
+    };
+    const auto c3 = play(48);
+    const auto c6 = play(84);
+    const auto c7 = play(96);
+    require(rms(c7) > rms(c3) * 0.1, "Treble is more than 20 dB below the middle register: C3=" +
+            std::to_string(rms(c3)) + " C7=" + std::to_string(rms(c7)));
+
+    // Two one-pole low-passes at 200 Hz; this band once held most of C6's energy (ratio ~0.9,
+    // soundboard mud). It is ~0.3 now.
+    const double coefficient = 1.0 - std::exp(-2.0 * 3.141592653589793 * 200.0 / 48000.0);
+    double stage1 = 0.0;
+    double stage2 = 0.0;
+    double lowEnergy = 0.0;
+    for (std::size_t index = 0; index < c6.size(); index += 2) {
+        stage1 += coefficient * (c6[index] - stage1);
+        stage2 += coefficient * (stage1 - stage2);
+        lowEnergy += stage2 * stage2;
+    }
+    const double lowRms = std::sqrt(lowEnergy / (c6.size() / 2));
+    require(lowRms < rms(c6) * 0.5, "C6 is dominated by energy below 200 Hz: ratio=" +
+            std::to_string(lowRms / rms(c6)));
+}
+
+void notesSustainInStereo() {
+    pianocraft::PianoEngine engine;
+    engine.prepare(48000.0);
+    engine.setSustain(0, true);
+    engine.noteOn(note(84), 0.63);
+    const auto output = render(engine, 72000, 64);
+    const std::vector<float> attack(output.begin(), output.begin() + 9600);
+    const std::vector<float> tail(output.begin() + 96000, output.end());
+    // C6 used to fall silent within a second; the recordings are ~-25 dB at 1-1.5 s.
+    require(rms(tail) > rms(attack) * 0.01, "C6 does not sustain: tail/attack=" +
+            std::to_string(rms(tail) / rms(attack)));
+
+    double cross = 0.0;
+    double leftEnergy = 0.0;
+    double rightEnergy = 0.0;
+    for (std::size_t index = 0; index < output.size(); index += 2) {
+        cross += static_cast<double>(output[index]) * output[index + 1];
+        leftEnergy += static_cast<double>(output[index]) * output[index];
+        rightEnergy += static_cast<double>(output[index + 1]) * output[index + 1];
+    }
+    const double correlation = cross / std::sqrt(leftEnergy * rightEnergy);
+    require(correlation < 0.9, "Output is effectively mono: L/R correlation=" + std::to_string(correlation));
+}
+
+double correlation(const std::vector<float>& output) {
+    double cross = 0.0;
+    double leftEnergy = 0.0;
+    double rightEnergy = 0.0;
+    for (std::size_t index = 0; index < output.size(); index += 2) {
+        cross += static_cast<double>(output[index]) * output[index + 1];
+        leftEnergy += static_cast<double>(output[index]) * output[index];
+        rightEnergy += static_cast<double>(output[index + 1]) * output[index + 1];
+    }
+    return cross / std::sqrt(leftEnergy * rightEnergy);
+}
+
+void micPositionsAndWidth() {
+    const auto play = [](double mic, double width, bool switchAfterPrepare) {
+        pianocraft::PianoEngine engine;
+        // Width is smoothed like output gain; setting it before prepare starts it settled.
+        engine.setParameter(pianocraft::ParameterId::stereoWidth, width);
+        if (!switchAfterPrepare) {
+            engine.setParameter(pianocraft::ParameterId::micPosition, mic);
+        }
+        engine.prepare(48000.0);
+        if (switchAfterPrepare) {
+            engine.setParameter(pianocraft::ParameterId::micPosition, mic);
+        }
+        engine.noteOn(note(72), 0.63);
+        return render(engine, 48000, 64);
+    };
+    const double spaced = correlation(play(0.0, 1.0, false));
+    const double coincident = correlation(play(1.0, 1.0, false));
+    const double player = correlation(play(2.0, 1.0, false));
+    require(coincident > 0.9, "Coincident pair is not phase-coherent: " + std::to_string(coincident));
+    require(spaced < coincident && player < coincident,
+            "Spaced/player mics are not wider than coincident: " + std::to_string(spaced) + " " +
+            std::to_string(player));
+    require(play(1.0, 1.0, true) == play(1.0, 1.0, false), "Mic change after prepare differs from before");
+
+    const auto mono = play(0.0, 0.0, false);
+    for (std::size_t index = 0; index < mono.size(); index += 2) {
+        require(std::abs(mono[index] - mono[index + 1]) < 1.0e-6f, "Zero width is not mono");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -233,6 +340,9 @@ int main() {
         parametersAndRatesAreValid();
         sympatheticIsSelective();
         bodyAndSympatheticAffectOutput();
+        trebleIsBalancedAndClear();
+        notesSustainInStereo();
+        micPositionsAndWidth();
         std::cout << "All engine tests passed\n";
         return 0;
     } catch (const std::exception& error) {

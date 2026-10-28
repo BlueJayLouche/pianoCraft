@@ -24,7 +24,8 @@ ctest --test-dir build --output-on-failure
 ```
 
 The renderer arguments are output path, MIDI note, velocity, seconds, sustain
-pedal, body level, and sympathy level. Optional numeric arguments use the engine
+pedal, body level, sympathy level, and mic position (0 spaced pair, 1 coincident,
+2 player). Optional numeric arguments use the engine
 defaults when omitted. Raw calibration recordings and renders are not included
 in the plugin.
 

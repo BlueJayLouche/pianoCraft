@@ -11,6 +11,8 @@ enum class ParameterId : std::uint32_t {
     hammerHardness = 2,
     sympatheticLevel = 3,
     bodyLevel = 4,
+    micPosition = 5,
+    stereoWidth = 6,
 };
 
 struct NoteAddress {

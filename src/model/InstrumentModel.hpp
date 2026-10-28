@@ -17,6 +17,8 @@ struct ModeCoefficients {
     double releaseA2 = 0.0;
     double excitation = 0.0;
     double output = 0.0;
+    double outputRight = 0.0;
+    double outputRightPrevious = 0.0;
     double frequency = 0.0;
     double decaySeconds = 0.0;
     bool secondary = false;
@@ -40,14 +42,19 @@ struct KeyModel {
     std::array<ModeCoefficients, modeLimit> modes{};
 };
 
+enum class MicPosition { spacedPair = 0, coincident = 1, player = 2 };
+
 class InstrumentModel {
 public:
     explicit InstrumentModel(double sampleRate);
 
     const KeyModel& key(int midi) const;
+    // Recomputes key panning and each partial's right-channel phase (one sin/cos per mode).
+    void setMicPosition(MicPosition position);
 
 private:
     std::array<KeyModel, instrumentKeyCount> keys_{};
+    double sampleRate_ = 48000.0;
 };
 
 } // namespace pianocraft

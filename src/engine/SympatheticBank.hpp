@@ -27,7 +27,7 @@ private:
         double y2 = 0.0;
     };
 
-    static constexpr std::size_t modesPerKey = 3;
+    static constexpr std::size_t modesPerKey = 8;
     std::array<std::array<Mode, modesPerKey>, instrumentKeyCount> keys_{};
 };
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "model/InstrumentModel.hpp"
+
 #include <array>
 #include <cstddef>
 
@@ -9,25 +11,31 @@ class Soundboard {
 public:
     void prepare(double sampleRate);
     void reset();
-    void process(const std::array<double, 3>& inputLeft,
-                 const std::array<double, 3>& inputRight,
+    void setMicPosition(MicPosition position);
+    void process(const std::array<double, 3>& directLeft,
+                 const std::array<double, 3>& directRight,
+                 const std::array<double, 3>& bridge,
                  double bodyLevel, double& outputLeft, double& outputRight);
 
 private:
+    static constexpr std::size_t regionCount = 3;
+    static constexpr std::size_t modeLimit = 96;
+
     struct Mode {
         double a1 = 0.0;
         double a2 = 0.0;
+        std::array<double, regionCount> input{};
+        double frequency = 0.0;
+        double shapeLeft = 0.0;
+        double shapeRight = 0.0;
         double gainLeft = 0.0;
         double gainRight = 0.0;
-        double y1Left = 0.0;
-        double y2Left = 0.0;
-        double y1Right = 0.0;
-        double y2Right = 0.0;
+        double y1 = 0.0;
+        double y2 = 0.0;
     };
 
-    static constexpr std::size_t regionCount = 3;
-    static constexpr std::size_t modesPerRegion = 14;
-    std::array<std::array<Mode, modesPerRegion>, regionCount> regions_{};
+    std::array<Mode, modeLimit> modes_{};
+    std::size_t modeCount_ = 0;
 };
 
 } // namespace pianocraft

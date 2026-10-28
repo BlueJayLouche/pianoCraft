@@ -77,6 +77,13 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/engine_tests.cpp")
     add_test(NAME pianocraft-engine-tests COMMAND pianocraft-engine-tests)
 endif()
 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/state_tests.cpp")
+    add_executable(pianocraft-state-tests tests/state_tests.cpp)
+    target_link_libraries(pianocraft-state-tests PRIVATE clap)
+    add_dependencies(pianocraft-state-tests pianocraft)
+    add_test(NAME pianocraft-state-tests COMMAND pianocraft-state-tests $<TARGET_FILE:pianocraft>)
+endif()
+
 install(TARGETS pianocraft
     DESTINATION "$ENV{HOME}/Library/Audio/Plug-Ins/CLAP"
 )

@@ -63,7 +63,7 @@ struct Event {
 int main(int argc, char** argv) {
     try {
         if (argc < 2) {
-            std::cerr << "Usage: pianocraft-render <output.wav> [midi] [velocity] [seconds] [pedal] [body] [sympathy]\n";
+            std::cerr << "Usage: pianocraft-render <output.wav> [midi] [velocity] [seconds] [pedal] [body] [sympathy] [mic]\n";
             return 2;
         }
         const std::string output = argv[1];
@@ -73,9 +73,11 @@ int main(int argc, char** argv) {
         const int pedal = argc > 5 ? std::stoi(argv[5]) : 0;
         const double body = argc > 6 ? std::stod(argv[6]) : 1.0;
         const double sympathy = argc > 7 ? std::stod(argv[7]) : 0.35;
+        const int mic = argc > 8 ? std::stoi(argv[8]) : 0;
         if (key < 21 || key > 108 || velocity < 0.0 || velocity > 1.0 || seconds <= 0.0 || seconds > 120.0 ||
-            (pedal != 0 && pedal != 1) || body < 0.0 || body > 2.0 || sympathy < 0.0 || sympathy > 1.0) {
-            throw std::runtime_error("Invalid key, velocity, duration, pedal, body, or sympathy value");
+            (pedal != 0 && pedal != 1) || body < 0.0 || body > 2.0 || sympathy < 0.0 || sympathy > 1.0 ||
+            mic < 0 || mic > 2) {
+            throw std::runtime_error("Invalid key, velocity, duration, pedal, body, sympathy, or mic value");
         }
 
         constexpr std::uint32_t sampleRate = 48000;
@@ -84,6 +86,7 @@ int main(int argc, char** argv) {
         engine.prepare(sampleRate);
         engine.setParameter(pianocraft::ParameterId::bodyLevel, body);
         engine.setParameter(pianocraft::ParameterId::sympatheticLevel, sympathy);
+        engine.setParameter(pianocraft::ParameterId::micPosition, mic);
         const double noteOffTime = std::min(1.5, seconds * 0.4);
         std::vector<Event> events;
         if (pedal == 1) {

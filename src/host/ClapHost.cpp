@@ -28,13 +28,21 @@ struct ParameterSpec {
     double minimum;
     double maximum;
     double defaultValue;
+    clap_param_info_flags flags;
 };
 
-constexpr std::array<ParameterSpec, 4> parameterSpecs{{
-    {static_cast<clap_id>(ParameterId::outputGain), "Output Gain", 0.0, 2.0, 0.7},
-    {static_cast<clap_id>(ParameterId::hammerHardness), "Hammer Hardness", 0.25, 2.0, 1.0},
-    {static_cast<clap_id>(ParameterId::sympatheticLevel), "Sympathetic Level", 0.0, 1.0, 0.35},
-    {static_cast<clap_id>(ParameterId::bodyLevel), "Body Level", 0.0, 2.0, 1.0},
+constexpr clap_param_info_flags continuousFlags = CLAP_PARAM_IS_AUTOMATABLE;
+constexpr clap_param_info_flags choiceFlags =
+    CLAP_PARAM_IS_AUTOMATABLE | CLAP_PARAM_IS_STEPPED | CLAP_PARAM_IS_ENUM;
+constexpr std::array<const char*, 3> micPositionNames{"Spaced Pair", "Coincident", "Player"};
+
+constexpr std::array<ParameterSpec, 6> parameterSpecs{{
+    {static_cast<clap_id>(ParameterId::outputGain), "Output Gain", 0.0, 2.0, 0.7, continuousFlags},
+    {static_cast<clap_id>(ParameterId::hammerHardness), "Hammer Hardness", 0.25, 2.0, 1.0, continuousFlags},
+    {static_cast<clap_id>(ParameterId::sympatheticLevel), "Sympathetic Level", 0.0, 1.0, 0.35, continuousFlags},
+    {static_cast<clap_id>(ParameterId::bodyLevel), "Body Level", 0.0, 2.0, 1.0, continuousFlags},
+    {static_cast<clap_id>(ParameterId::micPosition), "Mic Position", 0.0, 2.0, 0.0, choiceFlags},
+    {static_cast<clap_id>(ParameterId::stereoWidth), "Stereo Width", 0.0, 2.0, 1.0, continuousFlags},
 }};
 
 constexpr std::size_t invalidParameterIndex = parameterSpecs.size();
@@ -481,7 +489,7 @@ private:
         const auto& spec = parameterSpecs[index];
         std::memset(info, 0, sizeof(*info));
         info->id = spec.id;
-        info->flags = CLAP_PARAM_IS_AUTOMATABLE;
+        info->flags = spec.flags;
         info->cookie = nullptr;
         copyText(info->name, sizeof(info->name), spec.name);
         info->min_value = spec.minimum;
@@ -509,8 +517,10 @@ private:
             !std::isfinite(value)) {
             return false;
         }
-        const auto result = std::snprintf(output, capacity, "%.6g",
-                                          clampedParameterValue(index, value));
+        const double clamped = clampedParameterValue(index, value);
+        const auto result = parameterSpecs[index].id == static_cast<clap_id>(ParameterId::micPosition)
+            ? std::snprintf(output, capacity, "%s", micPositionNames[static_cast<std::size_t>(std::lround(clamped))])
+            : std::snprintf(output, capacity, "%.6g", clamped);
         return result >= 0 && static_cast<std::uint32_t>(result) < capacity;
     }
 
@@ -520,6 +530,14 @@ private:
         const auto index = parameterIndex(id);
         if (index == invalidParameterIndex || text == nullptr || value == nullptr) {
             return false;
+        }
+        if (id == static_cast<clap_id>(ParameterId::micPosition)) {
+            for (std::size_t i = 0; i < micPositionNames.size(); ++i) {
+                if (std::strcmp(text, micPositionNames[i]) == 0) {
+                    *value = static_cast<double>(i);
+                    return true;
+                }
+            }
         }
 
         errno = 0;
@@ -574,8 +592,11 @@ private:
     static bool stateLoad(const clap_plugin_t* plugin, const clap_istream_t* stream) noexcept
     {
         auto& adapter = self(plugin);
+        // States from older versions carry fewer parameters; the missing ones keep defaults.
         std::array<std::uint8_t, stateSize> bytes{};
-        if (!readExactly(stream, bytes.data(), bytes.size())) {
+        constexpr std::size_t headerSize = 12;
+        constexpr std::size_t recordSize = 12;
+        if (!readExactly(stream, bytes.data(), headerSize)) {
             return false;
         }
 
@@ -584,14 +605,21 @@ private:
             bytes[offset++] != static_cast<std::uint8_t>('C') ||
             bytes[offset++] != static_cast<std::uint8_t>('S') ||
             bytes[offset++] != static_cast<std::uint8_t>('T') ||
-            readU32(bytes, offset) != stateVersion ||
-            readU32(bytes, offset) != parameterSpecs.size()) {
+            readU32(bytes, offset) != stateVersion) {
+            return false;
+        }
+        const std::uint32_t recordCount = readU32(bytes, offset);
+        if (recordCount == 0 || recordCount > parameterSpecs.size() ||
+            !readExactly(stream, bytes.data() + headerSize, recordCount * recordSize)) {
             return false;
         }
 
         std::array<double, parameterSpecs.size()> loadedValues{};
+        for (std::size_t i = 0; i < parameterSpecs.size(); ++i) {
+            loadedValues[i] = parameterSpecs[i].defaultValue;
+        }
         std::array<bool, parameterSpecs.size()> seen{};
-        for (std::size_t record = 0; record < parameterSpecs.size(); ++record) {
+        for (std::size_t record = 0; record < recordCount; ++record) {
             const auto index = parameterIndex(readU32(bytes, offset));
             const double value = readDouble(bytes, offset);
             if (index == invalidParameterIndex || seen[index] || !std::isfinite(value) ||
