@@ -23,10 +23,11 @@ void setPole(ModeCoefficients& mode, double frequency, double decaySeconds,
     mode.decaySeconds = decaySeconds;
 }
 
-// Two-stage string decay fitted to the reference corpus: early (0.05-0.4 s) and late (2-7 s)
-// envelope slopes of partials 1-3 on all 88 keys, layer 3. The calibrated per-partial decays
-// were ~1.8x too short and their scatter barely tracked the recordings (r=0.28), so they are
-// replaced by these register laws.
+// Two-stage string decay from ungated early (0.05-0.4 s) and late (2-7 s) envelope slopes of
+// partials 1-3 on all 88 keys, layer 3. The calibrated per-partial decays were ~1.8x too short
+// and barely tracked the recordings (r=0.28). The gated refit in tools/evaluate_model.py accepts
+// ~30% of partials and censors long decays; it scores the same on the complete 0.25-5 s envelope
+// but 6 dB worse in the bass, so these laws stay (docs/model-laws.md).
 double promptDecaySeconds(double frequency) {
     return 4.89 * std::pow(frequency / 440.0, -0.745);
 }
@@ -74,8 +75,9 @@ InstrumentModel::InstrumentModel(double sampleRate) {
         // The 0.4 keeps a single velocity-127 note near -6 dBFS at the default output gain.
         const double levelLaw = std::pow(std::max(1.0, key.fundamental / 64.4), 1.505) * calibration.loudness;
         key.outputGain = 0.4 * levelLaw;
-        // The law corrects radiated level, not the force on the bridge. Driving sympathetic strings
-        // with half of it (in dB) balances the halo across registers: bass notes were 12 dB light.
+        // The law corrects radiated level, not the force on the bridge, so sympathetic strings get
+        // half of it (in dB). Analytic register balance; without it bass notes' halo was 12 dB
+        // lighter than in the (pedal-undocumented) recordings.
         key.sympatheticDrive = 1.0 / std::sqrt(levelLaw);
         key.hasDamper = key.midi <= 88;
 
@@ -175,6 +177,8 @@ InstrumentModel::InstrumentModel(double sampleRate) {
             ++secondaryCount;
         }
 
+        // Analytic: calibrate.py accepted no per-partial secondary, so detune and level below are
+        // register-wide estimates, not measured unisons.
         // Partials without a calibrated secondary get an effective unison partner: slightly
         // detuned (the recordings beat at ~0.5 Hz mid-keyboard, faster in the treble), 18 dB down,
         // decaying at the aftersound rate. It supplies the beating and the long tail after the

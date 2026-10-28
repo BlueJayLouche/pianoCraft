@@ -60,8 +60,8 @@ See `docs/clean-room.md`, `model/provenance.json`, and
 derive synthesis coefficients. The `calibration/` directory and raw audio are
 not distributed with the plugin.
 
-To score the current build against the corpus and re-derive the fitted model
-laws (see `docs/model-laws.md`):
+To score the current build against the corpus and check the fitted model laws
+(see `docs/model-laws.md`):
 
 ```sh
 .venv/bin/python tools/evaluate_model.py --refit

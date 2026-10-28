@@ -270,6 +270,18 @@ void trebleIsBalancedAndClear() {
             std::to_string(lowRms / rms(c6)));
 }
 
+double correlation(const std::vector<float>& output) {
+    double cross = 0.0;
+    double leftEnergy = 0.0;
+    double rightEnergy = 0.0;
+    for (std::size_t index = 0; index < output.size(); index += 2) {
+        cross += static_cast<double>(output[index]) * output[index + 1];
+        leftEnergy += static_cast<double>(output[index]) * output[index];
+        rightEnergy += static_cast<double>(output[index + 1]) * output[index + 1];
+    }
+    return cross / std::sqrt(leftEnergy * rightEnergy);
+}
+
 void notesSustainInStereo() {
     pianocraft::PianoEngine engine;
     engine.prepare(48000.0);
@@ -282,28 +294,8 @@ void notesSustainInStereo() {
     require(rms(tail) > rms(attack) * 0.01, "C6 does not sustain: tail/attack=" +
             std::to_string(rms(tail) / rms(attack)));
 
-    double cross = 0.0;
-    double leftEnergy = 0.0;
-    double rightEnergy = 0.0;
-    for (std::size_t index = 0; index < output.size(); index += 2) {
-        cross += static_cast<double>(output[index]) * output[index + 1];
-        leftEnergy += static_cast<double>(output[index]) * output[index];
-        rightEnergy += static_cast<double>(output[index + 1]) * output[index + 1];
-    }
-    const double correlation = cross / std::sqrt(leftEnergy * rightEnergy);
-    require(correlation < 0.9, "Output is effectively mono: L/R correlation=" + std::to_string(correlation));
-}
-
-double correlation(const std::vector<float>& output) {
-    double cross = 0.0;
-    double leftEnergy = 0.0;
-    double rightEnergy = 0.0;
-    for (std::size_t index = 0; index < output.size(); index += 2) {
-        cross += static_cast<double>(output[index]) * output[index + 1];
-        leftEnergy += static_cast<double>(output[index]) * output[index];
-        rightEnergy += static_cast<double>(output[index + 1]) * output[index + 1];
-    }
-    return cross / std::sqrt(leftEnergy * rightEnergy);
+    const double stereo = correlation(output);
+    require(stereo < 0.9, "Output is effectively mono: L/R correlation=" + std::to_string(stereo));
 }
 
 void micPositionsAndWidth() {

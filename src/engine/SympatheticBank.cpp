@@ -8,8 +8,8 @@ namespace pianocraft {
 void SympatheticBank::prepare(double sampleRate, const InstrumentModel& model) {
     constexpr double pi = 3.141592653589793238462643383279502884;
     // Every string resonates at its own first measured partials and hears the whole board, so a
-    // treble note can set bass strings ringing. With the pedal down this reproduces the energy
-    // between partials in the reference recordings (lines at other strings' exact partials).
+    // treble note can set bass strings ringing. Levels are analytic: the reference recordings don't
+    // document pedal state, so their between-partial energy is only a plausibility check.
     keys_ = {};
     for (std::size_t index = 0; index < instrumentKeyCount; ++index) {
         const auto& key = model.key(static_cast<int>(index) + 21);

@@ -136,6 +136,9 @@ struct PianoEngine::Impl {
     void applyMicPosition() {
         micPosition = static_cast<MicPosition>(
             static_cast<int>(parameters[parameterIndex(ParameterId::micPosition)]));
+        // ponytail: recomputed in place on the audio thread, ~60 us (worst ~100 us) at 48 kHz, a few
+        // percent of a 64-sample block, only when the enum changes. Precompute the three layouts if
+        // fast mic automation ever glitches.
         model->setMicPosition(micPosition);
         soundboard.setMicPosition(micPosition);
     }
@@ -247,8 +250,9 @@ struct PianoEngine::Impl {
         const double referenceGain = 0.18 + 0.82 * std::pow(referenceVelocity, 1.35);
         voice.velocityGain = referenceGain * std::pow(normalizedVelocity, voice.key->velocityGainExponent) *
             voice.key->outputGain;
-        // Lighter, stiffer hammers toward the treble keep string contact near 1-5 ms; the old
-        // 18 g / 60 kN hammer stayed on for 8-15 ms and never excited the upper partials.
+        // Effective excitation parameters, grid-fitted on octave-band spectra; recordings can't
+        // separate mass from stiffness. Lighter, stiffer toward the treble keeps contact near 1-5 ms;
+        // the old 18 g / 60 kN hammer stayed on for 8-15 ms and never excited the upper partials.
         const double registerPosition = (address.key - 21) / 87.0;
         voice.stiffness = 8.0 * std::pow(4.0, registerPosition) *
             voice.key->hammerStiffness * voice.key->hammerStiffnessScale *
@@ -277,10 +281,15 @@ struct PianoEngine::Impl {
         return biquad(voice.velocityShelf, &voice.shelfState[channel * 4], filtered);
     }
 
-    // Returns the radiated left/right samples (bridge high-pass and velocity EQ), the unfiltered
-    // bridge signal (the bridge still feels the hammer's push, which drives the board and the
-    // sympathetic strings even though it radiates little) and the hammer knock on the board.
-    std::array<double, 4> processVoice(Voice& voice) {
+    struct VoiceSample {
+        double left = 0.0;   // radiated: bridge high-pass and velocity EQ
+        double right = 0.0;
+        double bridge = 0.0; // unfiltered: the bridge still feels the hammer's push, which drives
+                             // the board and the sympathetic strings even though it radiates little
+        double knock = 0.0;  // hammer knock on the board
+    };
+
+    VoiceSample processVoice(Voice& voice) {
         const auto& key = *voice.key;
         const double hardness = parameters[parameterIndex(ParameterId::hammerHardness)];
         double force = 0.0;
@@ -339,9 +348,9 @@ struct PianoEngine::Impl {
         // by the key level law. Fitted to the recordings' broadband energy 20-100 ms after the
         // strike, which was 8 dB short.
         const double knock = force * voice.chokeGain * 0.0267;
-        const std::array<double, 4> sample{
+        const VoiceSample sample{
             radiated(voice, bridge, 0) * gain, radiated(voice, bridgeRight, 1) * gain, bridge * gain, knock};
-        voice.level = std::max({std::abs(sample[0]), std::abs(sample[1]), voice.level * 0.99995});
+        voice.level = std::max({std::abs(sample.left), std::abs(sample.right), voice.level * 0.99995});
         if (!voice.hammer.active && voice.level < 1.0e-8 && voice.age > sampleRate) {
             voice.active = false;
         }
@@ -488,15 +497,15 @@ void PianoEngine::render(float* left, float* right, std::uint32_t frameCount) {
             }
             const std::size_t region = voice.address.key < 48 ? 0 : (voice.address.key < 72 ? 1 : 2);
             const auto sample = impl_->processVoice(voice);
-            const double sampleLeft = sample[0] * voice.key->leftGain;
-            const double sampleRight = sample[1] * voice.key->rightGain;
+            const double sampleLeft = sample.left * voice.key->leftGain;
+            const double sampleRight = sample.right * voice.key->rightGain;
             regionLeft[region] += sampleLeft;
             regionRight[region] += sampleRight;
             // Sympathetic strings hear the bridge, not the per-channel radiation phase.
-            const double bridgeSample = 0.5 * sample[2] * (voice.key->leftGain + voice.key->rightGain);
+            const double bridgeSample = 0.5 * sample.bridge * (voice.key->leftGain + voice.key->rightGain);
             regionMono[region] += bridgeSample;
             regionSympathetic[region] += bridgeSample * voice.key->sympatheticDrive;
-            regionKnock[region] += sample[3];
+            regionKnock[region] += sample.knock;
         }
         const auto resonance = impl_->sympathetic.process(regionSympathetic, impl_->undamped, sympatheticLevel);
         std::array<double, 3> bridge{};

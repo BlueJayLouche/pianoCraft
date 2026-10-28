@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Score the current renderer against the Meta Piano corpus and re-derive the fitted model laws.
 
-Layers 1, 3 and 4 are the fitting layers; layer 2 is reported separately as held-out data and is
-never used to choose a value. See docs/model-laws.md for what each metric guards.
+Refits use layers 1, 3 and 4 and only the keys outside model/provenance.json's every-third-key
+split. Layer 2 and the split keys are reported separately; both have guided earlier iterations, so
+they are development evidence, not an untouched test. See docs/model-laws.md.
 
     .venv/bin/python tools/evaluate_model.py            # metrics
     .venv/bin/python tools/evaluate_model.py --refit    # metrics plus closed-form law refits
@@ -12,6 +13,7 @@ Set PIANOCRAFT_RENDERER to score another renderer build.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -36,6 +38,8 @@ HEADER = ROOT / "src" / "model" / "CalibrationData.hpp"
 VELOCITY = {1: 40 / 127, 2: 60 / 127, 3: 80 / 127, 4: 120 / 127}
 NAMES = ("C", "Cs", "D", "Ds", "E", "F", "Fs", "G", "Gs", "A", "As", "B")
 SCRATCH = Path(tempfile.mkdtemp(prefix="pianocraft-eval-"))
+HELD_OUT_KEYS = set(json.loads((ROOT / "model" / "provenance.json").read_text())["calibration"]["held_out_midi_notes"])
+FIT_KEYS = [midi for midi in range(21, 109) if midi not in HELD_OUT_KEYS]
 
 
 def note_name(midi: int) -> str:
@@ -124,8 +128,8 @@ def key_level_errors(layer: int) -> np.ndarray:
     return errors - errors[48 - 21]
 
 
-def sustain_error() -> float:
-    """RMS level at 0.25-5 s relative to the first 100 ms, pedal held, layer 3."""
+def sustain_errors() -> dict[int, float]:
+    """Per key: RMS error of the level at 0.25-5 s relative to the first 100 ms, pedal held, layer 3."""
     times = (0.25, 0.5, 1, 2, 3, 4, 5)
 
     def curve(rate, stereo):
@@ -137,10 +141,10 @@ def sustain_error() -> float:
                          if int(t * rate) + width < len(mono) else np.nan for t in times])
 
     def one(midi):
-        return curve(*render(midi, 3, 6.0, pedal=1, sympathy=0.0)) - curve(*reference(midi, 3))
-    diff = np.concatenate(parallel(one, range(24, 109, 4)))
-    diff = np.clip(diff[np.isfinite(diff)], -30, 30)
-    return float(np.sqrt(np.mean(diff**2)))
+        diff = curve(*render(midi, 3, 6.0, pedal=1, sympathy=0.0)) - curve(*reference(midi, 3))
+        return float(np.sqrt(np.mean(np.clip(diff[np.isfinite(diff)], -30, 30) ** 2)))
+    keys = range(24, 109, 4)
+    return dict(zip(keys, parallel(one, keys)))
 
 
 def correlations(source) -> np.ndarray:
@@ -174,6 +178,8 @@ def halo(rate: int, stereo: np.ndarray, midi: int) -> np.ndarray:
 
 
 def halo_error() -> np.ndarray:
+    """Pedal-down render vs isolated-note recordings whose pedal state is undocumented: a plausibility
+    check on the sympathetic level, not a calibration target (research roadmap section 3.4)."""
     notes = (36, 48, 57, 64, 69, 76, 84, 91)
     def one(midi):
         return halo(*render(midi, 3, 3.0, pedal=1), midi) - halo(*reference(midi, 3), midi)
@@ -216,10 +222,25 @@ def brightness_by_layer() -> dict[int, float]:
 
 # --- closed-form refits ----------------------------------------------------------------------
 
-def decay_laws() -> tuple[tuple[float, float], tuple[float, float]]:
-    """Fit T60 = a * (f/440)^b to early (0.05-0.4 s) and late (2-7 s) envelope slopes, partials 1-3."""
-    early, late = [], []
-    for midi in range(21, 109):
+def gated_t60(t: np.ndarray, db: np.ndarray, window: np.ndarray, floor: float) -> float | None:
+    """T60 from a line fit over the window, or None unless the envelope drops at least 5 dB, stays
+    within 3 dB RMS of the line and ends 15 dB above the band's noise floor. Longer T60s than the
+    window can show are rejected rather than extrapolated."""
+    tw, dw = t[window], db[window]
+    if len(tw) < 40:
+        return None
+    slope, intercept = np.polyfit(tw, dw, 1)
+    residual = np.sqrt(np.mean((dw - slope * tw - intercept) ** 2))
+    drop = -slope * (tw[-1] - tw[0])
+    if drop < 5 or residual > 3 or slope * tw[-1] + intercept - floor < 15:
+        return None
+    return -60 / slope
+
+
+def decay_laws() -> tuple[tuple[float, float], tuple[float, float], str]:
+    """Fit T60 = a * (f/440)^b to gated early (0.05-0.4 s) and late (2-7 s) slopes, partials 1-3."""
+    early, late, tried = [], [], 0
+    for midi in FIT_KEYS:
         rate, stereo = reference(midi, 3)
         mono = stereo.mean(axis=1)
         mono = mono[onset(mono):]
@@ -231,29 +252,27 @@ def decay_laws() -> tuple[tuple[float, float], tuple[float, float]]:
             envelope = np.abs(hilbert(sosfiltfilt(sos, mono)))[::240]
             db = 20 * np.log10(envelope / envelope[:60].max() + 1e-12)
             t = np.arange(len(db)) / 200
-            late_window = (t > 2.0) & (t < min(len(mono) / rate - 0.5, 7.0))
-            early_window = (t > 0.05) & (t < 0.4)
-            if late_window.sum() < 100:
-                continue
-            slope_late = np.polyfit(t[late_window], db[late_window], 1)[0]
-            slope_early = np.polyfit(t[early_window], db[early_window], 1)[0]
-            if slope_early < 0 and 0.3 < -60 / slope_early < 60:
-                early.append((freq, -60 / slope_early))
-            if slope_late < 0 and 1 < -60 / slope_late < 80:
-                late.append((freq, -60 / slope_late))
+            # Conservative floor: the band's quietest level in the last second, which may still hold tail.
+            floor = np.percentile(db[t > t[-1] - 1.0], 5)
+            tried += 1
+            for points, window in ((early, (t > 0.05) & (t < 0.4)),
+                                   (late, (t > 2.0) & (t < min(len(mono) / rate - 0.5, 7.0)))):
+                if (t60 := gated_t60(t, db, window, floor)) is not None:
+                    points.append((freq, t60))
 
     def fit(points):
         x = np.log2(np.array([p[0] for p in points]) / 440)
         y = np.log(np.array([p[1] for p in points]))
         result = least_squares(lambda c: c[0] + c[1] * x - y, [1, 0], loss="soft_l1", f_scale=0.5)
         return float(np.exp(result.x[0])), float(result.x[1] / np.log(2))
-    return fit(early), fit(late)
+    return fit(early), fit(late), f"{len(early)} early and {len(late)} late of {tried} partials accepted"
 
 
 def level_law_correction(current_knee: float, current_exponent: float) -> tuple[float, float]:
-    """Refit the key level law (gain = max(1, f0/knee)^exponent) on layers 1, 3 and 4."""
-    errors = np.mean([key_level_errors(layer) for layer in (1, 3, 4)], axis=0)
-    f0 = np.array([fundamental(m) for m in range(21, 109)])
+    """Refit the key level law (gain = max(1, f0/knee)^exponent) on layers 1, 3 and 4, fitting keys."""
+    fit = np.array([midi - 21 for midi in FIT_KEYS])
+    errors = np.mean([key_level_errors(layer) for layer in (1, 3, 4)], axis=0)[fit]
+    f0 = np.array([fundamental(m) for m in FIT_KEYS])
     current = 20 * current_exponent * np.log10(np.maximum(1, f0 / current_knee))
     def total(c):
         corrected = errors - current + 20 * c[1] * np.log10(np.maximum(1, f0 / c[0]))
@@ -268,13 +287,19 @@ def main() -> None:
     print(f"Renderer: {RENDERER}")
     print(f"spectrum error, fitting layers 1/3/4: {spectrum_error([1, 3, 4]):5.2f} dB")
     print(f"spectrum error, held-out layer 2:     {spectrum_error([2]):5.2f} dB")
-    print(f"key level error std, layer 3:         {np.std(key_level_errors(3)):5.2f} dB")
-    print(f"sustain error, layer 3:               {sustain_error():5.2f} dB")
+    levels = dict(zip(range(21, 109), key_level_errors(3)))
+    print(f"key level error std, layer 3:         {np.std(list(levels.values())):5.2f} dB "
+          f"(fitting keys {np.std([levels[m] for m in FIT_KEYS]):4.2f}, "
+          f"split keys {np.std([levels[m] for m in HELD_OUT_KEYS]):4.2f}); worst "
+          + ", ".join(f"{note_name(m)} {levels[m]:+.1f}" for m in sorted(levels, key=lambda m: -abs(levels[m]))[:3]))
+    sustain = sustain_errors()
+    print(f"sustain error, layer 3:               {np.sqrt(np.mean(np.square(list(sustain.values())))):5.2f} dB; worst "
+          + ", ".join(f"{note_name(m)} {sustain[m]:.1f}" for m in sorted(sustain, key=lambda m: -sustain[m])[:3]))
     model, ref = correlations(lambda m: render(m, 3, 2.0, pedal=1)), correlations(lambda m: reference(m, 3))
     print(f"L/R correlation mean/median:          model {model.mean():5.2f}/{np.median(model):5.2f}  "
           f"reference {ref.mean():5.2f}/{np.median(ref):5.2f}")
     halo_diff = halo_error()
-    print("pedal-down halo, model minus ref:     "
+    print("halo plausibility (not calibration):  "
           + " ".join(f"{v:+5.1f}" for v in halo_diff.mean(axis=0)) + " dB (0.3-0.6, 0.6-1.2, 1.2-2.4 s); "
           f"per-note spread {np.std(halo_diff.mean(axis=1)):4.1f} dB")
     mean, worst, low = onset_error()
@@ -282,11 +307,13 @@ def main() -> None:
     bright = brightness_by_layer()
     print("1-8 kHz brightness, model minus ref:  " + "  ".join(f"L{l} {v:+5.1f}" for l, v in bright.items()) + " dB")
     if "--refit" in sys.argv:
-        (early_a, early_b), (late_a, late_b) = decay_laws()
+        (early_a, early_b), (late_a, late_b), counts = decay_laws()
+        print(f"decay fits: {counts}")
         print(f"refit prompt decay:     T60 = {early_a:.2f} s * (f/440)^{early_b:.3f}   (code: 4.89, -0.745)")
         print(f"refit aftersound decay: T60 = {late_a:.2f} s * (f/440)^{late_b:.3f}   (code: 16.87, -0.444)")
         knee, exponent = level_law_correction(64.4, 1.505)
-        print(f"refit key level law:    knee {knee:.1f} Hz, exponent {exponent:.3f}   (code: 64.4, 1.505)")
+        print(f"refit key level law:    knee {knee:.1f} Hz, exponent {exponent:.3f}   (code: 64.4, 1.505; "
+              "one-step linear correction, not a fixed point: knock and sympathy don't scale with the law)")
 
 
 if __name__ == "__main__":
