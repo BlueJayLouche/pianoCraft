@@ -34,6 +34,9 @@ struct KeyModel {
     double velocityBrightnessExponent = 0.0;
     double hammerStiffnessScale = 1.0;
     double outputGain = 1.0;
+    double sympatheticDrive = 1.0;
+    // Butterworth high-pass at 0.7 f0 on the voice output, as b0, b1, b2, a1, a2.
+    std::array<double, 5> bridgeHighpass{1.0, 0.0, 0.0, 0.0, 0.0};
     double leftGain = 0.707;
     double rightGain = 0.707;
     bool hasDamper = true;

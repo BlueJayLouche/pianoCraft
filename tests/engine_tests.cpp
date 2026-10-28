@@ -134,7 +134,8 @@ void restrikesAndPolyphonyAreFinite() {
     for (int key = 33; key < 97; ++key) {
         engine.noteOn(note(key, key), 0.65);
     }
-    require(engine.activeVoiceCount() == 64, "Expected 64 active voices");
+    // 12 ringing restrikes plus 64 new keys fit in the 96 voices without stealing.
+    require(engine.activeVoiceCount() == 76, "Expected 76 active voices");
     const auto output = render(engine, 2400, 64);
     require(std::isfinite(peak(output)), "Dense polyphony failed");
     engine.reset();
@@ -156,7 +157,8 @@ void blockSizesAreDeterministic() {
 
 void parametersAndRatesAreValid() {
     pianocraft::PianoEngine engine;
-    for (double rate : {44100.0, 48000.0, 96000.0}) {
+    // 1234.57 Hz puts treble fundamentals and the 1 kHz velocity shelf above Nyquist.
+    for (double rate : {1234.57, 44100.0, 48000.0, 96000.0, 768000.0}) {
         engine.prepare(rate);
         engine.setParameter(pianocraft::ParameterId::outputGain, 99.0);
         require(engine.parameterValue(pianocraft::ParameterId::outputGain) == 2.0, "Parameter clamp failed");
@@ -164,6 +166,12 @@ void parametersAndRatesAreValid() {
         engine.noteOn(note(69), 0.0);
         require(peak(render(engine, static_cast<std::uint32_t>(rate / 10), 64)) > 0.0,
                 "Native zero-velocity note-on must remain audible");
+        engine.reset();
+        engine.setSustain(0, true);
+        for (int key = 21; key <= 108; key += 5) {
+            engine.noteOn(note(key), 1.0);
+        }
+        render(engine, static_cast<std::uint32_t>(rate / 4) + 64, 64);  // render() rejects non-finite output
         engine.reset();
     }
 }
@@ -328,6 +336,34 @@ void micPositionsAndWidth() {
     }
 }
 
+double trebleShare(const std::vector<float>& output) {
+    // Energy above ~2 kHz (two one-pole high-passes) relative to the whole signal.
+    const double coefficient = std::exp(-2.0 * 3.141592653589793 * 2000.0 / 48000.0);
+    double in1 = 0.0, out1 = 0.0, in2 = 0.0, out2 = 0.0, high = 0.0, total = 0.0;
+    for (std::size_t index = 0; index < output.size(); index += 2) {
+        const double x = output[index];
+        out1 = coefficient * (out1 + x - in1);
+        in1 = x;
+        out2 = coefficient * (out2 + out1 - in2);
+        in2 = out1;
+        high += out2 * out2;
+        total += x * x;
+    }
+    return high / total;
+}
+
+void louderIsBrighter() {
+    const auto play = [](double velocity) {
+        pianocraft::PianoEngine engine;
+        engine.prepare(48000.0);
+        engine.noteOn(note(60), velocity);
+        return render(engine, 19200, 64);
+    };
+    const double soft = trebleShare(play(0.3));
+    const double loud = trebleShare(play(0.95));
+    require(loud > soft * 2.0, "ff is not >3 dB brighter than pp: " + std::to_string(10.0 * std::log10(loud / soft)) + " dB");
+}
+
 } // namespace
 
 int main() {
@@ -343,6 +379,7 @@ int main() {
         trebleIsBalancedAndClear();
         notesSustainInStereo();
         micPositionsAndWidth();
+        louderIsBrighter();
         std::cout << "All engine tests passed\n";
         return 0;
     } catch (const std::exception& error) {

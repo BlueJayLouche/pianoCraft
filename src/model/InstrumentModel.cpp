@@ -71,9 +71,25 @@ InstrumentModel::InstrumentModel(double sampleRate) {
         key.hammerStiffnessScale = calibration.hammerStiffnessScale;
         // The modal strings lose roughly 9 dB per octave up the keyboard; this power law, fitted
         // against the reference corpus at pp/mf/ff, restores the recorded key-to-key balance.
-        // The 0.3 keeps a single velocity-127 note near -6 dBFS at the default output gain.
-        key.outputGain = 0.3 * std::pow(std::max(1.0, key.fundamental / 55.0), 1.47) * calibration.loudness;
+        // The 0.4 keeps a single velocity-127 note near -6 dBFS at the default output gain.
+        const double levelLaw = std::pow(std::max(1.0, key.fundamental / 64.4), 1.505) * calibration.loudness;
+        key.outputGain = 0.4 * levelLaw;
+        // The law corrects radiated level, not the force on the bridge. Driving sympathetic strings
+        // with half of it (in dB) balances the halo across registers: bass notes were 12 dB light.
+        key.sympatheticDrive = 1.0 / std::sqrt(levelLaw);
         key.hasDamper = key.midi <= 88;
+
+        // While the hammer presses on the string every mode follows its push quasi-statically,
+        // and that push reached the output as a low-frequency click 8-15 dB above the tone in
+        // the treble. Real bridges feel far less of it (the recordings' attack is 16-23 dB down
+        // below f0/2); a high-pass at 0.7 f0 matches that while costing the fundamental ~0.9 dB.
+        {
+            const double omega = 2.0 * pi * std::min(0.7 * key.fundamental, 0.45 * sampleRate) / sampleRate;
+            const double alpha = std::sin(omega) / std::sqrt(2.0);
+            const double a0 = 1.0 + alpha;
+            const double b = (1.0 + std::cos(omega)) / 2.0 / a0;
+            key.bridgeHighpass = {b, -2.0 * b, b, -2.0 * std::cos(omega) / a0, (1.0 - alpha) / a0};
+        }
 
 
         const double baseDecay = calibration.decaySeconds;
@@ -100,23 +116,40 @@ InstrumentModel::InstrumentModel(double sampleRate) {
             return std::max(0.025, baseRelease / (1.0 + 0.014 * k + 0.0012 * k * k));
         };
 
-        for (std::size_t partialIndex = 0; partialIndex < calibration.partialCount; ++partialIndex) {
-            const auto& calibrated = calibration.partials[partialIndex];
-            if (calibrated.partial == 0 || calibrated.frequency <= 0.0 ||
-                calibrated.frequency > maximumFrequency || calibrated.decaySeconds <= 0.0) {
-                continue;
-            }
-            const double k = static_cast<double>(calibrated.partial);
-            primaryIndices[partialIndex] = key.modeCount;
+        const auto addPrimary = [&](double k, double frequency) {
             auto& mode = key.modes[key.modeCount++];
-            setPole(mode, calibrated.frequency, promptDecaySeconds(calibrated.frequency), releaseSeconds(k),
-                    sampleRate);
+            setPole(mode, frequency, promptDecaySeconds(frequency), releaseSeconds(k), sampleRate);
             const double strikeWeight = std::sin(k * pi * key.strikePosition);
             const double finiteHammerWidth = std::exp(-0.00045 * k * k);
             mode.excitation = normalization * strikeWeight * finiteHammerWidth;
             mode.output = 1.0 / (1.0 + 0.018 * k);
             mode.secondary = false;
             ++key.primaryModeCount;
+        };
+
+        double highestPartial = 0.0;
+        for (std::size_t partialIndex = 0; partialIndex < calibration.partialCount; ++partialIndex) {
+            const auto& calibrated = calibration.partials[partialIndex];
+            if (calibrated.partial == 0 || calibrated.frequency <= 0.0 ||
+                calibrated.frequency > maximumFrequency || calibrated.decaySeconds <= 0.0) {
+                continue;
+            }
+            primaryIndices[partialIndex] = key.modeCount;
+            addPrimary(calibrated.partial, calibrated.frequency);
+            highestPartial = std::max<double>(highestPartial, calibrated.partial);
+        }
+
+        // Calibration stops at 32 partials, so A0's series ended near 1 kHz while its recording
+        // holds -13 to -16 dB of its energy above that. Continue every series to 4 kHz along the
+        // measured inharmonicity; normalization stays tied to the calibrated count so levels hold.
+        const double extensionLimit = std::min(4000.0, maximumFrequency);
+        for (double k = highestPartial + 1.0; key.primaryModeCount < primaryModeLimit; k += 1.0) {
+            const double frequency = k * key.fundamental *
+                std::sqrt((1.0 + key.inharmonicity * k * k) / (1.0 + key.inharmonicity));
+            if (frequency > extensionLimit) {
+                break;
+            }
+            addPrimary(k, frequency);
         }
 
         std::size_t secondaryCount = 0;

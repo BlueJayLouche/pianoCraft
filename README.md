@@ -60,7 +60,16 @@ See `docs/clean-room.md`, `model/provenance.json`, and
 derive synthesis coefficients. The `calibration/` directory and raw audio are
 not distributed with the plugin.
 
-To regenerate the measured tables from the verified local corpus:
+To score the current build against the corpus and re-derive the fitted model
+laws (see `docs/model-laws.md`):
+
+```sh
+.venv/bin/python tools/evaluate_model.py --refit
+```
+
+`tools/calibrate.py` reproduced the original measured tables but is now frozen:
+its layer-2 gate closed when the final validation was recorded. Its original
+instructions were:
 
 ```sh
 python3 -m venv .venv

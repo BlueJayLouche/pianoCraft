@@ -14,11 +14,36 @@
 namespace pianocraft {
 namespace {
 
-constexpr std::size_t voiceCount = 64;
+// More slots than keys: a restrike reuses its key's voice, so even a fully pedalled keyboard
+// never forces an audible voice to be cut.
+constexpr std::size_t voiceCount = 96;
 constexpr std::size_t parameterCount = 7;
 
 std::size_t parameterIndex(ParameterId id) {
     return static_cast<std::size_t>(id) < parameterCount ? static_cast<std::size_t>(id) : 0;
+}
+
+// RBJ high shelf as b0, b1, b2, a1, a2.
+std::array<double, 5> highShelf(double frequency, double gainDb, double sampleRate) {
+    const double a = std::pow(10.0, gainDb / 40.0);
+    const double omega = 2.0 * 3.141592653589793 * frequency / sampleRate;
+    const double cosine = std::cos(omega);
+    const double root = 2.0 * std::sqrt(a) * std::sin(omega) / std::sqrt(2.0);
+    const double a0 = (a + 1.0) - (a - 1.0) * cosine + root;
+    return {a * ((a + 1.0) + (a - 1.0) * cosine + root) / a0,
+            -2.0 * a * ((a - 1.0) + (a + 1.0) * cosine) / a0,
+            a * ((a + 1.0) + (a - 1.0) * cosine - root) / a0,
+            2.0 * ((a - 1.0) - (a + 1.0) * cosine) / a0,
+            ((a + 1.0) - (a - 1.0) * cosine - root) / a0};
+}
+
+double biquad(const std::array<double, 5>& c, double* state, double input) {
+    const double output = c[0] * input + c[1] * state[0] + c[2] * state[1] - c[3] * state[2] - c[4] * state[3];
+    state[1] = state[0];
+    state[0] = input;
+    state[3] = state[2];
+    state[2] = std::abs(output) < 1.0e-30 ? 0.0 : output;
+    return state[2];
 }
 
 struct ModeState {
@@ -50,6 +75,9 @@ struct Voice {
     bool released = false;
     bool heldByPedal = false;
     bool choking = false;
+    std::array<double, 8> highpassState{};
+    std::array<double, 5> velocityShelf{1.0, 0.0, 0.0, 0.0, 0.0};
+    std::array<double, 8> shelfState{};
 
     void clear() {
         key = nullptr;
@@ -68,6 +96,9 @@ struct Voice {
         released = false;
         heldByPedal = false;
         choking = false;
+        highpassState = {};
+        velocityShelf = {1.0, 0.0, 0.0, 0.0, 0.0};
+        shelfState = {};
     }
 };
 
@@ -85,10 +116,11 @@ struct PianoEngine::Impl {
     double smoothedGain = 0.7;
     double smoothedWidth = 1.0;
     MicPosition micPosition = MicPosition::spacedPair;
-    // ponytail: two one-pole high-passes at 100 Hz stand in for the soundboard's weak
+    // ponytail: three one-pole high-passes at 100 Hz stand in for the soundboard's weak
     // radiation of low fundamentals; replace with a radiation model if the bass needs more.
-    std::array<double, 4> highpassInput{};
-    std::array<double, 4> highpassOutput{};
+    static constexpr std::size_t highpassStages = 3;
+    std::array<double, 2 * highpassStages> highpassInput{};
+    std::array<double, 2 * highpassStages> highpassOutput{};
     double highpassCoefficient = 1.0;
 
     Impl() {
@@ -126,7 +158,7 @@ struct PianoEngine::Impl {
     }
 
     double highpass(double sample, std::size_t channel) {
-        for (std::size_t stage = channel * 2; stage < channel * 2 + 2; ++stage) {
+        for (std::size_t stage = channel * highpassStages; stage < (channel + 1) * highpassStages; ++stage) {
             const double output = highpassCoefficient * (highpassOutput[stage] + sample - highpassInput[stage]);
             highpassInput[stage] = sample;
             highpassOutput[stage] = std::abs(output) < 1.0e-30 ? 0.0 : output;
@@ -225,6 +257,12 @@ struct PianoEngine::Impl {
         voice.hammer.velocity = 0.35 + 2.4 * std::pow(velocity, 0.85);
         voice.hammer.mass = 0.012 * std::pow(0.5, registerPosition);
         voice.hammer.active = true;
+        // Velocity EQ (the excitation-filter fallback in the research notes): +-8 dB per doubling
+        // of velocity above 1 kHz, flat at mf. The hammer alone brightened 7.4 dB too little from
+        // pp to ff, and making it stiffen with velocity gave erratic per-note spectra.
+        voice.velocityShelf = highShelf(std::min(1000.0, 0.45 * sampleRate),
+                                        8.0 * std::log2(std::max(velocity, 0.01) / referenceVelocity),
+                                        sampleRate);
     }
 
     void release(Voice& voice) {
@@ -234,7 +272,15 @@ struct PianoEngine::Impl {
         }
     }
 
-    std::array<double, 2> processVoice(Voice& voice) {
+    static double radiated(Voice& voice, double input, std::size_t channel) {
+        const double filtered = biquad(voice.key->bridgeHighpass, &voice.highpassState[channel * 4], input);
+        return biquad(voice.velocityShelf, &voice.shelfState[channel * 4], filtered);
+    }
+
+    // Returns the radiated left/right samples (bridge high-pass and velocity EQ), the unfiltered
+    // bridge signal (the bridge still feels the hammer's push, which drives the board and the
+    // sympathetic strings even though it radiates little) and the hammer knock on the board.
+    std::array<double, 4> processVoice(Voice& voice) {
         const auto& key = *voice.key;
         const double hardness = parameters[parameterIndex(ParameterId::hammerHardness)];
         double force = 0.0;
@@ -289,7 +335,12 @@ struct PianoEngine::Impl {
         }
 
         const double gain = voice.velocityGain * voice.chokeGain;
-        const std::array<double, 2> sample{bridge * gain, bridgeRight * gain};
+        // The impact also knocks the board through the action and frame; scaled by force alone, not
+        // by the key level law. Fitted to the recordings' broadband energy 20-100 ms after the
+        // strike, which was 8 dB short.
+        const double knock = force * voice.chokeGain * 0.0267;
+        const std::array<double, 4> sample{
+            radiated(voice, bridge, 0) * gain, radiated(voice, bridgeRight, 1) * gain, bridge * gain, knock};
         voice.level = std::max({std::abs(sample[0]), std::abs(sample[1]), voice.level * 0.99995});
         if (!voice.hammer.active && voice.level < 1.0e-8 && voice.age > sampleRate) {
             voice.active = false;
@@ -429,6 +480,8 @@ void PianoEngine::render(float* left, float* right, std::uint32_t frameCount) {
         std::array<double, 3> regionLeft{};
         std::array<double, 3> regionRight{};
         std::array<double, 3> regionMono{};
+        std::array<double, 3> regionSympathetic{};
+        std::array<double, 3> regionKnock{};
         for (auto& voice : impl_->voices) {
             if (!voice.active || voice.key == nullptr) {
                 continue;
@@ -440,14 +493,17 @@ void PianoEngine::render(float* left, float* right, std::uint32_t frameCount) {
             regionLeft[region] += sampleLeft;
             regionRight[region] += sampleRight;
             // Sympathetic strings hear the bridge, not the per-channel radiation phase.
-            regionMono[region] += 0.5 * sample[0] * (voice.key->leftGain + voice.key->rightGain);
+            const double bridgeSample = 0.5 * sample[2] * (voice.key->leftGain + voice.key->rightGain);
+            regionMono[region] += bridgeSample;
+            regionSympathetic[region] += bridgeSample * voice.key->sympatheticDrive;
+            regionKnock[region] += sample[3];
         }
-        const auto resonance = impl_->sympathetic.process(regionMono, impl_->undamped, sympatheticLevel);
+        const auto resonance = impl_->sympathetic.process(regionSympathetic, impl_->undamped, sympatheticLevel);
         std::array<double, 3> bridge{};
         for (std::size_t region = 0; region < 3; ++region) {
             regionLeft[region] += resonance[region] * 0.707;
             regionRight[region] += resonance[region] * 0.707;
-            bridge[region] = regionMono[region] + resonance[region];
+            bridge[region] = regionMono[region] + resonance[region] + regionKnock[region];
         }
         double mixedLeft = 0.0;
         double mixedRight = 0.0;

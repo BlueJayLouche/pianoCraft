@@ -30,7 +30,7 @@ void SympatheticBank::prepare(double sampleRate, const InstrumentModel& model) {
             mode.releaseA1 = 2.0 * releaseRadius * std::cos(omega);
             mode.releaseA2 = releaseRadius * releaseRadius;
             mode.inputGain = 0.15 / (1.0 + partialIndex * 0.7);
-            mode.outputGain = 0.24 * (1.0 - sustainRadius) / (1.0 + partialIndex * 0.5);
+            mode.outputGain = 1.2 * (1.0 - sustainRadius) / (1.0 + partialIndex * 0.5);
             ++partialIndex;
         }
     }
