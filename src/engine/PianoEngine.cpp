@@ -72,8 +72,6 @@ struct Voice {
     double chokeGain = 1.0;
     bool active = false;
     bool keyDown = false;
-    bool released = false;
-    bool heldByPedal = false;
     bool choking = false;
     std::array<double, 8> highpassState{};
     std::array<double, 5> velocityShelf{1.0, 0.0, 0.0, 0.0, 0.0};
@@ -93,8 +91,6 @@ struct Voice {
         chokeGain = 1.0;
         active = false;
         keyDown = false;
-        released = false;
-        heldByPedal = false;
         choking = false;
         highpassState = {};
         velocityShelf = {1.0, 0.0, 0.0, 0.0, 0.0};
@@ -107,8 +103,11 @@ struct Voice {
 struct PianoEngine::Impl {
     std::unique_ptr<InstrumentModel> model;
     std::array<Voice, voiceCount> voices{};
-    std::array<bool, 16> sustain{};
-    std::array<bool, instrumentKeyCount> undamped{};
+    // Damper contact per channel: 1 with the pedal up, 0 with it down.
+    std::array<double, 16> damperContact{};
+    std::array<double, 16> softPedal{};
+    // How free each string is to ring sympathetically, 0 (damped) to 1.
+    std::array<double, instrumentKeyCount> undamped{};
     std::array<double, parameterCount> parameters{};
     Soundboard soundboard;
     SympatheticBank sympathetic;
@@ -163,8 +162,9 @@ struct PianoEngine::Impl {
         for (auto& voice : voices) {
             voice.clear();
         }
-        sustain.fill(false);
-        undamped.fill(false);
+        damperContact.fill(1.0);
+        softPedal.fill(0.0);
+        undamped.fill(0.0);
         if (model != nullptr) {
             updateUndamped();
         }
@@ -186,16 +186,16 @@ struct PianoEngine::Impl {
         return sample;
     }
 
-    // Strings free to ring sympathetically: all of them with the pedal down, otherwise the
-    // damperless top keys. A string already sounding as a voice is excluded so it is not doubled.
+    // Strings free to ring sympathetically: as far as the most-lifted pedal allows, and the
+    // damperless top keys always. A string already sounding as a voice is excluded so it is not doubled.
     void updateUndamped() {
-        const bool pedal = std::any_of(sustain.begin(), sustain.end(), [](bool engaged) { return engaged; });
+        const double lifted = 1.0 - *std::min_element(damperContact.begin(), damperContact.end());
         for (std::size_t index = 0; index < undamped.size(); ++index) {
-            undamped[index] = pedal || !model->key(static_cast<int>(index) + 21).hasDamper;
+            undamped[index] = model->key(static_cast<int>(index) + 21).hasDamper ? lifted : 1.0;
         }
         for (const auto& voice : voices) {
             if (voice.active && voice.key != nullptr) {
-                undamped[voice.address.key - 21] = false;
+                undamped[voice.address.key - 21] = 0.0;
             }
         }
     }
@@ -231,15 +231,14 @@ struct PianoEngine::Impl {
         Voice* selected = &voices.front();
         double bestScore = std::numeric_limits<double>::infinity();
         for (auto& voice : voices) {
+            // Held keys matter most, then damperless and pedal-held strings, then damped ones.
             double score = voice.level;
-            if (!voice.released) {
-                score *= 4.0;
-            }
             if (voice.keyDown) {
-                score *= 3.0;
-            }
-            if (voice.heldByPedal) {
-                score *= 2.0;
+                score *= 12.0;
+            } else if (!voice.key->hasDamper) {
+                score *= 4.0;
+            } else {
+                score *= 1.0 + 7.0 * (1.0 - damperContact[voice.address.channel]);
             }
             if (score < bestScore || (score == bestScore && voice.age > selected->age)) {
                 selected = &voice;
@@ -256,9 +255,7 @@ struct PianoEngine::Impl {
         voice.address = address;
         voice.active = true;
         voice.keyDown = true;
-        voice.released = false;
         voice.releaseBlend = 0.0;
-        voice.heldByPedal = false;
         voice.choking = false;
         voice.chokeGain = 1.0;
         voice.age = 0;
@@ -290,13 +287,6 @@ struct PianoEngine::Impl {
                                         8.0 * parameters[parameterIndex(ParameterId::velocityBrightness)] *
                                             std::log2(std::max(velocity, 0.01) / referenceVelocity),
                                         sampleRate);
-    }
-
-    void release(Voice& voice) {
-        if (voice.key != nullptr && voice.key->hasDamper) {
-            voice.released = true;
-            voice.heldByPedal = false;
-        }
     }
 
     static double radiated(Voice& voice, double input, std::size_t channel) {
@@ -331,9 +321,11 @@ struct PianoEngine::Impl {
             }
         }
 
-        if (voice.released) {
-            voice.releaseBlend = std::min(1.0, voice.releaseBlend + 40.0 / sampleRate);
-        }
+        // Dampers rest on a string once its key is up, as far as the pedal lets them, and lift off
+        // again when the pedal goes down, catching what is still ringing. Fully on or off in 25 ms.
+        const double damping = voice.keyDown || !key.hasDamper ? 0.0 : damperContact[voice.address.channel];
+        const double step = 40.0 / sampleRate;
+        voice.releaseBlend += std::clamp(damping - voice.releaseBlend, -step, step);
         double bridge = 0.0;
         double bridgeRight = 0.0;
         double displacement = 0.0;
@@ -342,7 +334,7 @@ struct PianoEngine::Impl {
             auto& state = voice.modes[index];
             double a1 = coefficients.sustainA1;
             double a2 = coefficients.sustainA2;
-            if (voice.released) {
+            if (voice.releaseBlend > 0.0) {
                 a1 += (coefficients.releaseA1 - a1) * voice.releaseBlend;
                 a2 += (coefficients.releaseA2 - a2) * voice.releaseBlend;
             }
@@ -409,6 +401,9 @@ void PianoEngine::noteOn(const NoteAddress& address, double velocity) {
     if (velocity == 0.0) {
         velocity = 0.002;
     }
+    // An upright's soft pedal moves the hammers toward the strings; the shorter throw lands them
+    // slower, so the note is both softer and darker. Analytic: the corpus has no soft-pedal notes.
+    velocity *= 1.0 - 0.3 * impl_->softPedal[address.channel];
     Voice* voice = impl_->findRestrike(address);
     if (voice == nullptr) {
         voice = impl_->allocateVoice();
@@ -424,11 +419,6 @@ void PianoEngine::noteOff(const NoteAddress& address, double velocity) {
             continue;
         }
         voice.keyDown = false;
-        if (address.channel >= 0 && address.channel < 16 && impl_->sustain[address.channel]) {
-            voice.heldByPedal = voice.key->hasDamper;
-        } else {
-            impl_->release(voice);
-        }
     }
     impl_->updateUndamped();
 }
@@ -438,25 +428,27 @@ void PianoEngine::choke(const NoteAddress& address) {
         if (Impl::matches(voice, address)) {
             voice.choking = true;
             voice.keyDown = false;
-            voice.heldByPedal = false;
         }
     }
     impl_->updateUndamped();
 }
 
-void PianoEngine::setSustain(std::int16_t channel, bool engaged) {
-    if (channel < 0 || channel > 15) {
+void PianoEngine::setSustain(std::int16_t channel, double depth) {
+    if (channel < 0 || channel > 15 || !std::isfinite(depth)) {
         return;
     }
-    impl_->sustain[channel] = engaged;
-    if (!engaged) {
-        for (auto& voice : impl_->voices) {
-            if (voice.active && voice.address.channel == channel && voice.heldByPedal && !voice.keyDown) {
-                impl_->release(voice);
-            }
-        }
-    }
+    // Analytic half-pedal zone: dampers fully on below 25% travel, fully off above 75%. Squared
+    // because damping shortens decay fast: mid-travel then leaves C3 ringing ~1.5 s rather than
+    // ~0.8 s. The corpus has no part-pedalled notes, so this is chosen, not measured.
+    const double contact = std::clamp((0.75 - depth) / 0.5, 0.0, 1.0);
+    impl_->damperContact[channel] = contact * contact;
     impl_->updateUndamped();
+}
+
+void PianoEngine::setSoftPedal(std::int16_t channel, double depth) {
+    if (channel >= 0 && channel <= 15 && std::isfinite(depth)) {
+        impl_->softPedal[channel] = std::clamp(depth, 0.0, 1.0);
+    }
 }
 
 void PianoEngine::setParameter(ParameterId id, double value) {

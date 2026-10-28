@@ -36,6 +36,8 @@ Status column:
 | Spaced-pair phase spread above 100 Hz | `InstrumentModel.cpp` | Selected | L/R correlation, model 0.00 vs recordings -0.01. |
 | Sympathetic output 1.2, drive 1/sqrt(level law), 8 partials, whole board | `SympatheticBank.cpp`, `InstrumentModel.cpp` | Analytic | The corpus documents no pedal state, so no pedal coupling is fitted from it (research roadmap 3.4). Pedal-down renders against the isolated-note recordings are a plausibility check only: -3.8/+2.5/+1.4 dB, per-note spread 3.8 dB. Confirm by ear. |
 | Coincident and Player mic positions | `InstrumentModel.cpp`, `Soundboard.cpp` | Analytic | No reference recordings. |
+| Half-pedal zone 25-75% travel, contact squared | `PianoEngine.cpp` | Analytic | The corpus has no part-pedalled notes; the roadmap defers a measured part-pedal model until there are controlled recordings. Interpolates between the sustain and release poles. |
+| Soft pedal: velocity x 0.7 | `PianoEngine.cpp` | Analytic | Upright half-blow action. No soft-pedal recordings; about -7.7 dB at C4. |
 
 Release and damper noise are not modelled: the recordings contain no key releases.
 

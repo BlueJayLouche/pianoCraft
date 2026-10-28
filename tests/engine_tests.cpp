@@ -181,7 +181,7 @@ void sympatheticIsSelective() {
     pianocraft::InstrumentModel model(48000.0);
     pianocraft::SympatheticBank bank;
     bank.prepare(48000.0, model);
-    std::array<bool, pianocraft::instrumentKeyCount> undamped{};
+    std::array<double, pianocraft::instrumentKeyCount> undamped{};
     std::array<double, 3> input{0.0, 1.0, 0.0};
     double dampedEnergy = 0.0;
     for (std::size_t frame = 0; frame < 4096; ++frame) {
@@ -428,6 +428,44 @@ void voicingControls() {
     check("Hammer Noise 2 vs 0 differs by more than -30 dB", 30.0 - dB(rms(loud), rms(knockDifference)), 0.0);
 }
 
+// Half-pedalling damps between pedal-up and pedal-down, re-pedalling catches a decaying note, and
+// the soft pedal makes notes softer and darker.
+void pedalsAreContinuous() {
+    const auto releasedTail = [](double depth, bool repedal) {
+        pianocraft::PianoEngine engine;
+        engine.prepare(48000.0);
+        engine.setSustain(0, depth);
+        engine.noteOn(note(48), 0.7);
+        render(engine, 24000, 64);
+        engine.noteOff(note(48), 0.0);
+        render(engine, 2400, 64);
+        if (repedal) {
+            engine.setSustain(0, 1.0);
+        }
+        return rms(render(engine, 48000, 64));
+    };
+    const auto dB = [](double a, double b) { return 20.0 * std::log10(a / b); };
+    const double down = releasedTail(1.0, false);
+    const double half = releasedTail(0.5, false);
+    const double up = releasedTail(0.0, false);
+    require(dB(down, half) > 6.0 && dB(half, up) > 6.0,
+            "Half pedal is not between down and up: " + std::to_string(dB(down, half)) + " / " +
+            std::to_string(dB(half, up)) + " dB");
+    require(dB(releasedTail(0.0, true), up) > 6.0, "Re-pedalling did not catch the decaying note");
+
+    const auto play = [](double soft) {
+        pianocraft::PianoEngine engine;
+        engine.prepare(48000.0);
+        engine.setSoftPedal(0, soft);
+        engine.noteOn(note(60), 0.8);
+        return render(engine, 19200, 64);
+    };
+    const auto normal = play(0.0);
+    const auto soft = play(1.0);
+    require(dB(rms(normal), rms(soft)) > 3.0, "Soft pedal is not softer: " + std::to_string(dB(rms(normal), rms(soft))) + " dB");
+    require(trebleShare(soft) < trebleShare(normal) * 0.8, "Soft pedal is not darker");
+}
+
 int main() {
     try {
         modelIsStable();
@@ -443,6 +481,7 @@ int main() {
         micPositionsAndWidth();
         louderIsBrighter();
         voicingControls();
+        pedalsAreContinuous();
         std::cout << "All engine tests passed\n";
         return 0;
     } catch (const std::exception& error) {

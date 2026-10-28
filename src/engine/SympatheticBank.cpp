@@ -47,21 +47,23 @@ void SympatheticBank::reset() {
 
 std::array<double, 3> SympatheticBank::process(
     const std::array<double, 3>& input,
-    const std::array<bool, instrumentKeyCount>& undamped,
+    const std::array<double, instrumentKeyCount>& undamped,
     double level) {
     const double board = input[0] + input[1] + input[2];
     std::array<double, 3> output{};
     for (std::size_t index = 0; index < instrumentKeyCount; ++index) {
         const std::size_t region = index + 21 < 48 ? 0 : (index + 21 < 72 ? 1 : 2);
-        const bool open = undamped[index];
+        const double open = undamped[index];
         for (auto& mode : keys_[index]) {
-            // Dampers block the drive; a damped string only rings out what it already holds.
-            if (mode.inputGain == 0.0 || (!open && mode.y1 == 0.0 && mode.y2 == 0.0)) {
+            // Dampers block the drive in proportion to their contact; a fully damped string only
+            // rings out what it already holds.
+            if (mode.inputGain == 0.0 || (open == 0.0 && mode.y1 == 0.0 && mode.y2 == 0.0)) {
                 continue;
             }
-            const double value = open
-                ? board * mode.inputGain + mode.sustainA1 * mode.y1 - mode.sustainA2 * mode.y2
-                : mode.releaseA1 * mode.y1 - mode.releaseA2 * mode.y2;
+            // Exact sustain or release coefficients at open = 1 or 0.
+            const double a1 = mode.sustainA1 * open + mode.releaseA1 * (1.0 - open);
+            const double a2 = mode.sustainA2 * open + mode.releaseA2 * (1.0 - open);
+            const double value = board * mode.inputGain * open + a1 * mode.y1 - a2 * mode.y2;
             mode.y2 = mode.y1;
             mode.y1 = std::abs(value) < 1.0e-30 ? 0.0 : value;
             output[region] += mode.y1 * mode.outputGain * level;

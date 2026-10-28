@@ -58,6 +58,12 @@ Strings, Mix) and maps two remote-control pages onto its device knobs:
 - **Voicing:** Unison Detune (beat speed; 0 is perfectly in tune), Aftersound
   (the long second-stage tail), Damper Release, Hammer Noise, Mic Position.
 
+The sustain pedal (CC64) is continuous: dampers start lifting at a quarter of
+the travel and are fully off at three quarters, so a continuous pedal can
+half-pedal, and pressing it again catches a note that is dying away. On/off
+pedals behave as before. CC67 is the soft pedal: like an upright's, it shortens
+the hammer throw, so notes come out softer and darker.
+
 At 1.0 every voicing control is the calibrated piano. Sustain Length, Damper
 Release, Unison Detune and Aftersound recompute the string model when changed,
 so they suit setting by hand more than fast automation.

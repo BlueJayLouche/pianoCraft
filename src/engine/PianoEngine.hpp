@@ -43,7 +43,9 @@ public:
     void noteOn(const NoteAddress& address, double velocity);
     void noteOff(const NoteAddress& address, double velocity);
     void choke(const NoteAddress& address);
-    void setSustain(std::int16_t channel, bool engaged);
+    // Pedal depth 0 (up) to 1 (down); continuous values give half-pedalling and half-soft.
+    void setSustain(std::int16_t channel, double depth);
+    void setSoftPedal(std::int16_t channel, double depth);
     void setParameter(ParameterId id, double value);
     double parameterValue(ParameterId id) const;
 

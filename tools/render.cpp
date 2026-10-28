@@ -135,7 +135,7 @@ int main(int argc, char** argv) {
                         engine.noteOff(address, 0.0);
                         break;
                     case Event::Type::pedal:
-                        engine.setSustain(0, event.velocity >= 0.5);
+                        engine.setSustain(0, event.velocity);
                         break;
                 }
                 ++nextEvent;

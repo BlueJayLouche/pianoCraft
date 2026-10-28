@@ -368,7 +368,11 @@ private:
         const auto port = static_cast<std::int16_t>(event.port_index);
 
         if (status == 0xB0U && event.data[1] == 64U) {
-            engine_.setSustain(channel, event.data[2] >= 64U);
+            engine_.setSustain(channel, event.data[2] / 127.0);
+            return;
+        }
+        if (status == 0xB0U && event.data[1] == 67U) {
+            engine_.setSoftPedal(channel, event.data[2] / 127.0);
             return;
         }
 

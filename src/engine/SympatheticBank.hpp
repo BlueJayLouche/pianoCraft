@@ -12,7 +12,7 @@ public:
     void prepare(double sampleRate, const InstrumentModel& model);
     void reset();
     std::array<double, 3> process(const std::array<double, 3>& input,
-                                  const std::array<bool, instrumentKeyCount>& undamped,
+                                  const std::array<double, instrumentKeyCount>& undamped,
                                   double level);
 
 private:
