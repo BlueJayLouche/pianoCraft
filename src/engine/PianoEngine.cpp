@@ -14,9 +14,7 @@
 namespace pianocraft {
 namespace {
 
-// More slots than keys: a restrike reuses its key's voice, so even a fully pedalled keyboard
-// never forces an audible voice to be cut.
-constexpr std::size_t voiceCount = 96;
+constexpr std::size_t voiceCount = voiceCapacity;
 constexpr std::size_t parameterCount = 16;
 
 std::size_t parameterIndex(ParameterId id) {
@@ -76,6 +74,23 @@ struct Voice {
     std::array<double, 8> highpassState{};
     std::array<double, 5> velocityShelf{1.0, 0.0, 0.0, 0.0, 0.0};
     std::array<double, 8> shelfState{};
+    // Per-note CLAP modulation and expressions.
+    double hardnessModulation = 0.0;
+    double noiseModulation = 0.0;
+    double volume = 1.0;
+    double volumeTarget = 1.0;
+    double panLeft = 1.0;
+    double panRight = 1.0;
+    double panLeftTarget = 1.0;
+    double panRightTarget = 1.0;
+
+    void neutralExpressions() {
+        hardnessModulation = 0.0;
+        noiseModulation = 0.0;
+        volumeTarget = 1.0;
+        panLeftTarget = 1.0;
+        panRightTarget = 1.0;
+    }
 
     void clear() {
         key = nullptr;
@@ -95,6 +110,10 @@ struct Voice {
         highpassState = {};
         velocityShelf = {1.0, 0.0, 0.0, 0.0, 0.0};
         shelfState = {};
+        neutralExpressions();
+        volume = 1.0;
+        panLeft = 1.0;
+        panRight = 1.0;
     }
 };
 
@@ -116,6 +135,17 @@ struct PianoEngine::Impl {
     double smoothedWidth = 1.0;
     MicPosition micPosition = MicPosition::spacedPair;
     bool voicingDirty = true;
+    std::array<double, parameterCount> modulation{}; // CLAP global (monophonic) modulation
+    std::array<EndedNote, 2 * voiceCount> endedNotes{};
+    std::size_t endedNoteCount = 0;
+    std::uint32_t currentFrame = 0;
+
+    void endNote(const NoteAddress& address) {
+        // ponytail: drops ends past capacity when nobody drains them (offline tools, tests).
+        if (endedNoteCount < endedNotes.size()) {
+            endedNotes[endedNoteCount++] = {address, currentFrame};
+        }
+    }
     // ponytail: three one-pole high-passes at 100 Hz stand in for the soundboard's weak
     // radiation of low fundamentals; replace with a radiation model if the bass needs more.
     static constexpr std::size_t highpassStages = 3;
@@ -216,10 +246,20 @@ struct PianoEngine::Impl {
         return address.noteId < 0 || voice.address.noteId == address.noteId;
     }
 
+    // CLAP targeting: a negative note id, port, channel or key matches any.
+    static bool targets(const Voice& voice, const NoteAddress& target) {
+        const auto fits = [](int wanted, int actual) { return wanted < 0 || wanted == actual; };
+        return voice.active && voice.key != nullptr && fits(target.noteId, voice.address.noteId) &&
+            fits(target.port, voice.address.port) && fits(target.channel, voice.address.channel) &&
+            fits(target.key, voice.address.key);
+    }
+
+    // The same string, whatever note id struck it last: hosts give every note a fresh id.
     Voice* findRestrike(const NoteAddress& address) {
         Voice* candidate = nullptr;
         for (auto& voice : voices) {
-            if (matches(voice, address) && !voice.keyDown && !voice.choking) {
+            if (targets(voice, {-1, address.port, address.channel, address.key}) && !voice.keyDown &&
+                !voice.choking) {
                 if (candidate == nullptr || voice.age < candidate->age) {
                     candidate = &voice;
                 }
@@ -253,6 +293,7 @@ struct PianoEngine::Impl {
                 bestScore = score;
             }
         }
+        endNote(selected->address);
         selected->clear();
         return selected;
     }
@@ -267,6 +308,7 @@ struct PianoEngine::Impl {
         voice.choking = false;
         voice.chokeGain = 1.0;
         voice.age = 0;
+        voice.neutralExpressions();
         const double normalizedVelocity = velocity / referenceVelocity;
         const double referenceGain = 0.18 + 0.82 * std::pow(referenceVelocity, 1.35);
         const auto hammerSpeed = [](double v) { return 0.35 + 2.4 * std::pow(v, 0.85); };
@@ -312,7 +354,9 @@ struct PianoEngine::Impl {
 
     VoiceSample processVoice(Voice& voice) {
         const auto& key = *voice.key;
-        const double hardness = parameters[parameterIndex(ParameterId::hammerHardness)];
+        const std::size_t hardnessIndex = parameterIndex(ParameterId::hammerHardness);
+        const double hardness = std::clamp(
+            parameters[hardnessIndex] + modulation[hardnessIndex] + voice.hardnessModulation, 0.25, 2.0);
         double force = 0.0;
         if (voice.hammer.active) {
             const double compression = voice.hammer.position - voice.displacement;
@@ -362,21 +406,30 @@ struct PianoEngine::Impl {
             voice.chokeGain *= 0.9995;
             if (voice.chokeGain < 0.0001) {
                 voice.active = false;
+                endNote(voice.address);
                 return {};
             }
         }
 
-        const double gain = voice.velocityGain * voice.chokeGain;
+        // Note expressions glide over ~10 ms so automation doesn't zipper.
+        const double glide = 100.0 / sampleRate;
+        voice.volume += glide * (voice.volumeTarget - voice.volume);
+        voice.panLeft += glide * (voice.panLeftTarget - voice.panLeft);
+        voice.panRight += glide * (voice.panRightTarget - voice.panRight);
+        const double gain = voice.velocityGain * voice.chokeGain * voice.volume;
         // The impact also knocks the board through the action and frame; scaled by force alone, not
         // by the key level law. Fitted to the recordings' broadband energy 20-100 ms after the
         // strike, which was 8 dB short.
-        const double knock = force * voice.chokeGain * 0.0267 *
-            parameters[parameterIndex(ParameterId::hammerNoise)];
-        const VoiceSample sample{
-            radiated(voice, bridge, 0) * gain, radiated(voice, bridgeRight, 1) * gain, bridge * gain, knock};
+        const std::size_t noiseIndex = parameterIndex(ParameterId::hammerNoise);
+        const double noise =
+            std::clamp(parameters[noiseIndex] + modulation[noiseIndex] + voice.noiseModulation, 0.0, 2.0);
+        const double knock = force * voice.chokeGain * voice.volume * 0.0267 * noise;
+        const VoiceSample sample{radiated(voice, bridge, 0) * gain * voice.panLeft,
+                                 radiated(voice, bridgeRight, 1) * gain * voice.panRight, bridge * gain, knock};
         voice.level = std::max({std::abs(sample.left), std::abs(sample.right), voice.level * 0.99995});
         if (!voice.hammer.active && voice.level < 1.0e-8 && voice.age > sampleRate) {
             voice.active = false;
+            endNote(voice.address);
         }
         return sample;
     }
@@ -413,6 +466,9 @@ void PianoEngine::noteOn(const NoteAddress& address, double velocity) {
     // slower, so the note is both softer and darker. Analytic: the corpus has no soft-pedal notes.
     velocity *= 1.0 - 0.3 * impl_->softPedal[address.channel];
     Voice* voice = impl_->findRestrike(address);
+    if (voice != nullptr && voice->address.noteId >= 0 && voice->address.noteId != address.noteId) {
+        impl_->endNote(voice->address); // the restruck string carries the new note from here
+    }
     if (voice == nullptr) {
         voice = impl_->allocateVoice();
     }
@@ -537,6 +593,7 @@ void PianoEngine::render(float* left, float* right, std::uint32_t frameCount) {
     const double bodyLevel = impl_->parameters[parameterIndex(ParameterId::bodyLevel)];
     const double targetWidth = impl_->parameters[parameterIndex(ParameterId::stereoWidth)];
     for (std::uint32_t frame = 0; frame < frameCount; ++frame) {
+        impl_->currentFrame = frame;
         std::array<double, 3> regionLeft{};
         std::array<double, 3> regionRight{};
         std::array<double, 3> regionMono{};
@@ -579,6 +636,64 @@ void PianoEngine::render(float* left, float* right, std::uint32_t frameCount) {
         left[frame] = std::abs(outputLeft) < 1.0e-20 ? 0.0F : static_cast<float>(outputLeft);
         right[frame] = std::abs(outputRight) < 1.0e-20 ? 0.0F : static_cast<float>(outputRight);
     }
+    impl_->currentFrame = 0;
+}
+
+void PianoEngine::modulate(const NoteAddress& target, ParameterId id, double amount) {
+    if (!std::isfinite(amount) || (id != ParameterId::hammerHardness && id != ParameterId::hammerNoise)) {
+        return;
+    }
+    if (target.noteId < 0 && target.port < 0 && target.channel < 0 && target.key < 0) {
+        impl_->modulation[parameterIndex(id)] = amount;
+        return;
+    }
+    for (auto& voice : impl_->voices) {
+        if (Impl::targets(voice, target)) {
+            (id == ParameterId::hammerHardness ? voice.hardnessModulation : voice.noiseModulation) = amount;
+        }
+    }
+}
+
+// An expression sent with its note-on (before any sample) applies at once, not as a glide.
+void PianoEngine::setNoteVolume(const NoteAddress& target, double gain) {
+    if (!std::isfinite(gain)) {
+        return;
+    }
+    for (auto& voice : impl_->voices) {
+        if (Impl::targets(voice, target)) {
+            voice.volumeTarget = std::clamp(gain, 0.0, 4.0);
+            if (voice.age == 0) {
+                voice.volume = voice.volumeTarget;
+            }
+        }
+    }
+}
+
+// Equal-power and unity at the centre, on top of the key's own placement.
+void PianoEngine::setNotePan(const NoteAddress& target, double pan) {
+    if (!std::isfinite(pan)) {
+        return;
+    }
+    const double angle = std::clamp(pan, 0.0, 1.0) * 1.5707963267948966;
+    for (auto& voice : impl_->voices) {
+        if (Impl::targets(voice, target)) {
+            voice.panLeftTarget = std::sqrt(2.0) * std::cos(angle);
+            voice.panRightTarget = std::sqrt(2.0) * std::sin(angle);
+            if (voice.age == 0) {
+                voice.panLeft = voice.panLeftTarget;
+                voice.panRight = voice.panRightTarget;
+            }
+        }
+    }
+}
+
+std::size_t PianoEngine::takeEndedNotes(EndedNote* destination, std::size_t capacity) {
+    auto& ended = impl_->endedNotes;
+    const std::size_t count = std::min(capacity, impl_->endedNoteCount);
+    std::copy_n(ended.begin(), count, destination);
+    std::copy(ended.begin() + count, ended.begin() + impl_->endedNoteCount, ended.begin());
+    impl_->endedNoteCount -= count;
+    return count;
 }
 
 std::size_t PianoEngine::activeVoiceCount() const {

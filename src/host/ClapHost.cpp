@@ -35,6 +35,9 @@ struct ParameterSpec {
 constexpr clap_param_info_flags continuousFlags = CLAP_PARAM_IS_AUTOMATABLE;
 constexpr clap_param_info_flags choiceFlags =
     CLAP_PARAM_IS_AUTOMATABLE | CLAP_PARAM_IS_STEPPED | CLAP_PARAM_IS_ENUM;
+constexpr clap_param_info_flags perNoteFlags = continuousFlags | CLAP_PARAM_IS_MODULATABLE |
+    CLAP_PARAM_IS_MODULATABLE_PER_NOTE_ID | CLAP_PARAM_IS_MODULATABLE_PER_KEY |
+    CLAP_PARAM_IS_MODULATABLE_PER_CHANNEL | CLAP_PARAM_IS_MODULATABLE_PER_PORT;
 constexpr std::array<const char*, 3> micPositionNames{"Spaced Pair", "Coincident", "Player"};
 
 constexpr clap_id pid(ParameterId id) noexcept
@@ -44,10 +47,10 @@ constexpr clap_id pid(ParameterId id) noexcept
 
 // Listed by group; hosts identify parameters by id, so the order is free.
 constexpr std::array<ParameterSpec, 15> parameterSpecs{{
-    {pid(ParameterId::hammerHardness), "Hammer Hardness", "Hammer", 0.25, 2.0, 1.0, continuousFlags},
+    {pid(ParameterId::hammerHardness), "Hammer Hardness", "Hammer", 0.25, 2.0, 1.0, perNoteFlags},
     {pid(ParameterId::dynamicRange), "Dynamic Range", "Hammer", 0.0, 2.0, 1.0, continuousFlags},
     {pid(ParameterId::velocityBrightness), "Velocity Brightness", "Hammer", 0.0, 2.0, 1.0, continuousFlags},
-    {pid(ParameterId::hammerNoise), "Hammer Noise", "Hammer", 0.0, 2.0, 1.0, continuousFlags},
+    {pid(ParameterId::hammerNoise), "Hammer Noise", "Hammer", 0.0, 2.0, 1.0, perNoteFlags},
     {pid(ParameterId::sustainLength), "Sustain Length", "Strings", 0.25, 4.0, 1.0, continuousFlags},
     {pid(ParameterId::damperRelease), "Damper Release", "Strings", 0.25, 4.0, 1.0, continuousFlags},
     {pid(ParameterId::unisonDetune), "Unison Detune", "Strings", 0.0, 3.0, 1.0, continuousFlags},
@@ -410,7 +413,30 @@ private:
             return;
         }
 
+        if (header->type == CLAP_EVENT_PARAM_MOD) {
+            if (header->size < sizeof(clap_event_param_mod_t)) {
+                return;
+            }
+            const auto& event = *reinterpret_cast<const clap_event_param_mod_t*>(header);
+            if (parameterIndex(event.param_id) != invalidParameterIndex) {
+                engine_.modulate(NoteAddress{event.note_id, event.port_index, event.channel, event.key},
+                                 static_cast<ParameterId>(event.param_id), event.amount);
+            }
+            return;
+        }
+
         if (parametersOnly) {
+            return;
+        }
+
+        if (header->type == CLAP_EVENT_NOTE_EXPRESSION && header->size >= sizeof(clap_event_note_expression_t)) {
+            const auto& event = *reinterpret_cast<const clap_event_note_expression_t*>(header);
+            const NoteAddress target{event.note_id, event.port_index, event.channel, event.key};
+            if (event.expression_id == CLAP_NOTE_EXPRESSION_VOLUME) {
+                engine_.setNoteVolume(target, event.value);
+            } else if (event.expression_id == CLAP_NOTE_EXPRESSION_PAN) {
+                engine_.setNotePan(target, event.value);
+            }
             return;
         }
 
@@ -464,10 +490,13 @@ private:
             }
             const auto eventOffset = std::max(offset, header->time);
             adapter.renderSegment(left, right, offset, eventOffset - offset);
+            adapter.reportEndedNotes(process->out_events, offset);
             offset = eventOffset;
             adapter.handleEvent(header);
+            adapter.reportEndedNotes(process->out_events, offset);
         }
         adapter.renderSegment(left, right, offset, process->frames_count - offset);
+        adapter.reportEndedNotes(process->out_events, offset);
         return CLAP_PROCESS_CONTINUE;
     }
 
@@ -689,6 +718,40 @@ private:
         return true;
     }
 
+    // NOTE_END tells the host when a voice really stops (a pedalled note outlives its note-off), so
+    // its per-voice modulators live exactly as long.
+    void reportEndedNotes(const clap_output_events_t* out, std::uint32_t offset) noexcept
+    {
+        std::array<PianoEngine::EndedNote, pianocraft::voiceCapacity> ended{};
+        const auto count = engine_.takeEndedNotes(ended.data(), ended.size());
+        if (out == nullptr || out->try_push == nullptr) {
+            return;
+        }
+        for (std::size_t i = 0; i < count; ++i) {
+            clap_event_note_t event{};
+            event.header.size = sizeof(event);
+            event.header.time = offset + ended[i].frame;
+            event.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+            event.header.type = CLAP_EVENT_NOTE_END;
+            event.note_id = ended[i].address.noteId;
+            event.port_index = ended[i].address.port;
+            event.channel = ended[i].address.channel;
+            event.key = ended[i].address.key;
+            out->try_push(out, &event.header);
+        }
+    }
+
+    static bool voiceInfoGet(const clap_plugin_t*, clap_voice_info_t* info) noexcept
+    {
+        if (info == nullptr) {
+            return false;
+        }
+        info->voice_count = static_cast<std::uint32_t>(pianocraft::voiceCapacity);
+        info->voice_capacity = info->voice_count;
+        info->flags = CLAP_VOICE_INFO_SUPPORTS_OVERLAPPING_NOTES;
+        return true;
+    }
+
     static std::uint32_t remoteControlsCount(const clap_plugin_t*) noexcept
     {
         return static_cast<std::uint32_t>(remotePages.size());
@@ -728,6 +791,9 @@ private:
         if (std::strcmp(id, CLAP_EXT_REMOTE_CONTROLS) == 0 || std::strcmp(id, CLAP_EXT_REMOTE_CONTROLS_COMPAT) == 0) {
             return &remoteControls_;
         }
+        if (std::strcmp(id, CLAP_EXT_VOICE_INFO) == 0) {
+            return &voiceInfo_;
+        }
         (void)plugin;
         return nullptr;
     }
@@ -749,6 +815,7 @@ private:
     static const clap_plugin_params_t params_;
     static const clap_plugin_state_t state_;
     static const clap_plugin_remote_controls_t remoteControls_;
+    static const clap_plugin_voice_info_t voiceInfo_;
 };
 
 constexpr const char* const pluginFeatures[] = {
@@ -798,6 +865,10 @@ const clap_plugin_state_t Adapter::state_ = {
 const clap_plugin_remote_controls_t Adapter::remoteControls_ = {
     &Adapter::remoteControlsCount,
     &Adapter::remoteControlsGet,
+};
+
+const clap_plugin_voice_info_t Adapter::voiceInfo_ = {
+    &Adapter::voiceInfoGet,
 };
 
 std::uint32_t pluginCount(const clap_plugin_factory_t*) noexcept

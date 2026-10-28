@@ -69,6 +69,12 @@ half-pedal, and pressing it again catches a note that is dying away. On/off
 pedals behave as before. CC67 is the soft pedal: like an upright's, it shortens
 the hammer throw, so notes come out softer and darker.
 
+Per note: Hammer Hardness and Hammer Noise accept Bitwig's polyphonic
+modulation (each note keeps its own modulator), and the piano roll's Volume
+and Pan note expressions apply per note. A repeated key re-strikes its own
+string. The plugin tells Bitwig when each voice actually stops, so a
+pedalled note keeps its modulators until it has died away.
+
 At 1.0 every voicing control is the calibrated piano. Sustain Length, Damper
 Release, Unison Detune, Aftersound and the tuning controls recompute the string
 model (and the sympathetic strings with it) when changed,

@@ -1,5 +1,6 @@
-// Loads the built CLAP binary and checks state compatibility: states saved before the mic
-// parameters existed must still load, and malformed state must be rejected.
+// Loads the built CLAP binary and checks state compatibility (states saved before the mic
+// parameters existed must still load, malformed state must be rejected), the advertised
+// extensions, and that a finished voice reaches the host as NOTE_END.
 #include <clap/clap.h>
 #include <dlfcn.h>
 #include <cstdio>
@@ -17,6 +18,17 @@ static int64_t writeFn(const clap_ostream_t* s, const void* in, uint64_t size) {
     auto* b = static_cast<Buffer*>(s->ctx); auto* p = static_cast<const uint8_t*>(in); b->data.insert(b->data.end(), p, p + size); return (int64_t)size;
 }
 static const void* hostExt(const clap_host_t*, const char*) { return nullptr; }
+struct Events { std::vector<clap_event_note_t> notes; };
+static uint32_t eventsSize(const clap_input_events_t* list) { return (uint32_t)static_cast<Events*>(list->ctx)->notes.size(); }
+static const clap_event_header_t* eventsGet(const clap_input_events_t* list, uint32_t i) { return &static_cast<Events*>(list->ctx)->notes[i].header; }
+static bool eventsPush(const clap_output_events_t* list, const clap_event_header_t* event) {
+    if (event->type == CLAP_EVENT_NOTE_END) static_cast<Events*>(list->ctx)->notes.push_back(*reinterpret_cast<const clap_event_note_t*>(event));
+    return true;
+}
+static clap_event_note_t noteEvent(uint16_t type, uint32_t time, int32_t id) {
+    clap_event_note_t e{}; e.header = {sizeof(e), time, CLAP_CORE_EVENT_SPACE_ID, type, 0};
+    e.note_id = id; e.port_index = 0; e.channel = 0; e.key = 60; e.velocity = 0.6; return e;
+}
 static void noop(const clap_host_t*) {}
 static void put32(std::vector<uint8_t>& v, uint32_t x) { for (int i = 0; i < 4; ++i) v.push_back((x >> (8 * i)) & 0xff); }
 static void putD(std::vector<uint8_t>& v, double d) { uint64_t b; std::memcpy(&b, &d, 8); for (int i = 0; i < 8; ++i) v.push_back((b >> (8 * i)) & 0xff); }
@@ -56,6 +68,12 @@ int main(int argc, char** argv) {
         }
     }
     check(pagesValid, "remote-control pages reference real parameters");
+    clap_param_info_t info{};
+    params->get_info(plugin, 0, &info);
+    check(info.id == 2 && (info.flags & CLAP_PARAM_IS_MODULATABLE_PER_NOTE_ID), "Hammer Hardness is per-note modulatable");
+    auto* voices = static_cast<const clap_plugin_voice_info_t*>(plugin->get_extension(plugin, CLAP_EXT_VOICE_INFO));
+    clap_voice_info_t voiceInfo{};
+    check(voices != nullptr && voices->get(plugin, &voiceInfo) && voiceInfo.voice_capacity == 96, "voice info reports 96 voices");
     // Current state round-trips.
     check(load(blob({{1, 0.5}, {2, 1.0}, {3, 0.35}, {4, 1.0}, {5, 2.0}, {6, 0.4}})), "6-parameter state loads");
     Buffer out; clap_ostream_t os{&out, writeFn}; state->save(plugin, &os);
@@ -73,6 +91,26 @@ int main(int argc, char** argv) {
     check(!load(blob({{99, 1.0}})), "unknown parameter rejected");
     check(!load(blob({{5, 7.0}})), "out-of-range mic rejected");
     check(!load(blob({})), "zero records rejected");
+    // A choked note ends ~0.4 s later and must be reported with its note id.
+    plugin->activate(plugin, 48000.0, 512, 512);
+    plugin->start_processing(plugin);
+    std::vector<float> left(512), right(512); float* channels[2] = {left.data(), right.data()};
+    clap_audio_buffer_t audio{channels, nullptr, 2, 0, 0};
+    Events input, output;
+    input.notes = {noteEvent(CLAP_EVENT_NOTE_ON, 0, 5), noteEvent(CLAP_EVENT_NOTE_CHOKE, 10, 5)};
+    clap_input_events_t in{&input, eventsSize, eventsGet};
+    clap_output_events_t outEvents{&output, eventsPush};
+    for (int block = 0; block < 60; ++block) {
+        clap_process_t process{};
+        process.steady_time = block * 512LL; process.frames_count = 512;
+        process.audio_outputs = &audio; process.audio_outputs_count = 1;
+        process.in_events = &in; process.out_events = &outEvents;
+        plugin->process(plugin, &process);
+        input.notes.clear();
+    }
+    check(output.notes.size() == 1 && output.notes[0].note_id == 5 && output.notes[0].key == 60 &&
+          output.notes[0].header.time < 512, "choked note reported as NOTE_END");
+    plugin->stop_processing(plugin); plugin->deactivate(plugin);
     plugin->destroy(plugin); entry->deinit();
     std::printf("%s\n", failures ? "FAILED" : "all state checks passed");
     return failures != 0;

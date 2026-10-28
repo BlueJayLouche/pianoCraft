@@ -135,8 +135,9 @@ void restrikesAndPolyphonyAreFinite() {
     for (int key = 33; key < 97; ++key) {
         engine.noteOn(note(key, key), 0.65);
     }
-    // 12 ringing restrikes plus 64 new keys fit in the 96 voices without stealing.
-    require(engine.activeVoiceCount() == 76, "Expected 76 active voices");
+    // Restrikes reuse their key's string whatever their note ids (hosts give each note a fresh id),
+    // so the 12 strikes of key 40 and its later note share one voice: 64 voices for 64 keys.
+    require(engine.activeVoiceCount() == 64, "Expected 64 active voices, got " + std::to_string(engine.activeVoiceCount()));
     const auto output = render(engine, 2400, 64);
     require(std::isfinite(peak(output)), "Dense polyphony failed");
     engine.reset();
@@ -510,6 +511,62 @@ void tuningControls() {
             "Master Tune does not move the played pitch");
 }
 
+// Per-note modulation and expressions reach only their note, and ended voices are reported for
+// CLAP NOTE_END, including a string restruck under a new note id.
+void perNoteControl() {
+    using pianocraft::ParameterId;
+    using pianocraft::PianoEngine;
+    const auto play = [](int targetId, auto setup) {
+        PianoEngine engine;
+        engine.prepare(48000.0);
+        engine.noteOn(note(60, 1), 0.6);
+        setup(engine, pianocraft::NoteAddress{targetId, -1, -1, -1});
+        return render(engine, 19200, 64);
+    };
+    const auto none = [](PianoEngine&, pianocraft::NoteAddress) {};
+    const auto harder = [](PianoEngine& engine, pianocraft::NoteAddress target) {
+        engine.modulate(target, ParameterId::hammerHardness, 1.0);
+    };
+    const auto plain = play(1, none);
+    const auto modulated = play(1, harder);
+    require(play(2, harder) == plain, "Modulating another note changed this one");
+    require(play(-1, harder) == modulated, "Global modulation differs from modulating every note");
+    require(trebleShare(modulated) > trebleShare(plain) * 1.2, "Per-note hardness had no effect");
+
+    const auto quieter = play(1, [](PianoEngine& engine, pianocraft::NoteAddress target) {
+        engine.setNoteVolume(target, 0.5);
+    });
+    require(std::abs(20.0 * std::log10(rms(quieter) / rms(plain)) + 6.02) < 0.1, "Volume expression is not -6 dB at 0.5");
+    const auto rightShare = [](const std::vector<float>& output) {
+        double left = 0.0;
+        double right = 0.0;
+        for (std::size_t index = 0; index < output.size(); index += 2) {
+            left += static_cast<double>(output[index]) * output[index];
+            right += static_cast<double>(output[index + 1]) * output[index + 1];
+        }
+        return right / (left + right);
+    };
+    const auto panned = play(1, [](PianoEngine& engine, pianocraft::NoteAddress target) {
+        engine.setNotePan(target, 0.0);
+    });
+    require(rightShare(panned) < rightShare(plain) * 0.5, "Pan expression did not move the note left");
+
+    PianoEngine engine;
+    engine.prepare(48000.0);
+    engine.noteOn(note(60, 1), 0.6);
+    render(engine, 4800, 64);
+    engine.noteOff(note(60, 1), 0.0);
+    engine.noteOn(note(60, 3), 0.6);
+    engine.choke(note(60, 3));
+    render(engine, 24000, 24000);
+    std::array<PianoEngine::EndedNote, 4> ended{};
+    const auto count = engine.takeEndedNotes(ended.data(), ended.size());
+    require(count == 2 && ended[0].address.noteId == 1 && ended[0].frame == 0 &&
+            ended[1].address.noteId == 3 && ended[1].frame > 0 && engine.activeVoiceCount() == 0,
+            "Ended notes not reported: count " + std::to_string(count));
+    require(engine.takeEndedNotes(ended.data(), ended.size()) == 0, "Ended notes were not cleared");
+}
+
 int main() {
     try {
         modelIsStable();
@@ -527,6 +584,7 @@ int main() {
         voicingControls();
         pedalsAreContinuous();
         tuningControls();
+        perNoteControl();
         std::cout << "All engine tests passed\n";
         return 0;
     } catch (const std::exception& error) {

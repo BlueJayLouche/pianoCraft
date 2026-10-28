@@ -6,6 +6,10 @@
 
 namespace pianocraft {
 
+// More slots than keys: a restrike reuses its key's voice, so even a fully pedalled keyboard
+// never forces an audible voice to be cut.
+inline constexpr std::size_t voiceCapacity = 96;
+
 enum class ParameterId : std::uint32_t {
     outputGain = 1,
     hammerHardness = 2,
@@ -50,6 +54,20 @@ public:
     void setSoftPedal(std::int16_t channel, double depth);
     void setParameter(ParameterId id, double value);
     double parameterValue(ParameterId id) const;
+
+    // CLAP per-note targeting: a negative noteId, port, channel or key matches any, and all
+    // negative is global modulation. Only Hammer Hardness and Hammer Noise are modulatable.
+    void modulate(const NoteAddress& target, ParameterId id, double amount);
+    void setNoteVolume(const NoteAddress& target, double gain); // linear, 0-4
+    void setNotePan(const NoteAddress& target, double pan);     // 0 left, 0.5 centre, 1 right
+
+    struct EndedNote {
+        NoteAddress address;
+        std::uint32_t frame = 0;
+    };
+    // Notes whose voices ended (decayed, choked, stolen or restruck) since the last call, in order.
+    // Frames count from the start of the latest render() call, and are 0 for a note-on.
+    std::size_t takeEndedNotes(EndedNote* destination, std::size_t capacity);
 
     void render(float* left, float* right, std::uint32_t frameCount);
     std::size_t activeVoiceCount() const;
