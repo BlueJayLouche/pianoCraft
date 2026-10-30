@@ -1,9 +1,11 @@
 # PianoCraft
 
 PianoCraft is an original, clean-room CLAP piano instrument for macOS. It uses
-nonlinear hammer excitation, per-note modal strings, effective unison modes,
-damper and sustain behavior, sympathetic resonance, and regional soundboard
-filters. It does not play reference samples or use Pianoteq data.
+a hysteretic felt hammer (Stulov's published hammer set) striking physically
+scaled modal strings, coupled unison strings (Weinreich), phantom partials from
+longitudinal string motion (Bank & Sujbert), damper and sustain behavior,
+sympathetic resonance, and regional soundboard filters. It does not play
+reference samples or use Pianoteq data.
 
 ## Build
 
@@ -55,8 +57,10 @@ Strings, Tuning, Mix) and maps two remote-control pages onto its device knobs:
 
 - **Main:** Hammer Hardness, Dynamic Range (pp-ff loudness spread), Velocity
   Brightness, Sustain Length, Sympathetic Level, Body Level, Stereo Width, Output Gain.
-- **Voicing:** Unison Detune (beat speed; 0 is perfectly in tune), Aftersound
-  (the long second-stage tail), Damper Release, Hammer Noise, Mic Position,
+- **Voicing:** Unison Detune (how far each unison's strings are apart: more
+  beating and more aftersound, as on a real piano; 0 is perfectly in tune and
+  leaves a single decay), Aftersound (level of the long second-stage tail),
+  Damper Release, Hammer Noise, Mic Position,
   Master Tune (A4 in Hz), Stretch (1 is the recorded piano's octave stretch,
   0 equal temperament, 2 double).
 

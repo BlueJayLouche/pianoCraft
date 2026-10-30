@@ -3,17 +3,17 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <stdexcept>
 
 namespace pianocraft {
 namespace {
 
 constexpr double pi = 3.141592653589793238462643383279502884;
+constexpr double ln1000 = 6.907755278982138;
 
-void setPole(ModeCoefficients& mode, const Voicing& voicing, double tuning, double sampleRate) {
-    const double frequency = (mode.baseFrequency + mode.beatHz * voicing.detune) * tuning;
-    const double decaySeconds = mode.baseDecaySeconds * voicing.sustain;
-    const double releaseSeconds = mode.baseReleaseSeconds * voicing.release;
+void setPole(ModeCoefficients& mode, double frequency, double decaySeconds, double releaseSeconds,
+             double sampleRate) {
     const double omega = 2.0 * pi * frequency / sampleRate;
     const double sustainRadius = std::exp(-6.907755278982138 / (decaySeconds * sampleRate));
     const double releaseRadius = std::exp(-6.907755278982138 / (releaseSeconds * sampleRate));
@@ -23,6 +23,10 @@ void setPole(ModeCoefficients& mode, const Voicing& voicing, double tuning, doub
     mode.releaseA2 = releaseRadius * releaseRadius;
     mode.frequency = frequency;
     mode.decaySeconds = decaySeconds;
+    // A resonator driven by F per sample reaches F sin(omega) / (M w fs) times the modal
+    // displacement's amplitude; baseStrike carries the rest (strike-point shape over M).
+    mode.strike = mode.baseStrike * std::sin(omega) / (2.0 * pi * frequency * sampleRate);
+    mode.slope = mode.baseSlope * std::sin(omega) / (2.0 * pi * frequency * sampleRate);
 }
 
 // Two-stage string decay from ungated early (0.05-0.4 s) and late (2-7 s) envelope slopes of
@@ -33,6 +37,44 @@ void setPole(ModeCoefficients& mode, const Voicing& voicing, double tuning, doub
 double promptDecaySeconds(double frequency) {
     return 4.89 * std::pow(frequency / 440.0, -0.745);
 }
+
+// Weinreich's normal modes of two coupled strings, as frequency offset + i decay rate (rad/s,
+// excluding intrinsic loss), and how a level strike (1, 1) splits between them at the bridge: the
+// shares sum to 1. Exact for any mistuning, including 0, where the slow mode is silent.
+struct NormalModes {
+    std::complex<double> fast;
+    std::complex<double> slow;
+    std::complex<double> fastShare;
+    std::complex<double> slowShare;
+};
+
+NormalModes unisonModes(double damping, double reactance, double mistuning) {
+    const std::complex<double> coupling(reactance, damping);
+    const auto root = std::sqrt(coupling * coupling + mistuning * mistuning / 4.0);
+    NormalModes modes{coupling + root, coupling - root, {}, {}};
+    if (modes.slow.imag() > modes.fast.imag()) {
+        std::swap(modes.fast, modes.slow);
+    }
+    // Eigenvectors are (coupling, lambda - mistuning/2 - coupling).
+    const auto fastSecond = modes.fast - mistuning / 2.0 - coupling;
+    const auto slowSecond = modes.slow - mistuning / 2.0 - coupling;
+    const auto determinant = coupling * (slowSecond - fastSecond);
+    modes.fastShare = (slowSecond - coupling) / determinant * (coupling + fastSecond) / 2.0;
+    modes.slowShare = (coupling - fastSecond) / determinant * (coupling + slowSecond) / 2.0;
+    return modes;
+}
+
+// Longitudinal fundamental over f0, sqrt(ES / T). The E1 recording's strongest peak at ff is the
+// phantom f6 + f7 at 532 Hz, 16 dB above partial 13 beside it: a longitudinal resonance at 13.06 f0.
+// No other key shows one clearly, so the ratio is held across the keyboard (Analytic).
+constexpr double longitudinalRatio = 13.06;
+// Share of the longitudinal bridge force the board radiates: it pushes along the string, in the
+// board's plane. Selected on the phantom partials' level (docs/model-laws.md).
+constexpr double longitudinalCoupling = 0.03;
+
+// Felt hysteresis: the rate-dependent share of the felt force at mid-compression, at 2 m/s.
+// Selected on octave-band spectra: 0.25 scored better than 0 and 0.5 (docs/model-laws.md).
+constexpr double feltHysteresis = 0.25;
 
 double aftersoundDecaySeconds(double frequency) {
     return 16.87 * std::pow(frequency / 440.0, -0.444);
@@ -71,15 +113,34 @@ InstrumentModel::InstrumentModel(double sampleRate) {
         key.stretchOctaves = std::log2(calibration.fundamental / measuredA4_) - (key.midi - 69) / 12.0;
         key.inharmonicity = calibration.inharmonicity;
         key.strikePosition = std::clamp(0.115 + (key.midi - 60) * 0.00045, 0.075, 0.145);
-        key.hammerStiffness = calibration.hammerStiffness;
         key.velocityGainExponent = calibration.velocityGainExponent;
-        key.velocityBrightnessExponent = calibration.velocityBrightnessExponent;
-        key.hammerStiffnessScale = calibration.hammerStiffnessScale;
-        // The modal strings lose roughly 9 dB per octave up the keyboard; this power law, fitted
-        // against the reference corpus at pp/mf/ff, restores the recorded key-to-key balance.
-        // The 0.4 keeps a single velocity-127 note near -6 dBFS at the default output gain.
-        const double levelLaw = std::pow(std::max(1.0, key.fundamental / 64.4), 1.505) * calibration.loudness;
-        key.outputGain = 0.4 * levelLaw;
+        // Stulov's measured hammer set (Acta Acustica 91, 2005, as fitted in Stulov & Kartofelev,
+        // Acoustics High Tatras 2009, eq. 9) for hammer n = 1-88: mass, felt exponent p and static
+        // stiffness Q0 in N/mm^p. Its hysteresis fit leaves 0 < epsilon < 1 only for n < 11, so the
+        // hysteresis time is selected instead: a fixed share of the time a 2 m/s strike takes to
+        // compress the felt against a rigid stop (Stulov's eq. 6), so the loop keeps its shape
+        // across the keyboard (docs/model-laws.md).
+        {
+            const double n = key.midi - 20.0;
+            key.hammerMass = (11.074 - 0.074 * n + 1.0e-4 * n * n) * 1.0e-3;
+            key.feltExponent = 3.7 + 0.015 * n;
+            key.feltStiffness = 183.0 * std::exp(0.045 * n) * std::pow(1000.0, key.feltExponent);
+            const double speed = 2.0;
+            const double compression = std::pow((key.feltExponent + 1.0) * key.hammerMass * speed * speed /
+                (2.0 * key.feltStiffness), 1.0 / (key.feltExponent + 1.0));
+            key.feltRelaxation = feltHysteresis * compression / (key.feltExponent * speed);
+        }
+        // Analytic upright scale for the string's give under the hammer: 700 N on every string
+        // (Bank & Sujbert's value), speaking length 5.2 cm at C8 growing 5.45% a semitone down and
+        // foreshortened to 1.15 m in the bass. Modal mass is half the string's.
+        const double tension = 700.0;
+        const double length = std::min(1.15, 0.052 * std::pow(1.0545, 108 - key.midi));
+        const double modalMass = 0.5 * tension / (4.0 * length * calibration.fundamental * calibration.fundamental);
+        // Bridge force alone leaves the treble above D4 quieter than the recordings; this power law,
+        // fitted against the reference corpus at pp/mf/ff, restores the key-to-key balance. The
+        // 0.04 keeps a single velocity-127 note peaking near -12 dBFS at the default output gain.
+        const double levelLaw = std::pow(std::max(1.0, key.fundamental / 302.3), 1.042) * calibration.loudness;
+        key.outputGain = 0.04 * levelLaw;
         // The law corrects radiated level, not the force on the bridge, so sympathetic strings get
         // half of it (in dB). Analytic register balance; without it bass notes' halo was 12 dB
         // lighter than in the (pedal-undocumented) recordings.
@@ -119,6 +180,16 @@ InstrumentModel::InstrumentModel(double sampleRate) {
         }
         const double normalization = 0.00011 / std::sqrt(static_cast<double>(primaryCount));
         std::array<std::size_t, calibrationPartialLimit> primaryIndices{};
+        // Static compliance of the strike point (sum of shape^2 / (M w^2) over modes); the modes not
+        // synthesized give way instantly, the synthesized ones through their resonators.
+        const auto compliance = [&](double k, double frequency) {
+            const double shape = std::sin(k * pi * key.strikePosition) * std::exp(-0.00045 * k * k);
+            return shape * shape / (modalMass * std::pow(2.0 * pi * frequency, 2.0));
+        };
+        for (double k = 1.0; k <= 400.0; k += 1.0) {
+            key.residualCompliance += compliance(k, k * key.fundamental *
+                std::sqrt((1.0 + key.inharmonicity * k * k) / (1.0 + key.inharmonicity)));
+        }
         const auto releaseSeconds = [baseRelease](double k) {
             return std::max(0.025, baseRelease / (1.0 + 0.014 * k + 0.0012 * k * k));
         };
@@ -131,7 +202,14 @@ InstrumentModel::InstrumentModel(double sampleRate) {
             const double strikeWeight = std::sin(k * pi * key.strikePosition);
             const double finiteHammerWidth = std::exp(-0.00045 * k * k);
             mode.baseExcitation = normalization * strikeWeight * finiteHammerWidth;
-            mode.output = 1.0 / (1.0 + 0.018 * k);
+            mode.baseStrike = strikeWeight * finiteHammerWidth / (modalMass * normalization);
+            mode.baseSlope = k / (modalMass * normalization);
+            key.residualCompliance -= compliance(k, frequency);
+            // Bridge force in newtons (tension times string slope), 4 f0 sin(omega) / (N fs) per unit
+            // of resonator output, through the bridge's falling mobility: one pole at a corner
+            // selected at 500 Hz on octave-band spectra.
+            mode.output = 4.0 * key.fundamental * std::sin(2.0 * pi * frequency / sampleRate) /
+                (normalization * sampleRate) / (1.0 + frequency / 500.0);
             mode.secondary = false;
             ++key.primaryModeCount;
         };
@@ -160,6 +238,29 @@ InstrumentModel::InstrumentModel(double sampleRate) {
             }
             addPrimary(k, frequency);
         }
+        key.residualCompliance = std::max(0.0, key.residualCompliance);
+
+        // Longitudinal motion (Bank & Sujbert 2005): mode n feels -ES (n pi / L) / 2 times the
+        // cosine projection of the squared slope, which pairs partials j, k with j + k = n or
+        // |j - k| = n. Their simplification drives every longitudinal resonator with one odd and
+        // one even mode's input; modes 1 and 2 give all phantoms from adjacent and next-but-one
+        // partials: 2 sum(p_k p_k+1) + 2 (p_1^2 + 2 sum(p_k p_k+2)) with p_k = k q_k and the constant
+        // ES pi^3 / (8 L^2), ES = ratio^2 T. Each mode's bridge force is ES (pi / L) n a_n.
+        {
+            const double stiffness = longitudinalRatio * longitudinalRatio * tension;
+            key.longitudinalDrive = -stiffness * pi * pi * pi / (8.0 * length * length);
+            for (std::size_t n = 1; n <= longitudinalLimit; ++n) {
+                const double frequency = n * longitudinalRatio * key.fundamental;
+                if (frequency > std::min(8000.0, 0.4 * sampleRate)) {
+                    break;
+                }
+                auto& longitudinal = key.longitudinal[key.longitudinalCount++];
+                longitudinal.baseFrequency = frequency;
+                longitudinal.inverseMass = 1.0 / modalMass;
+                longitudinal.output = longitudinalCoupling * stiffness * pi / length * n * (n % 2 == 0 ? 1.0 : -1.0) /
+                    (1.0 + frequency / 500.0);
+            }
+        }
 
         std::size_t secondaryCount = 0;
         for (std::size_t partialIndex = 0; partialIndex < calibration.partialCount; ++partialIndex) {
@@ -185,12 +286,13 @@ InstrumentModel::InstrumentModel(double sampleRate) {
             ++secondaryCount;
         }
 
-        // Analytic: calibrate.py accepted no per-partial secondary, so detune and level below are
-        // register-wide estimates, not measured unisons.
-        // Partials without a calibrated secondary get an effective unison partner: slightly
-        // detuned (the recordings beat at ~0.5 Hz mid-keyboard, faster in the treble), 18 dB down,
-        // decaying at the aftersound rate. It supplies the beating and the long tail after the
-        // prompt decay. The top octave's tail is quieter in the recordings (~-35 dB).
+        // Partials without a calibrated secondary become a coupled unison pair (Weinreich). Its
+        // two normal modes are fitted to the register-wide estimates: the prompt and aftersound
+        // decay laws, a beat of ~0.5 Hz mid-keyboard (faster in the treble) and a slow mode 18 dB
+        // down (~35 dB in the top octave). Analytic: calibrate.py accepted no per-partial
+        // secondary, so these are not measured unisons. Unison Detune then scales the mistuning,
+        // which is what makes the aftersound: at 0 it is gone, and more detune trades the two-stage
+        // decay for beating.
         const double partnerDb = key.midi < 85 ? -18.0 : -18.0 - 17.0 * std::min(1.0, (key.midi - 85) / 15.0);
         const double partnerGain = std::pow(10.0, partnerDb / 20.0);
         for (std::size_t partialIndex = 0; partialIndex < calibration.partialCount; ++partialIndex) {
@@ -205,12 +307,35 @@ InstrumentModel::InstrumentModel(double sampleRate) {
             const double spread = std::fmod(k * 0.6180339887 + key.midi * 0.7548776662, 1.0);
             const double beatHz = (0.18 + 0.0006 * calibrated.frequency) * (0.6 + 0.8 * spread);
             const auto& primary = key.modes[primaryIndices[partialIndex]];
+            auto& unison = key.unisons[key.unisonCount++];
+            unison.prompt = primaryIndices[partialIndex];
+            unison.partner = key.modeCount;
+            // Invert the normal modes: with r + eta fixed by the two decay rates, the modes split by
+            // w = pi beat + i (fast - slow) / 2, so kappa = Im(w^2) / (2 eta) and the mistuning
+            // follows from w^2 = coupling^2 + delta^2 / 4. The slow share grows with eta; bisect it.
+            const double fastRate = ln1000 / primary.baseDecaySeconds;
+            const double slowRate = ln1000 / std::max(aftersoundDecaySeconds(calibrated.frequency), primary.baseDecaySeconds);
+            const double halfSplit = (fastRate - slowRate) / 2.0;
+            const std::complex<double> split(pi * beatHz, halfSplit);
+            const auto squared = split * split;
+            double low = 0.0;
+            double high = (fastRate + slowRate) / 2.0;
+            for (int iteration = 0; iteration < 60; ++iteration) {
+                unison.damping = 0.5 * (low + high);
+                unison.reactance = squared.imag() / (2.0 * unison.damping);
+                unison.mistuning = 2.0 * std::sqrt(std::max(0.0, squared.real() -
+                    unison.reactance * unison.reactance + unison.damping * unison.damping));
+                const auto modes = unisonModes(unison.damping, unison.reactance, unison.mistuning);
+                (std::abs(modes.slowShare) < partnerGain * std::abs(modes.fastShare) ? low : high) = unison.damping;
+            }
+            unison.loss = (fastRate + slowRate) / 2.0 - unison.damping;
+            if (spread >= 0.5) {
+                unison.reactance = -unison.reactance; // the slow mode sits above instead
+            }
             auto& mode = key.modes[key.modeCount++];
             mode.baseFrequency = calibrated.frequency;
-            mode.beatHz = spread < 0.5 ? beatHz : -beatHz;
-            mode.baseDecaySeconds = std::max(aftersoundDecaySeconds(calibrated.frequency), primary.baseDecaySeconds);
             mode.baseReleaseSeconds = releaseSeconds(k);
-            mode.baseExcitation = primary.baseExcitation * partnerGain;
+            mode.baseExcitation = primary.baseExcitation;
             mode.output = primary.output;
             mode.secondary = true;
             ++secondaryCount;
@@ -228,8 +353,39 @@ void InstrumentModel::setVoicing(const Voicing& voicing) {
         key.fundamental = measuredCalibration[keyIndex].fundamental * tuning;
         for (std::size_t index = 0; index < key.modeCount; ++index) {
             auto& mode = key.modes[index];
-            setPole(mode, voicing, tuning, sampleRate_);
+            setPole(mode, mode.baseFrequency * tuning, mode.baseDecaySeconds * voicing.sustain,
+                    mode.baseReleaseSeconds * voicing.release, sampleRate_);
             mode.excitation = mode.baseExcitation * (mode.secondary ? voicing.aftersound : 1.0);
+        }
+        // Each coupled pair keeps its prompt mode on the measured pitch; the slow mode sits at the
+        // normal modes' frequency difference and both carry their share's phase.
+        for (std::size_t index = 0; index < key.unisonCount; ++index) {
+            const auto& unison = key.unisons[index];
+            const auto modes = unisonModes(unison.damping, unison.reactance, unison.mistuning * voicing.detune);
+            auto& prompt = key.modes[unison.prompt];
+            auto& partner = key.modes[unison.partner];
+            setPole(prompt, prompt.baseFrequency * tuning, ln1000 / (unison.loss + modes.fast.imag()) * voicing.sustain,
+                    prompt.baseReleaseSeconds * voicing.release, sampleRate_);
+            setPole(partner, (partner.baseFrequency + (modes.slow.real() - modes.fast.real()) / (2.0 * pi)) * tuning,
+                    ln1000 / (unison.loss + modes.slow.imag()) * voicing.sustain,
+                    partner.baseReleaseSeconds * voicing.release, sampleRate_);
+            prompt.excitation = prompt.baseExcitation * std::abs(modes.fastShare);
+            prompt.phase = std::arg(modes.fastShare);
+            partner.excitation = partner.baseExcitation * std::abs(modes.slowShare) * voicing.aftersound;
+            partner.phase = std::arg(modes.slowShare);
+        }
+        key.strikeCompliance = 0.0;
+        for (std::size_t index = 0; index < key.modeCount; ++index) {
+            key.strikeCompliance += key.modes[index].strike * key.modes[index].excitation;
+        }
+        // Bank & Sujbert's longitudinal decay time, ~0.1 s, keeps each resonance broad.
+        for (std::size_t index = 0; index < key.longitudinalCount; ++index) {
+            auto& longitudinal = key.longitudinal[index];
+            const double omega = 2.0 * pi * longitudinal.baseFrequency * tuning / sampleRate_;
+            const double radius = std::exp(-ln1000 / (0.1 * sampleRate_));
+            longitudinal.a1 = 2.0 * radius * std::cos(omega);
+            longitudinal.a2 = radius * radius;
+            longitudinal.input = longitudinal.inverseMass * std::sin(omega) / (omega * sampleRate_ * sampleRate_);
         }
     }
     setMicPosition(micPosition_);
@@ -264,9 +420,14 @@ void InstrumentModel::setMicPosition(MicPosition position) {
                 phase = 2.0 * pi * mode.frequency * 0.0003 * pan / width +
                     2.0 * pi * spread * std::clamp((mode.frequency - 1000.0) / 2000.0, 0.0, 1.0);
             }
+            // A phase shift is a mix of the current and previous outputs.
             const double omega = 2.0 * pi * mode.frequency / sampleRate_;
-            mode.outputRight = mode.output * (std::cos(phase) + std::sin(phase) * std::cos(omega) / std::sin(omega));
-            mode.outputRightPrevious = -mode.output * std::sin(phase) / std::sin(omega);
+            const auto rotate = [&](double shift, double& current, double& previous) {
+                current = mode.output * (std::cos(shift) + std::sin(shift) * std::cos(omega) / std::sin(omega));
+                previous = -mode.output * std::sin(shift) / std::sin(omega);
+            };
+            rotate(mode.phase, mode.outputLeft, mode.outputLeftPrevious);
+            rotate(mode.phase + phase, mode.outputRight, mode.outputRightPrevious);
         }
     }
 }

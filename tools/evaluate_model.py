@@ -156,12 +156,13 @@ def correlations(source) -> np.ndarray:
     return np.array(parallel(one, range(24, 106, 3)))
 
 
-def halo(rate: int, stereo: np.ndarray, midi: int) -> np.ndarray:
-    """Energy between the note's own partials (excluding mains hum), 0.3-2.4 s, dB re band total."""
+def halo(rate: int, stereo: np.ndarray, midi: int,
+         windows=((0.3, 0.6), (0.6, 1.2), (1.2, 2.4))) -> np.ndarray:
+    """Energy between the note's own partials (excluding mains hum) per window, dB re band total."""
     mono = stereo.mean(axis=1)
     mono = mono[onset(mono):]
     result = []
-    for start, stop in ((0.3, 0.6), (0.6, 1.2), (1.2, 2.4)):
+    for start, stop in windows:
         window = mono[int(start * rate):int(stop * rate)]
         size = max(len(window), 16384)
         power = np.abs(np.fft.rfft(window * np.hanning(len(window)), size)) ** 2
@@ -184,6 +185,53 @@ def halo_error() -> np.ndarray:
     def one(midi):
         return halo(*render(midi, 3, 3.0, pedal=1), midi) - halo(*reference(midi, 3), midi)
     return np.array(parallel(one, notes))
+
+
+def knock_error() -> float:
+    """Between-partial energy 20-100 ms after the strike (hammer knock and board), model minus
+    reference, layer 3, no pedal."""
+    notes = (36, 48, 57, 64, 69, 76, 84, 91)
+    def one(midi):
+        window = ((0.02, 0.1),)
+        return (halo(*render(midi, 3, 1.0), midi, window) - halo(*reference(midi, 3), midi, window))[0]
+    return float(np.mean(parallel(one, notes)))
+
+
+def phantom_level(rate: int, stereo: np.ndarray, midi: int) -> float:
+    """Peak power at the phantom partials f_k + f_k+1 and f_k + f_k+2 that sit at least 4 Hz clear of
+    every partial, relative to the partials' peak power, 150-700 Hz, 0.05-1.05 s. Above ~700 Hz the
+    bass's estimated partial frequencies drift by several Hz."""
+    mono = stereo.mean(axis=1)
+    mono = mono[onset(mono):]
+    window = mono[int(0.05 * rate):int(1.05 * rate)]
+    size = 1 << 19
+    power = np.abs(np.fft.rfft(window * np.hanning(len(window)), size)) ** 2
+    freq = np.fft.rfftfreq(size, 1 / rate)
+    partials = np.array(PARTIALS[midi])
+    sums = [partials[k] + partials[k + d] for d in (1, 2) for k in range(len(partials) - d)]
+    phantoms = [f for f in sums if 150 < f < 700 and np.min(np.abs(partials - f)) >= 4]
+    def peaks(frequencies):
+        return sum(power[np.abs(freq - f) < 1.5].max() for f in frequencies)
+    return 10 * np.log10(peaks(phantoms) / peaks(partials[(partials > 150) & (partials < 700)]))
+
+
+def phantom_error() -> float:
+    """Phantom level, model minus reference, fitting keys A0-A1, layers 3 and 4. Higher up, too few
+    phantoms clear the partials to measure."""
+    items = [(m, l) for m in FIT_KEYS if m <= 33 for l in (3, 4)]
+    def one(item):
+        midi, layer = item
+        return phantom_level(*render(midi, layer, 1.5), midi) - phantom_level(*reference(midi, layer), midi)
+    return float(np.mean(parallel(one, items)))
+
+
+def velocity_span() -> tuple[float, float]:
+    """Level rise from layer 1 to layer 4 (first 0.5 s), model minus reference: mean and spread over keys."""
+    def one(midi):
+        rise = lambda source: rms_level(*source(midi, 4)) - rms_level(*source(midi, 1))
+        return rise(lambda m, l: render(m, l, 1.5)) - rise(reference)
+    errors = np.array(parallel(one, range(24, 106, 6)))
+    return float(errors.mean()), float(errors.std())
 
 
 def onset_features(rate: int, stereo: np.ndarray, midi: int) -> tuple[float, float]:
@@ -302,6 +350,10 @@ def main() -> None:
     print("halo plausibility (not calibration):  "
           + " ".join(f"{v:+5.1f}" for v in halo_diff.mean(axis=0)) + " dB (0.3-0.6, 0.6-1.2, 1.2-2.4 s); "
           f"per-note spread {np.std(halo_diff.mean(axis=1)):4.1f} dB")
+    print(f"knock, between-partial 20-100 ms: {knock_error():+5.1f} dB")
+    print(f"phantom partials, A0-A1, mf/ff:  {phantom_error():+5.1f} dB")
+    span, spread = velocity_span()
+    print(f"velocity span L1-L4, model - ref: {span:+5.1f} dB (per-key spread {spread:3.1f} dB)")
     mean, worst, low = onset_error()
     print(f"onset overshoot mean/max:             {mean:+5.1f}/{worst:+5.1f} dB; low-frequency share vs ref {low:+5.1f} dB")
     bright = brightness_by_layer()
@@ -311,8 +363,8 @@ def main() -> None:
         print(f"decay fits: {counts}")
         print(f"refit prompt decay:     T60 = {early_a:.2f} s * (f/440)^{early_b:.3f}   (code: 4.89, -0.745)")
         print(f"refit aftersound decay: T60 = {late_a:.2f} s * (f/440)^{late_b:.3f}   (code: 16.87, -0.444)")
-        knee, exponent = level_law_correction(64.4, 1.505)
-        print(f"refit key level law:    knee {knee:.1f} Hz, exponent {exponent:.3f}   (code: 64.4, 1.505; "
+        knee, exponent = level_law_correction(302.3, 1.042)
+        print(f"refit key level law:    knee {knee:.1f} Hz, exponent {exponent:.3f}   (code: 302.3, 1.042; "
               "one-step linear correction, not a fixed point: knock and sympathy don't scale with the law)")
 
 

@@ -81,10 +81,9 @@ void modelIsStable() {
             require(value.leftGain > 0.0 && value.rightGain > 0.0, "Invalid stereo output gains");
             require(value.velocityGainExponent >= 0.4 && value.velocityGainExponent <= 2.5,
                     "Invalid velocity gain exponent");
-            require(value.velocityBrightnessExponent >= 0.0 && value.velocityBrightnessExponent <= 2.5,
-                    "Invalid velocity brightness exponent");
-            require(value.hammerStiffnessScale >= 0.5 && value.hammerStiffnessScale <= 2.0,
-                    "Invalid hammer stiffness scale");
+            require(value.hammerMass > 0.004 && value.hammerMass < 0.012 && value.feltExponent >= 3.7 &&
+                        value.feltExponent <= 5.1 && value.residualCompliance >= 0.0,
+                    "Invalid hammer");
             require(value.modeCount > 0 && value.modeCount <= pianocraft::modeLimit, "Invalid mode count");
             for (std::size_t index = 0; index < value.modeCount; ++index) {
                 const auto& mode = value.modes[index];
@@ -388,16 +387,20 @@ void voicingControls() {
                                                 tail(ParameterId::sustainLength, 1.0, 72, false)), 3.0);
     check("Damper Release 4 vs 1, released tail", dB(tail(ParameterId::damperRelease, 4.0, 60, true),
                                                     tail(ParameterId::damperRelease, 1.0, 60, true)), 6.0);
-    // The partner beats against the prompt sound early on; its own tail dominates after ~2 s.
-    const auto lateTail = [](double aftersound) {
+    // The slow unison mode beats against the prompt sound early on; its own tail dominates after ~2 s.
+    const auto lateTail = [](ParameterId id, double value) {
         pianocraft::PianoEngine engine;
         engine.prepare(48000.0);
-        engine.setParameter(ParameterId::aftersound, aftersound);
+        engine.setParameter(id, value);
         engine.noteOn(note(84), 0.6);
         render(engine, 96000, 64);
         return rms(render(engine, 48000, 64));
     };
-    check("Aftersound 1 vs 0, treble tail at 2-3 s", dB(lateTail(1.0), lateTail(0.0)), 6.0);
+    check("Aftersound 1 vs 0, treble tail at 2-3 s",
+          dB(lateTail(ParameterId::aftersound, 1.0), lateTail(ParameterId::aftersound, 0.0)), 6.0);
+    // Weinreich: perfectly tuned unisons struck level leave no aftersound.
+    check("Unison Detune 1 vs 0, treble tail at 2-3 s",
+          dB(lateTail(ParameterId::unisonDetune, 1.0), lateTail(ParameterId::unisonDetune, 0.0)), 6.0);
 
     const auto spread = [&](double dynamics) {
         return dB(rms(play(ParameterId::dynamicRange, dynamics, 60, 0.95, false).first),

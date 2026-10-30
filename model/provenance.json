@@ -36,7 +36,7 @@
           2.42,
           -0.31
         ],
-        "kept_because": "Equal complete-envelope sustain error (9.98 vs 9.84 dB), 6 dB better in the bass"
+        "kept_because": "Equal complete-envelope sustain error at a472304 (9.98 vs 9.84 dB), 6 dB better in the bass"
       },
       "aftersound_decay": {
         "code": [
@@ -51,20 +51,25 @@
       },
       "key_level_law": {
         "code": [
-          64.4,
-          1.505
+          302.3,
+          1.042
         ],
         "refit": [
-          62.3,
-          1.444
+          279.2,
+          0.675
         ],
-        "kept_because": "One-step refit does not converge (next: 60.9, 1.417); objective differs by 0.05 dB"
+        "kept_because": "The refit step lowers fitting-key level std 3.23 -> 3.14 dB but raises sustain error 9.07 -> 9.82 dB; later steps diverge"
       }
     },
     "analytic": [
-      "unison partner detune and level",
+      "coupled unison beat and slow-mode level",
+      "string scale: 700 N tension and speaking lengths",
+      "longitudinal ratio 13.06 f0, from one key (E1)",
       "sympathetic level and register drive",
       "Coincident and Player mic positions"
+    ],
+    "published": [
+      "Stulov hammer set: mass, felt exponent and static stiffness per hammer"
     ]
   }
 }
