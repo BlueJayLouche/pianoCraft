@@ -26,6 +26,7 @@ enum class ParameterId : std::uint32_t {
     hammerNoise = 13,
     masterTune = 14,
     stretch = 15,
+    age = 16,
 };
 
 struct NoteAddress {
@@ -60,6 +61,9 @@ public:
     void modulate(const NoteAddress& target, ParameterId id, double amount);
     void setNoteVolume(const NoteAddress& target, double gain); // linear, 0-4
     void setNotePan(const NoteAddress& target, double pan);     // 0 left, 0.5 centre, 1 right
+    // Bitwig's Timbre: 0.5 is neutral; 0 and 1 move Hammer Hardness by -1 and +1. Like the real
+    // hammer, it shapes a note at the strike, not after.
+    void setNoteBrightness(const NoteAddress& target, double brightness);
 
     struct EndedNote {
         NoteAddress address;

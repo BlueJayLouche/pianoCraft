@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <functional>
 #include <iostream>
+#include <utility>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -144,16 +145,43 @@ void restrikesAndPolyphonyAreFinite() {
     require(peak(render(engine, 256, 64)) == 0.0, "Reset did not silence output");
 }
 
+// A re-render must line up with the one it replaces: the same events give the same samples at any
+// host block size, as the CLAP host splits blocks at each event.
 void blockSizesAreDeterministic() {
-    pianocraft::PianoEngine first;
-    pianocraft::PianoEngine second;
-    first.prepare(48000.0);
-    second.prepare(48000.0);
-    first.noteOn(note(60), 0.75);
-    second.noteOn(note(60), 0.75);
-    const auto a = render(first, 4096, 64);
-    const auto b = render(second, 4096, 127);
-    require(a == b, "Output depends on host block size");
+    using pianocraft::ParameterId;
+    const auto play = [](double rate, std::uint32_t blockSize) {
+        const auto at = [rate](double seconds) { return static_cast<std::uint32_t>(seconds * rate); };
+        pianocraft::PianoEngine engine;
+        engine.prepare(rate);
+        const std::vector<std::pair<std::uint32_t, std::function<void()>>> events{
+            {at(0.0), [&] { engine.noteOn(note(60), 0.75); engine.noteOn(note(36), 0.5); }},
+            {at(0.03), [&] { engine.setParameter(ParameterId::sustainLength, 2.0); }},
+            {at(0.05), [&] { engine.setSustain(0, 0.6); }},
+            {at(0.07), [&] { engine.setParameter(ParameterId::micPosition, 2.0); }},
+            {at(0.09), [&] { engine.setParameter(ParameterId::stereoWidth, 0.0); }},
+            {at(0.11), [&] { engine.modulate({-1, -1, -1, 60}, ParameterId::hammerHardness, 0.5); }},
+            {at(0.12), [&] { engine.noteOff(note(60), 0.0); engine.noteOn(note(84), 1.0); }},
+            {at(0.20), [&] { engine.setSustain(0, 0.0); }},
+        };
+        std::vector<float> output;
+        std::uint32_t rendered = 0;
+        for (std::size_t index = 0; index <= events.size(); ++index) {
+            const std::uint32_t until = index < events.size() ? events[index].first : at(0.3);
+            const auto segment = render(engine, until - rendered, blockSize);
+            output.insert(output.end(), segment.begin(), segment.end());
+            rendered = until;
+            if (index < events.size()) {
+                events[index].second();
+            }
+        }
+        return output;
+    };
+    for (double rate : {48000.0, 96000.0}) {
+        const auto reference = play(rate, 64);
+        require(play(rate, 127) == reference && play(rate, 1024) == reference,
+                "Output depends on host block size at " + std::to_string(rate) + " Hz");
+        require(play(rate, 64) == reference, "Output differs between identical renders");
+    }
 }
 
 void parametersAndRatesAreValid() {
@@ -327,6 +355,40 @@ void micPositionsAndWidth() {
     for (std::size_t index = 0; index < mono.size(); index += 2) {
         require(std::abs(mono[index] - mono[index + 1]) < 1.0e-6f, "Zero width is not mono");
     }
+
+    // A mono bounce sums the channels; no partial may notch against one channel alone. C3's first
+    // 24 partials, 0.1-0.6 s, Goertzel per partial.
+    const pianocraft::InstrumentModel model(48000.0);
+    const auto& key = model.key(48);
+    const auto deepestNotch = [&](double mic, double width) {
+        pianocraft::PianoEngine engine;
+        engine.setParameter(pianocraft::ParameterId::stereoWidth, width);
+        engine.setParameter(pianocraft::ParameterId::micPosition, mic);
+        engine.prepare(48000.0);
+        engine.noteOn(note(48), 0.63);
+        const auto output = render(engine, 28800, 64);
+        const auto magnitude = [&](double frequency, bool sum) {
+            const double omega = 2.0 * 3.141592653589793 * frequency / 48000.0;
+            double real = 0.0, imaginary = 0.0;
+            for (std::size_t frame = 4800; frame < 28800; ++frame) {
+                const double x = sum ? 0.5 * (output[2 * frame] + output[2 * frame + 1]) : output[2 * frame];
+                real += x * std::cos(omega * frame);
+                imaginary += x * std::sin(omega * frame);
+            }
+            return std::hypot(real, imaginary);
+        };
+        double deepest = 0.0;
+        for (std::size_t index = 0; index < 24; ++index) {
+            const double frequency = key.modes[index].frequency;
+            deepest = std::min(deepest, 20.0 * std::log10(magnitude(frequency, true) / magnitude(frequency, false)));
+        }
+        return deepest;
+    };
+    for (double mic : {0.0, 1.0, 2.0}) {
+        const double notch = deepestNotch(mic, 0.0);
+        require(notch > -1.0, "Mono sum notches at mic " + std::to_string(mic) + ": " + std::to_string(notch) + " dB");
+    }
+    require(deepestNotch(0.0, 1.0) < -6.0, "Notch check would not catch the spaced pair's comb filtering");
 }
 
 double trebleShare(const std::vector<float>& output) {
@@ -514,6 +576,60 @@ void tuningControls() {
             "Master Tune does not move the played pitch");
 }
 
+// Age wears each key differently but the same way every time; Age 0 is the calibrated piano.
+void ageWearsUnevenly() {
+    pianocraft::InstrumentModel fresh(48000.0);
+    pianocraft::InstrumentModel worn(48000.0);
+    pianocraft::Voicing voicing;
+    voicing.age = 1.0;
+    worn.setVoicing(voicing);
+    const auto releaseSeconds = [](const pianocraft::ModeCoefficients& mode) {
+        return -6.907755278982138 / (48000.0 * std::log(std::sqrt(mode.releaseA2)));
+    };
+    double sum = 0.0, squares = 0.0, softest = 10.0, hardest = 0.0, mostLeak = 0.0, leastLeak = 10.0;
+    for (int midi = 21; midi <= 108; ++midi) {
+        const auto& before = fresh.key(midi);
+        const auto& after = worn.key(midi);
+        const double cents = 1200.0 * std::log2(after.fundamental / before.fundamental);
+        sum += cents;
+        squares += cents * cents;
+        softest = std::min(softest, after.wearHardness);
+        hardest = std::max(hardest, after.wearHardness);
+        if (before.hasDamper) {
+            const double leak = releaseSeconds(after.modes[0]) / releaseSeconds(before.modes[0]);
+            mostLeak = std::max(mostLeak, leak);
+            leastLeak = std::min(leastLeak, leak);
+        }
+    }
+    const double mean = sum / 88.0;
+    const double spread = std::sqrt(squares / 88.0 - mean * mean);
+    require(mean < -20.0 && mean > -30.0 && spread > 2.0,
+            "Age 1 does not slacken pitch unevenly: mean " + std::to_string(mean) + " spread " + std::to_string(spread));
+    require(hardest / softest > 1.4, "Age 1 does not vary hammer hardness from key to key");
+    require(leastLeak >= 1.0 && mostLeak > 3.0, "Age 1 does not make some dampers leak");
+
+    worn.setVoicing(pianocraft::Voicing{});
+    for (int midi = 21; midi <= 108; ++midi) {
+        require(worn.key(midi).fundamental == fresh.key(midi).fundamental &&
+                    worn.key(midi).modes[0].releaseA2 == fresh.key(midi).modes[0].releaseA2 &&
+                    worn.key(midi).wearGain == 1.0,
+                "Age 0 is not the calibrated piano");
+    }
+
+    const auto play = [](double age) {
+        pianocraft::PianoEngine engine;
+        engine.setParameter(pianocraft::ParameterId::age, age);
+        engine.prepare(48000.0);
+        engine.noteOn(note(60), 0.6);
+        return render(engine, 9600, 64);
+    };
+    pianocraft::PianoEngine plain;
+    plain.prepare(48000.0);
+    plain.noteOn(note(60), 0.6);
+    require(play(0.0) == render(plain, 9600, 64), "Age 0 changes the default sound");
+    require(play(0.7) == play(0.7) && play(0.7) != play(0.0), "Age is not a fixed, audible wear");
+}
+
 // Per-note modulation and expressions reach only their note, and ended voices are reported for
 // CLAP NOTE_END, including a string restruck under a new note id.
 void perNoteControl() {
@@ -535,6 +651,13 @@ void perNoteControl() {
     require(play(2, harder) == plain, "Modulating another note changed this one");
     require(play(-1, harder) == modulated, "Global modulation differs from modulating every note");
     require(trebleShare(modulated) > trebleShare(plain) * 1.2, "Per-note hardness had no effect");
+    const auto timbre = [](double value) {
+        return [value](PianoEngine& engine, pianocraft::NoteAddress target) { engine.setNoteBrightness(target, value); };
+    };
+    require(play(1, timbre(0.5)) == plain, "Neutral Timbre changed the note");
+    require(play(1, timbre(1.0)) == modulated, "Full Timbre is not Hammer Hardness +1");
+    require(play(2, timbre(1.0)) == plain, "Timbre on another note changed this one");
+    require(trebleShare(play(1, timbre(0.0))) < trebleShare(plain), "Low Timbre did not soften the hammer");
 
     const auto quieter = play(1, [](PianoEngine& engine, pianocraft::NoteAddress target) {
         engine.setNoteVolume(target, 0.5);
@@ -587,6 +710,7 @@ int main() {
         voicingControls();
         pedalsAreContinuous();
         tuningControls();
+        ageWearsUnevenly();
         perNoteControl();
         std::cout << "All engine tests passed\n";
         return 0;

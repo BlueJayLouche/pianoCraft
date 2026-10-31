@@ -77,6 +77,9 @@ struct KeyModel {
     double residualCompliance = 0.0;
     double strikeCompliance = 0.0; // the synthesized modes' response within one sample (m/N)
     double velocityGainExponent = 1.35;
+    // Age's per-key wear: a hammer hardness factor and a key response gain.
+    double wearHardness = 1.0;
+    double wearGain = 1.0;
     double outputGain = 1.0;
     double sympatheticDrive = 1.0;
     // Measured deviation from equal temperament relative to the piano's own A4, in octaves.
@@ -107,6 +110,7 @@ struct Voicing {
     double aftersound = 1.0; // level of the unisons' slow mode: the long second-stage tail
     double masterTune = 440.0; // A4 in Hz
     double stretch = 1.0;    // 1 keeps the recorded piano's stretch, 0 is equal temperament
+    double age = 0.0;        // 0 as calibrated, 1 most worn; see setVoicing
 };
 
 class InstrumentModel {

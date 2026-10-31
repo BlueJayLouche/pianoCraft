@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <cstdint>
 #include <stdexcept>
 
 namespace pianocraft {
@@ -71,6 +72,19 @@ constexpr double longitudinalRatio = 13.06;
 // Share of the longitudinal bridge force the board radiates: it pushes along the string, in the
 // board's plane. Selected on the phantom partials' level (docs/model-laws.md).
 constexpr double longitudinalCoupling = 0.03;
+
+// ponytail: a fixed per-key, per-aspect hash (0-1) stands in for one particular old piano's wear,
+// so the same Age gives the same piano on every render. Measure it from Lola's tape or Andrew's
+// upright if those identify it.
+double wear(int midi, std::uint32_t aspect) {
+    std::uint32_t x = static_cast<std::uint32_t>(midi) * 2654435761u + aspect * 0x9E3779B9u;
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x / 4294967295.0;
+}
 
 // Felt hysteresis: the rate-dependent share of the felt force at mid-compression, at 2 m/s.
 // Selected on octave-band spectra: 0.25 scored better than 0 and 0.5 (docs/model-laws.md).
@@ -347,28 +361,42 @@ InstrumentModel::InstrumentModel(double sampleRate) {
 void InstrumentModel::setVoicing(const Voicing& voicing) {
     for (std::size_t keyIndex = 0; keyIndex < keys_.size(); ++keyIndex) {
         auto& key = keys_[keyIndex];
+        // Age wears the piano per key, all at Age 1 (Analytic: chosen by ear for an old home
+        // upright, not measured):
+        // - pitch slackened 25 cents with +-6 cents of unevenness, which also makes the stretch uneven;
+        // - unisons drifted 1.5-4.5x apart;
+        // - dampers leaking: release 1.5x on most keys, up to 5.5x on a few;
+        // - hammers hardened 15% on average, +-35% key to key;
+        // - key response uneven by +-2.5 dB.
+        const double age = voicing.age;
+        const double sag = age * (-25.0 + 6.0 * (2.0 * wear(key.midi, 0) - 1.0));
+        const double unisonWear = 1.0 + age * (0.5 + 3.0 * wear(key.midi, 1));
+        const double damperWear = 1.0 + age * (0.5 + 4.0 * std::pow(wear(key.midi, 2), 3.0));
+        key.wearHardness = 1.0 + age * (0.15 + 0.35 * (2.0 * wear(key.midi, 3) - 1.0));
+        key.wearGain = std::pow(10.0, age * 2.5 * (2.0 * wear(key.midi, 4) - 1.0) / 20.0);
+        const double release = voicing.release * damperWear;
         // Every partial of a key moves together, so inharmonicity is kept.
-        const double tuning = std::exp2((voicing.stretch - 1.0) * key.stretchOctaves) *
+        const double tuning = std::exp2((voicing.stretch - 1.0) * key.stretchOctaves + sag / 1200.0) *
             voicing.masterTune / measuredA4_;
         key.fundamental = measuredCalibration[keyIndex].fundamental * tuning;
         for (std::size_t index = 0; index < key.modeCount; ++index) {
             auto& mode = key.modes[index];
             setPole(mode, mode.baseFrequency * tuning, mode.baseDecaySeconds * voicing.sustain,
-                    mode.baseReleaseSeconds * voicing.release, sampleRate_);
+                    mode.baseReleaseSeconds * release, sampleRate_);
             mode.excitation = mode.baseExcitation * (mode.secondary ? voicing.aftersound : 1.0);
         }
         // Each coupled pair keeps its prompt mode on the measured pitch; the slow mode sits at the
         // normal modes' frequency difference and both carry their share's phase.
         for (std::size_t index = 0; index < key.unisonCount; ++index) {
             const auto& unison = key.unisons[index];
-            const auto modes = unisonModes(unison.damping, unison.reactance, unison.mistuning * voicing.detune);
+            const auto modes = unisonModes(unison.damping, unison.reactance, unison.mistuning * voicing.detune * unisonWear);
             auto& prompt = key.modes[unison.prompt];
             auto& partner = key.modes[unison.partner];
             setPole(prompt, prompt.baseFrequency * tuning, ln1000 / (unison.loss + modes.fast.imag()) * voicing.sustain,
-                    prompt.baseReleaseSeconds * voicing.release, sampleRate_);
+                    prompt.baseReleaseSeconds * release, sampleRate_);
             setPole(partner, (partner.baseFrequency + (modes.slow.real() - modes.fast.real()) / (2.0 * pi)) * tuning,
                     ln1000 / (unison.loss + modes.slow.imag()) * voicing.sustain,
-                    partner.baseReleaseSeconds * voicing.release, sampleRate_);
+                    partner.baseReleaseSeconds * release, sampleRate_);
             prompt.excitation = prompt.baseExcitation * std::abs(modes.fastShare);
             prompt.phase = std::arg(modes.fastShare);
             partner.excitation = partner.baseExcitation * std::abs(modes.slowShare) * voicing.aftersound;

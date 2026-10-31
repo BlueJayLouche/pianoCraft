@@ -57,6 +57,8 @@ Status column:
 | Coincident and Player mic positions | `InstrumentModel.cpp`, `Soundboard.cpp` | Analytic | No reference recordings. |
 | Half-pedal zone 25-75% travel, contact squared | `PianoEngine.cpp` | Analytic | The corpus has no part-pedalled notes; the roadmap defers a measured part-pedal model until there are controlled recordings. Interpolates between the sustain and release poles. |
 | Soft pedal: velocity x 0.7 | `PianoEngine.cpp` | Analytic | Upright half-blow action. No soft-pedal recordings. |
+| Age at 1: pitch -25 cents +-6 per key, unison mistuning 1.5-4.5x, damper release 1.5x (up to 5.5x on a few keys), hammers 15% harder +-35%, key response +-2.5 dB; a fixed per-key hash | `InstrumentModel.cpp` | Analytic | Chosen by ear for an old home upright (`docs/old-house-needs.md`); nothing measured. Lola's tape or Andrew's upright may later identify the tuning and unison spread. Age 0 is bit-identical to the calibrated piano. |
+| Stereo Width below 1 crossfades from one coherent microphone (the voices without mic phase or key pan, and the left microphone's view of the board) | `PianoEngine.cpp`, `Soundboard.cpp` | Analytic | Mono bounces: summing the spaced pair notches partials by more than 6 dB; at width 0 no partial of C3 notches by even 1 dB at any Mic Position (`engine_tests`). |
 | Hammer Hardness h scales Q0 by h^p; Dynamic Range also scales the knock's distance from mf | `PianoEngine.cpp` | Analytic | Control mappings. A linear Q0 scale moved C4's treble share by only ~1 dB over the whole range, because the string's give sets mid-register contact times. |
 
 Release and damper noise are not modelled: the recordings contain no key releases.

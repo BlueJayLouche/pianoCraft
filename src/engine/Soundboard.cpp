@@ -84,8 +84,9 @@ void Soundboard::reset() {
 
 void Soundboard::process(const std::array<double, 3>& directLeft,
                          const std::array<double, 3>& directRight,
+                         const std::array<double, 3>& directCentre,
                          const std::array<double, 3>& bridge,
-                         double bodyLevel, double& outputLeft, double& outputRight) {
+                         double bodyLevel, double& outputLeft, double& outputRight, double& outputCentre) {
     double bodyLeft = 0.0;
     double bodyRight = 0.0;
     for (std::size_t index = 0; index < modeCount_; ++index) {
@@ -99,10 +100,12 @@ void Soundboard::process(const std::array<double, 3>& directLeft,
     }
     outputLeft = bodyLeft * bodyLevel;
     outputRight = bodyRight * bodyLevel;
+    outputCentre = outputLeft;
     for (std::size_t region = 0; region < regionCount; ++region) {
         const double direct = 0.72 * soundboardCalibration.directGain[region];
         outputLeft += directLeft[region] * direct;
         outputRight += directRight[region] * direct;
+        outputCentre += directCentre[region] * direct;
     }
 }
 

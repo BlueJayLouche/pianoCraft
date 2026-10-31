@@ -38,9 +38,13 @@ bundle. The release archive is verified against its published SHA-256 digest.
 
 ```sh
 python3 tools/fetch_validator.py
-build/tools/clap-validator-0.4.1/clap-validator validate build/PianoCraft.clap --only-failed
+build/tools/clap-validator-0.4.1/clap-validator validate build/PianoCraft.clap --only-failed -x "preset-discovery-(crawl|load)"
 build/tools/clap-validator-0.4.1/clap-validator fuzz -j2 -d30s build/PianoCraft.clap
 ```
+
+The two excluded tests hang in validator 0.4.1 on any plugin with more than one built-in
+preset: its metadata receiver locks its own mutex twice (fix pending upstream,
+free-audio/clap-validator#41). `pianocraft-state-tests` crawls and loads the presets instead.
 
 ## Install for Bitwig
 
@@ -52,17 +56,30 @@ cmake --install build --config Release
 ```
 
 Rescan plug-ins in Bitwig Studio and insert PianoCraft on an instrument track.
-There is no custom editor. Bitwig shows the parameters in four groups (Hammer,
-Strings, Tuning, Mix) and maps two remote-control pages onto its device knobs:
+There is no custom editor. Bitwig shows the parameters in five groups (Hammer,
+Strings, Tuning, Age, Mix) and maps two remote-control pages onto its device knobs:
 
 - **Main:** Hammer Hardness, Dynamic Range (pp-ff loudness spread), Velocity
   Brightness, Sustain Length, Sympathetic Level, Body Level, Stereo Width, Output Gain.
-- **Voicing:** Unison Detune (how far each unison's strings are apart: more
+- **Voicing:** Age, Unison Detune (how far each unison's strings are apart: more
   beating and more aftersound, as on a real piano; 0 is perfectly in tune and
   leaves a single decay), Aftersound (level of the long second-stage tail),
   Damper Release, Hammer Noise, Mic Position,
   Master Tune (A4 in Hz), Stretch (1 is the recorded piano's octave stretch,
   0 equal temperament, 2 double).
+
+Age (0 to 1) wears the piano as one control, a little differently on every key
+but identically on every render: pitch slackens about 25 cents with uneven
+tuning and stretch, unisons drift apart, some dampers leak, hammers harden
+unevenly, and key response turns uneven. At 0 it is the calibrated piano.
+
+Stereo Width 0 is a true mono render: one coherent microphone, so summing to
+mono can't comb-filter at any Mic Position. Use it for mono bounces; widths
+between 0 and 1 crossfade to the microphone pair.
+
+Bitwig's preset browser lists four built-in voicings: Calibrated Upright
+(stereo) and, for mono bounces, Whole, Lightly Worn (Age 0.3) and Most Worn
+(Age 1). Save your own as Bitwig presets.
 
 The recorded piano sat at A4 = 439.02 Hz; Master Tune puts A4 exactly where it
 says, so the default plays 3.9 cents above the recordings.
@@ -75,12 +92,14 @@ the hammer throw, so notes come out softer and darker.
 
 Per note: Hammer Hardness and Hammer Noise accept Bitwig's polyphonic
 modulation (each note keeps its own modulator), and the piano roll's Volume
-and Pan note expressions apply per note. A repeated key re-strikes its own
+and Pan note expressions apply per note. Timbre sets each note's hammer
+hardness (centre is neutral, the extremes move it by 1); like a real hammer it
+shapes the note at the strike, so later Timbre changes don't alter it. A repeated key re-strikes its own
 string. The plugin tells Bitwig when each voice actually stops, so a
 pedalled note keeps its modulators until it has died away.
 
 At 1.0 every voicing control is the calibrated piano. Sustain Length, Damper
-Release, Unison Detune, Aftersound and the tuning controls recompute the string
+Release, Unison Detune, Aftersound, Age and the tuning controls recompute the string
 model (and the sympathetic strings with it) when changed,
 so they suit setting by hand more than fast automation.
 

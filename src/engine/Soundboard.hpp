@@ -12,10 +12,12 @@ public:
     void prepare(double sampleRate);
     void reset();
     void setMicPosition(MicPosition position);
+    // The centre output is one coherent microphone (the left one's view of the board), for mono.
     void process(const std::array<double, 3>& directLeft,
                  const std::array<double, 3>& directRight,
+                 const std::array<double, 3>& directCentre,
                  const std::array<double, 3>& bridge,
-                 double bodyLevel, double& outputLeft, double& outputRight);
+                 double bodyLevel, double& outputLeft, double& outputRight, double& outputCentre);
 
 private:
     static constexpr std::size_t regionCount = 3;

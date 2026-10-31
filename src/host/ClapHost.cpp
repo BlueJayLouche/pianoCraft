@@ -15,6 +15,7 @@
 #include <limits>
 #include <new>
 #include <type_traits>
+#include <utility>
 
 namespace {
 
@@ -46,7 +47,7 @@ constexpr clap_id pid(ParameterId id) noexcept
 }
 
 // Listed by group; hosts identify parameters by id, so the order is free.
-constexpr std::array<ParameterSpec, 15> parameterSpecs{{
+constexpr std::array<ParameterSpec, 16> parameterSpecs{{
     {pid(ParameterId::hammerHardness), "Hammer Hardness", "Hammer", 0.25, 2.0, 1.0, perNoteFlags},
     {pid(ParameterId::dynamicRange), "Dynamic Range", "Hammer", 0.0, 2.0, 1.0, continuousFlags},
     {pid(ParameterId::velocityBrightness), "Velocity Brightness", "Hammer", 0.0, 2.0, 1.0, continuousFlags},
@@ -58,6 +59,7 @@ constexpr std::array<ParameterSpec, 15> parameterSpecs{{
     {pid(ParameterId::sympatheticLevel), "Sympathetic Level", "Strings", 0.0, 1.0, 0.35, continuousFlags},
     {pid(ParameterId::masterTune), "Master Tune", "Tuning", 415.0, 466.0, 440.0, continuousFlags},
     {pid(ParameterId::stretch), "Stretch", "Tuning", 0.0, 2.0, 1.0, continuousFlags},
+    {pid(ParameterId::age), "Age", "Age", 0.0, 1.0, 0.0, continuousFlags},
     {pid(ParameterId::bodyLevel), "Body Level", "Mix", 0.0, 2.0, 1.0, continuousFlags},
     {pid(ParameterId::micPosition), "Mic Position", "Mix", 0.0, 2.0, 0.0, choiceFlags},
     {pid(ParameterId::stereoWidth), "Stereo Width", "Mix", 0.0, 2.0, 1.0, continuousFlags},
@@ -77,7 +79,27 @@ constexpr std::array<RemotePage, 2> remotePages{{
     {"Voicing", {pid(ParameterId::unisonDetune), pid(ParameterId::aftersound),
                  pid(ParameterId::damperRelease), pid(ParameterId::hammerNoise),
                  pid(ParameterId::micPosition), pid(ParameterId::masterTune), pid(ParameterId::stretch),
-                 CLAP_INVALID_ID}},
+                 pid(ParameterId::age)}},
+}};
+
+// Built-in voicings for Bitwig's browser (CLAP preset discovery): every parameter at its default
+// except those listed. The Old House score bounces mono, so its wear stages use Stereo Width 0.
+struct Preset {
+    const char* name;
+    const char* loadKey;
+    const char* description;
+    std::array<std::pair<ParameterId, double>, 2> changes;
+};
+
+constexpr std::array<Preset, 4> presets{{
+    {"Calibrated Upright", "calibrated", "The recorded upright as measured, spaced pair, stereo",
+     {{{ParameterId::stereoWidth, 1.0}, {ParameterId::age, 0.0}}}},
+    {"Whole (Mono)", "whole-mono", "Unworn, mono-safe for a single emitter",
+     {{{ParameterId::stereoWidth, 0.0}, {ParameterId::age, 0.0}}}},
+    {"Lightly Worn (Mono)", "lightly-worn-mono", "Age 0.3, mono-safe for a single emitter",
+     {{{ParameterId::stereoWidth, 0.0}, {ParameterId::age, 0.3}}}},
+    {"Most Worn (Mono)", "most-worn-mono", "Age 1, mono-safe for a single emitter",
+     {{{ParameterId::stereoWidth, 0.0}, {ParameterId::age, 1.0}}}},
 }};
 
 constexpr std::size_t invalidParameterIndex = parameterSpecs.size();
@@ -436,6 +458,8 @@ private:
                 engine_.setNoteVolume(target, event.value);
             } else if (event.expression_id == CLAP_NOTE_EXPRESSION_PAN) {
                 engine_.setNotePan(target, event.value);
+            } else if (event.expression_id == CLAP_NOTE_EXPRESSION_BRIGHTNESS) {
+                engine_.setNoteBrightness(target, event.value);
             }
             return;
         }
@@ -700,20 +724,57 @@ private:
         if (stream->read(stream, &trailingByte, 1) != 0) {
             return false;
         }
+        adapter.adopt(loadedValues);
+        return true;
+    }
 
+    // [main-thread] Takes a full set of parameter values (state or preset) and tells the host.
+    void adopt(const std::array<double, parameterSpecs.size()>& values) noexcept
+    {
         for (std::size_t i = 0; i < parameterSpecs.size(); ++i) {
-            adapter.parameterValues_[i].store(loadedValues[i], std::memory_order_relaxed);
+            parameterValues_[i].store(values[i], std::memory_order_relaxed);
         }
-        adapter.parameterRevision_.fetch_add(1, std::memory_order_release);
-        if (!adapter.active_) {
-            adapter.applyAllParameters();
+        parameterRevision_.fetch_add(1, std::memory_order_release);
+        if (!active_) {
+            applyAllParameters();
         }
-        if (adapter.host_ != nullptr && adapter.host_->get_extension != nullptr) {
-            const auto* hostParams = static_cast<const clap_host_params_t*>(
-                adapter.host_->get_extension(adapter.host_, CLAP_EXT_PARAMS));
+        if (host_ != nullptr && host_->get_extension != nullptr) {
+            const auto* hostParams = static_cast<const clap_host_params_t*>(host_->get_extension(host_, CLAP_EXT_PARAMS));
             if (hostParams != nullptr && hostParams->rescan != nullptr) {
-                hostParams->rescan(adapter.host_, CLAP_PARAM_RESCAN_VALUES);
+                hostParams->rescan(host_, CLAP_PARAM_RESCAN_VALUES);
             }
+        }
+    }
+
+    static bool presetLoad(const clap_plugin_t* plugin, std::uint32_t locationKind, const char* location,
+                           const char* loadKey) noexcept
+    {
+        auto& adapter = self(plugin);
+        const auto* preset = locationKind == CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN && loadKey != nullptr
+            ? std::find_if(presets.begin(), presets.end(),
+                           [loadKey](const Preset& p) { return std::strcmp(p.loadKey, loadKey) == 0; })
+            : presets.end();
+        const clap_host_preset_load_t* hostPresets = nullptr;
+        if (adapter.host_ != nullptr && adapter.host_->get_extension != nullptr) {
+            hostPresets = static_cast<const clap_host_preset_load_t*>(
+                adapter.host_->get_extension(adapter.host_, CLAP_EXT_PRESET_LOAD));
+        }
+        if (preset == presets.end()) {
+            if (hostPresets != nullptr && hostPresets->on_error != nullptr) {
+                hostPresets->on_error(adapter.host_, locationKind, location, loadKey, 0, "Unknown PianoCraft preset");
+            }
+            return false;
+        }
+        std::array<double, parameterSpecs.size()> values{};
+        for (std::size_t i = 0; i < parameterSpecs.size(); ++i) {
+            values[i] = parameterSpecs[i].defaultValue;
+        }
+        for (const auto& [id, value] : preset->changes) {
+            values[parameterIndex(pid(id))] = value;
+        }
+        adapter.adopt(values);
+        if (hostPresets != nullptr && hostPresets->loaded != nullptr) {
+            hostPresets->loaded(adapter.host_, locationKind, location, loadKey);
         }
         return true;
     }
@@ -791,6 +852,9 @@ private:
         if (std::strcmp(id, CLAP_EXT_REMOTE_CONTROLS) == 0 || std::strcmp(id, CLAP_EXT_REMOTE_CONTROLS_COMPAT) == 0) {
             return &remoteControls_;
         }
+        if (std::strcmp(id, CLAP_EXT_PRESET_LOAD) == 0 || std::strcmp(id, CLAP_EXT_PRESET_LOAD_COMPAT) == 0) {
+            return &presetLoad_;
+        }
         if (std::strcmp(id, CLAP_EXT_VOICE_INFO) == 0) {
             return &voiceInfo_;
         }
@@ -816,6 +880,7 @@ private:
     static const clap_plugin_state_t state_;
     static const clap_plugin_remote_controls_t remoteControls_;
     static const clap_plugin_voice_info_t voiceInfo_;
+    static const clap_plugin_preset_load_t presetLoad_;
 };
 
 constexpr const char* const pluginFeatures[] = {
@@ -871,6 +936,10 @@ const clap_plugin_voice_info_t Adapter::voiceInfo_ = {
     &Adapter::voiceInfoGet,
 };
 
+const clap_plugin_preset_load_t Adapter::presetLoad_ = {
+    &Adapter::presetLoad,
+};
+
 std::uint32_t pluginCount(const clap_plugin_factory_t*) noexcept
 {
     return 1;
@@ -904,6 +973,79 @@ const clap_plugin_factory_t pluginFactory = {
     &createPlugin,
 };
 
+// Preset discovery: one provider whose presets live inside the plugin, loaded by key.
+const clap_preset_discovery_provider_descriptor_t presetProviderDescriptor = {
+    CLAP_VERSION_INIT,
+    "com.pianocraft.upright.presets",
+    "PianoCraft presets",
+    "PianoCraft",
+};
+
+bool presetProviderInit(const clap_preset_discovery_provider_t* provider) noexcept
+{
+    const auto* indexer = static_cast<const clap_preset_discovery_indexer_t*>(provider->provider_data);
+    const clap_preset_discovery_location_t location{
+        CLAP_PRESET_DISCOVERY_IS_FACTORY_CONTENT, "PianoCraft", CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, nullptr};
+    return indexer->declare_location(indexer, &location);
+}
+
+void presetProviderDestroy(const clap_preset_discovery_provider_t* provider) noexcept
+{
+    delete provider;
+}
+
+bool presetProviderGetMetadata(const clap_preset_discovery_provider_t*, std::uint32_t locationKind, const char*,
+                               const clap_preset_discovery_metadata_receiver_t* receiver) noexcept
+{
+    if (locationKind != CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN || receiver == nullptr) {
+        return false;
+    }
+    const clap_universal_plugin_id_t pluginId{"clap", "com.pianocraft.upright"};
+    for (const auto& preset : presets) {
+        if (!receiver->begin_preset(receiver, preset.name, preset.loadKey)) {
+            break;
+        }
+        receiver->add_plugin_id(receiver, &pluginId);
+        receiver->set_flags(receiver, CLAP_PRESET_DISCOVERY_IS_FACTORY_CONTENT);
+        receiver->set_description(receiver, preset.description);
+    }
+    return true;
+}
+
+const void* presetProviderGetExtension(const clap_preset_discovery_provider_t*, const char*) noexcept
+{
+    return nullptr;
+}
+
+std::uint32_t presetProviderCount(const clap_preset_discovery_factory_t*) noexcept
+{
+    return 1;
+}
+
+const clap_preset_discovery_provider_descriptor_t* presetProviderGetDescriptor(
+    const clap_preset_discovery_factory_t*, std::uint32_t index) noexcept
+{
+    return index == 0 ? &presetProviderDescriptor : nullptr;
+}
+
+const clap_preset_discovery_provider_t* presetProviderCreate(const clap_preset_discovery_factory_t*,
+                                                             const clap_preset_discovery_indexer_t* indexer,
+                                                             const char* providerId) noexcept
+{
+    if (indexer == nullptr || providerId == nullptr || std::strcmp(providerId, presetProviderDescriptor.id) != 0) {
+        return nullptr;
+    }
+    return new (std::nothrow) clap_preset_discovery_provider_t{
+        &presetProviderDescriptor, const_cast<clap_preset_discovery_indexer_t*>(indexer), &presetProviderInit,
+        &presetProviderDestroy, &presetProviderGetMetadata, &presetProviderGetExtension};
+}
+
+const clap_preset_discovery_factory_t presetDiscoveryFactory = {
+    &presetProviderCount,
+    &presetProviderGetDescriptor,
+    &presetProviderCreate,
+};
+
 bool entryInit(const char*) noexcept
 {
     return true;
@@ -915,6 +1057,10 @@ const void* getFactory(const char* factoryId) noexcept
 {
     if (factoryId != nullptr && std::strcmp(factoryId, CLAP_PLUGIN_FACTORY_ID) == 0) {
         return &pluginFactory;
+    }
+    if (factoryId != nullptr && (std::strcmp(factoryId, CLAP_PRESET_DISCOVERY_FACTORY_ID) == 0 ||
+                                 std::strcmp(factoryId, CLAP_PRESET_DISCOVERY_FACTORY_ID_COMPAT) == 0)) {
+        return &presetDiscoveryFactory;
     }
     return nullptr;
 }
