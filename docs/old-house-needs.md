@@ -73,7 +73,8 @@ Two sources are coming. The clean-room policy applies to both.
 
 Match the orchestral-library conventions so the same MIDI drives PianoCraft or a sample library:
 - CC1 is continuous dynamics. On sustained instruments it shapes loudness and timbre; velocity shapes only the
-  attack.
+  attack. `piano.py` writes each CC1 curve again as per-note Pressure, which Bitwig imports from a
+  `.dawproject`, so Pressure is the note's dynamic too.
 - CC11 is an expression trim, CC64 sustain, pitch bend ±2 semitones.
 - No keyswitches: `piano.py` doesn't write them. Use one preset or parameter per articulation.
 
@@ -83,7 +84,7 @@ In order of priority:
    ringing, without re-damping.
 2. **Celesta and antique cymbals (crotales).** Struck bars and plates, modal: small.
 3. **Strings, con sordino.** Bowed, so a continuous exciter. CC1 drives bow pressure and speed. It needs
-   vibrato (per-note Pressure, or CC21), tremolo as an articulation (bow reversals, not repeated notes),
+   vibrato (CC21), tremolo as an articulation (bow reversals, not repeated notes),
    *sul tasto*, harmonics, and ensemble width (divisi, section detune) as well as solo.
 4. **Flute.** The *Faune* solo lives in the low, veiled register (about C♯4 to E5).
    - Legato on overlapping notes (monophonic), because `piano.py` writes a chromatic approach note a third of

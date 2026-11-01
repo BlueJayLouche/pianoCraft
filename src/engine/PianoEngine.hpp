@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/Note.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -29,15 +31,9 @@ enum class ParameterId : std::uint32_t {
     age = 16,
 };
 
-struct NoteAddress {
-    std::int32_t noteId = -1;
-    std::int16_t port = 0;
-    std::int16_t channel = 0;
-    std::int16_t key = 60;
-};
-
 class PianoEngine {
 public:
+    static constexpr std::size_t voiceCapacity = pianocraft::voiceCapacity;
     PianoEngine();
     ~PianoEngine();
 
@@ -53,6 +49,15 @@ public:
     // Pedal depth 0 (up) to 1 (down); continuous values give half-pedalling and half-soft.
     void setSustain(std::int16_t channel, double depth);
     void setSoftPedal(std::int16_t channel, double depth);
+    // MIDI controllers as 0-1: CC64 sustain, CC67 soft pedal. The piano ignores pitch bend.
+    void controlChange(std::int16_t channel, std::uint8_t controller, double value) {
+        if (controller == 64) {
+            setSustain(channel, value);
+        } else if (controller == 67) {
+            setSoftPedal(channel, value);
+        }
+    }
+    void pitchBend(std::int16_t, double) {}
     void setParameter(ParameterId id, double value);
     double parameterValue(ParameterId id) const;
 
@@ -64,11 +69,9 @@ public:
     // Bitwig's Timbre: 0.5 is neutral; 0 and 1 move Hammer Hardness by -1 and +1. Like the real
     // hammer, it shapes a note at the strike, not after.
     void setNoteBrightness(const NoteAddress& target, double brightness);
+    void setNotePressure(const NoteAddress&, double) {}
 
-    struct EndedNote {
-        NoteAddress address;
-        std::uint32_t frame = 0;
-    };
+    using EndedNote = pianocraft::EndedNote;
     // Notes whose voices ended (decayed, choked, stolen or restruck) since the last call, in order.
     // Frames count from the start of the latest render() call, and are 0 for a note-on.
     std::size_t takeEndedNotes(EndedNote* destination, std::size_t capacity);

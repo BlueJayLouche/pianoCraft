@@ -1,0 +1,1 @@
+PianoCraft built-in preset. Its values live in the plugin (src/host/ClapHost.cpp, "presets").

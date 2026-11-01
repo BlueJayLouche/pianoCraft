@@ -1,4 +1,8 @@
+#include "../engine/FluteEngine.hpp"
+#include "../engine/HarpEngine.hpp"
+#include "../engine/HornEngine.hpp"
 #include "../engine/PianoEngine.hpp"
+#include "../engine/StringsEngine.hpp"
 
 #include <clap/clap.h>
 
@@ -20,9 +24,17 @@
 
 namespace {
 
+using pianocraft::FluteEngine;
+using pianocraft::FluteParameterId;
+using pianocraft::HarpEngine;
+using pianocraft::HarpParameterId;
+using pianocraft::HornEngine;
+using pianocraft::HornParameterId;
 using pianocraft::NoteAddress;
 using pianocraft::ParameterId;
 using pianocraft::PianoEngine;
+using pianocraft::StringsEngine;
+using pianocraft::StringsParameterId;
 
 struct ParameterSpec {
     clap_id id;
@@ -32,23 +44,60 @@ struct ParameterSpec {
     double maximum;
     double defaultValue;
     clap_param_info_flags flags;
+    const char* const* choices = nullptr; // names of a stepped parameter's values, from 0
 };
 
 constexpr clap_param_info_flags continuousFlags = CLAP_PARAM_IS_AUTOMATABLE;
 constexpr clap_param_info_flags choiceFlags =
     CLAP_PARAM_IS_AUTOMATABLE | CLAP_PARAM_IS_STEPPED | CLAP_PARAM_IS_ENUM;
+constexpr clap_param_info_flags steppedFlags = CLAP_PARAM_IS_AUTOMATABLE | CLAP_PARAM_IS_STEPPED;
 constexpr clap_param_info_flags perNoteFlags = continuousFlags | CLAP_PARAM_IS_MODULATABLE |
     CLAP_PARAM_IS_MODULATABLE_PER_NOTE_ID | CLAP_PARAM_IS_MODULATABLE_PER_KEY |
     CLAP_PARAM_IS_MODULATABLE_PER_CHANNEL | CLAP_PARAM_IS_MODULATABLE_PER_PORT;
 constexpr std::array<const char*, 3> micPositionNames{"Spaced Pair", "Coincident", "Player"};
+constexpr std::array<const char*, 2> offOnNames{"Off", "On"};
 
-constexpr clap_id pid(ParameterId id) noexcept
+template <class Id>
+constexpr clap_id pid(Id id) noexcept
 {
     return static_cast<clap_id>(id);
 }
 
-// Listed by group; hosts identify parameters by id, so the order is free.
-constexpr std::array<ParameterSpec, 16> parameterSpecs{{
+struct RemotePage {
+    const char* name;
+    std::array<clap_id, CLAP_REMOTE_CONTROLS_COUNT> parameters;
+};
+
+// Built-in voicings for Bitwig's browser (CLAP preset discovery): every parameter at its default
+// except those listed (id 0 is an unused slot). Bitwig lists preset files, not presets held inside
+// the plugin, so each one ships as a marker file <loadKey>.pianocraft in the bundle's
+// Resources/Presets; the values stay here.
+struct Preset {
+    const char* name;
+    const char* loadKey;
+    const char* description;
+    std::array<std::pair<clap_id, double>, 4> changes;
+};
+
+constexpr const char* const pluginFeatures[] = {
+    CLAP_PLUGIN_FEATURE_INSTRUMENT,
+    CLAP_PLUGIN_FEATURE_SYNTHESIZER,
+    CLAP_PLUGIN_FEATURE_STEREO,
+    nullptr,
+};
+
+// Each instrument is a plugin of its own in the one bundle: its engine, parameters, Bitwig
+// remote-control pages and built-in presets.
+struct Piano {
+    using Engine = PianoEngine;
+    using Id = ParameterId;
+    static constexpr const char* id = "com.pianocraft.upright";
+    static constexpr const char* name = "PianoCraft Upright";
+    static constexpr const char* description = "Original upright piano instrument";
+    static constexpr const char* section = "Piano";
+
+    // Listed by group; hosts identify parameters by id, so the order is free.
+    static constexpr std::array<ParameterSpec, 16> parameters{{
     {pid(ParameterId::hammerHardness), "Hammer Hardness", "Hammer", 0.25, 2.0, 1.0, perNoteFlags},
     {pid(ParameterId::dynamicRange), "Dynamic Range", "Hammer", 0.0, 2.0, 1.0, continuousFlags},
     {pid(ParameterId::velocityBrightness), "Velocity Brightness", "Hammer", 0.0, 2.0, 1.0, continuousFlags},
@@ -62,17 +111,12 @@ constexpr std::array<ParameterSpec, 16> parameterSpecs{{
     {pid(ParameterId::stretch), "Stretch", "Tuning", 0.0, 2.0, 1.0, continuousFlags},
     {pid(ParameterId::age), "Age", "Age", 0.0, 1.0, 0.0, continuousFlags},
     {pid(ParameterId::bodyLevel), "Body Level", "Mix", 0.0, 2.0, 1.0, continuousFlags},
-    {pid(ParameterId::micPosition), "Mic Position", "Mix", 0.0, 2.0, 0.0, choiceFlags},
+    {pid(ParameterId::micPosition), "Mic Position", "Mix", 0.0, 2.0, 0.0, choiceFlags, micPositionNames.data()},
     {pid(ParameterId::stereoWidth), "Stereo Width", "Mix", 0.0, 2.0, 1.0, continuousFlags},
     {pid(ParameterId::outputGain), "Output Gain", "Mix", 0.0, 2.0, 0.7, continuousFlags},
 }};
 
-struct RemotePage {
-    const char* name;
-    std::array<clap_id, CLAP_REMOTE_CONTROLS_COUNT> parameters;
-};
-
-constexpr std::array<RemotePage, 2> remotePages{{
+    static constexpr std::array<RemotePage, 2> pages{{
     {"Main", {pid(ParameterId::hammerHardness), pid(ParameterId::dynamicRange),
               pid(ParameterId::velocityBrightness), pid(ParameterId::sustainLength),
               pid(ParameterId::sympatheticLevel), pid(ParameterId::bodyLevel),
@@ -83,31 +127,166 @@ constexpr std::array<RemotePage, 2> remotePages{{
                  pid(ParameterId::age)}},
 }};
 
-// Built-in voicings for Bitwig's browser (CLAP preset discovery): every parameter at its default
-// except those listed. The Old House score bounces mono, so its wear stages use Stereo Width 0.
-// Bitwig lists preset files, not presets held inside the plugin, so each one ships as a marker file
-// <loadKey>.pianocraft in the bundle's Resources/Presets; the values stay here.
-struct Preset {
-    const char* name;
-    const char* loadKey;
-    const char* description;
-    std::array<std::pair<ParameterId, double>, 2> changes;
+    // The Old House score bounces mono, so its wear stages use Stereo Width 0.
+    static constexpr std::array<Preset, 4> presets{{
+    {"Calibrated Upright", "calibrated", "The recorded upright as measured, spaced pair, stereo",
+     {{{pid(ParameterId::stereoWidth), 1.0}, {pid(ParameterId::age), 0.0}}}},
+    {"Whole (Mono)", "whole-mono", "Unworn, mono-safe for a single emitter",
+     {{{pid(ParameterId::stereoWidth), 0.0}, {pid(ParameterId::age), 0.0}}}},
+    {"Lightly Worn (Mono)", "lightly-worn-mono", "Age 0.3, mono-safe for a single emitter",
+     {{{pid(ParameterId::stereoWidth), 0.0}, {pid(ParameterId::age), 0.3}}}},
+    {"Most Worn (Mono)", "most-worn-mono", "Age 1, mono-safe for a single emitter",
+     {{{pid(ParameterId::stereoWidth), 0.0}, {pid(ParameterId::age), 1.0}}}},
+}};
 };
 
-constexpr std::array<Preset, 4> presets{{
-    {"Calibrated Upright", "calibrated", "The recorded upright as measured, spaced pair, stereo",
-     {{{ParameterId::stereoWidth, 1.0}, {ParameterId::age, 0.0}}}},
-    {"Whole (Mono)", "whole-mono", "Unworn, mono-safe for a single emitter",
-     {{{ParameterId::stereoWidth, 0.0}, {ParameterId::age, 0.0}}}},
-    {"Lightly Worn (Mono)", "lightly-worn-mono", "Age 0.3, mono-safe for a single emitter",
-     {{{ParameterId::stereoWidth, 0.0}, {ParameterId::age, 0.3}}}},
-    {"Most Worn (Mono)", "most-worn-mono", "Age 1, mono-safe for a single emitter",
-     {{{ParameterId::stereoWidth, 0.0}, {ParameterId::age, 1.0}}}},
-}};
+// The harp and flute have no reference corpus yet: their laws are analytic (docs/harp-and-flute.md).
+struct Harp {
+    using Engine = HarpEngine;
+    using Id = HarpParameterId;
+    static constexpr const char* id = "com.pianocraft.harp";
+    static constexpr const char* name = "PianoCraft Harp";
+    static constexpr const char* description = "Original concert harp instrument";
+    static constexpr const char* section = "Harp";
+    static constexpr std::array<ParameterSpec, 10> parameters{{
+        {pid(HarpParameterId::pluckPosition), "Pluck Position", "Pluck", 0.03, 0.5, 0.35, perNoteFlags},
+        {pid(HarpParameterId::presDeLaTable), "Pres de la Table", "Pluck", 0.0, 1.0, 0.0, continuousFlags},
+        {pid(HarpParameterId::harmonics), "Harmonics", "Pluck", 0.0, 1.0, 0.0, choiceFlags, offOnNames.data()},
+        {pid(HarpParameterId::brightness), "Brightness", "Pluck", 0.25, 2.0, 1.0, perNoteFlags},
+        {pid(HarpParameterId::damping), "Note-Off Damping", "Strings", 0.0, 1.0, 0.0, continuousFlags},
+        {pid(HarpParameterId::sustainLength), "Sustain Length", "Strings", 0.25, 4.0, 1.0, continuousFlags},
+        {pid(HarpParameterId::masterTune), "Master Tune", "Tuning", 415.0, 466.0, 440.0, continuousFlags},
+        {pid(HarpParameterId::bodyLevel), "Body Level", "Mix", 0.0, 2.0, 1.0, continuousFlags},
+        {pid(HarpParameterId::stereoWidth), "Stereo Width", "Mix", 0.0, 1.0, 1.0, continuousFlags},
+        {pid(HarpParameterId::outputGain), "Output Gain", "Mix", 0.0, 2.0, 0.7, continuousFlags},
+    }};
+    static constexpr std::array<RemotePage, 1> pages{{
+        {"Main", {pid(HarpParameterId::pluckPosition), pid(HarpParameterId::presDeLaTable),
+                  pid(HarpParameterId::harmonics), pid(HarpParameterId::brightness),
+                  pid(HarpParameterId::damping), pid(HarpParameterId::sustainLength),
+                  pid(HarpParameterId::stereoWidth), pid(HarpParameterId::outputGain)}},
+    }};
+    static constexpr std::array<Preset, 4> presets{{
+        {"Concert Harp", "harp-concert", "Ordinary plucks, strings let ring, stereo",
+         {{{pid(HarpParameterId::stereoWidth), 1.0}}}},
+        {"Harp (Mono)", "harp-mono", "Ordinary plucks, mono-safe for a single emitter",
+         {{{pid(HarpParameterId::stereoWidth), 0.0}}}},
+        {"Pres de la Table (Mono)", "harp-pres-de-la-table-mono", "Plucked at the soundboard: thin and metallic, mono",
+         {{{pid(HarpParameterId::stereoWidth), 0.0}, {pid(HarpParameterId::presDeLaTable), 1.0}}}},
+        {"Harmonics (Mono)", "harp-harmonics-mono", "Octave harmonics at the sounding pitch, mono",
+         {{{pid(HarpParameterId::stereoWidth), 0.0}, {pid(HarpParameterId::harmonics), 1.0}}}},
+    }};
+};
+
+struct Flute {
+    using Engine = FluteEngine;
+    using Id = FluteParameterId;
+    static constexpr const char* id = "com.pianocraft.flute";
+    static constexpr const char* name = "PianoCraft Flute";
+    static constexpr const char* description = "Original solo flute instrument: CC1 is breath";
+    static constexpr const char* section = "Flute";
+    static constexpr std::array<ParameterSpec, 7> parameters{{
+        {pid(FluteParameterId::breathNoise), "Breath Noise", "Breath", 0.0, 2.0, 1.0, continuousFlags},
+        {pid(FluteParameterId::brightness), "Brightness", "Breath", 0.25, 2.0, 1.0, perNoteFlags},
+        {pid(FluteParameterId::vibratoDepth), "Vibrato Depth", "Vibrato", 0.0, 2.0, 1.0, continuousFlags},
+        {pid(FluteParameterId::vibratoRate), "Vibrato Rate", "Vibrato", 3.0, 8.0, 5.0, continuousFlags},
+        {pid(FluteParameterId::legatoTime), "Legato Time", "Phrasing", 0.0, 0.2, 0.012, continuousFlags},
+        {pid(FluteParameterId::masterTune), "Master Tune", "Tuning", 415.0, 466.0, 440.0, continuousFlags},
+        {pid(FluteParameterId::outputGain), "Output Gain", "Mix", 0.0, 2.0, 0.7, continuousFlags},
+    }};
+    static constexpr std::array<RemotePage, 1> pages{{
+        {"Main", {pid(FluteParameterId::breathNoise), pid(FluteParameterId::brightness),
+                  pid(FluteParameterId::vibratoDepth), pid(FluteParameterId::vibratoRate),
+                  pid(FluteParameterId::legatoTime), pid(FluteParameterId::masterTune),
+                  pid(FluteParameterId::outputGain), CLAP_INVALID_ID}},
+    }};
+    static constexpr std::array<Preset, 2> presets{{
+        {"Solo Flute", "flute-solo", "Breath on CC1, vibrato after the note speaks", {}},
+        {"Veiled Flute", "flute-veiled", "Breathier and darker, little vibrato: the low Faune register",
+         {{{pid(FluteParameterId::breathNoise), 1.8}, {pid(FluteParameterId::brightness), 0.7},
+           {pid(FluteParameterId::vibratoDepth), 0.4}}}},
+    }};
+};
+
+// Strings and horn: analytic too (docs/strings-and-horn.md). The score's strings are con sordino.
+struct Strings {
+    using Engine = StringsEngine;
+    using Id = StringsParameterId;
+    static constexpr const char* id = "com.pianocraft.strings";
+    static constexpr const char* name = "PianoCraft Strings";
+    static constexpr const char* description = "Original bowed string section: CC1 is the bow";
+    static constexpr const char* section = "Strings";
+    static constexpr std::array<ParameterSpec, 12> parameters{{
+        {pid(StringsParameterId::mute), "Con Sordino", "Articulation", 0.0, 1.0, 1.0, choiceFlags, offOnNames.data()},
+        {pid(StringsParameterId::sulTasto), "Sul Tasto", "Articulation", 0.0, 1.0, 0.0, continuousFlags},
+        {pid(StringsParameterId::tremolo), "Tremolo", "Articulation", 0.0, 1.0, 0.0, choiceFlags, offOnNames.data()},
+        {pid(StringsParameterId::harmonics), "Harmonics", "Articulation", 0.0, 1.0, 0.0, choiceFlags, offOnNames.data()},
+        {pid(StringsParameterId::section), "Section Size", "Section", 1.0, 8.0, 6.0, steppedFlags},
+        {pid(StringsParameterId::spread), "Section Spread", "Section", 0.0, 2.0, 1.0, continuousFlags},
+        {pid(StringsParameterId::brightness), "Brightness", "Bow", 0.25, 2.0, 1.0, perNoteFlags},
+        {pid(StringsParameterId::vibratoDepth), "Vibrato Depth", "Vibrato", 0.0, 2.0, 1.0, continuousFlags},
+        {pid(StringsParameterId::vibratoRate), "Vibrato Rate", "Vibrato", 3.0, 8.0, 5.5, continuousFlags},
+        {pid(StringsParameterId::masterTune), "Master Tune", "Tuning", 415.0, 466.0, 440.0, continuousFlags},
+        {pid(StringsParameterId::stereoWidth), "Stereo Width", "Mix", 0.0, 1.0, 1.0, continuousFlags},
+        {pid(StringsParameterId::outputGain), "Output Gain", "Mix", 0.0, 2.0, 0.7, continuousFlags},
+    }};
+    static constexpr std::array<RemotePage, 2> pages{{
+        {"Main", {pid(StringsParameterId::mute), pid(StringsParameterId::sulTasto), pid(StringsParameterId::tremolo),
+                  pid(StringsParameterId::harmonics), pid(StringsParameterId::section), pid(StringsParameterId::spread),
+                  pid(StringsParameterId::vibratoDepth), pid(StringsParameterId::outputGain)}},
+        {"Tone", {pid(StringsParameterId::brightness), pid(StringsParameterId::vibratoRate),
+                  pid(StringsParameterId::stereoWidth), pid(StringsParameterId::masterTune), CLAP_INVALID_ID,
+                  CLAP_INVALID_ID, CLAP_INVALID_ID, CLAP_INVALID_ID}},
+    }};
+    static constexpr std::array<Preset, 7> presets{{
+        {"Strings Con Sordino", "strings-con-sordino", "A section of six per note, muted, stereo", {}},
+        {"Strings Con Sordino (Mono)", "strings-con-sordino-mono", "A muted section, mono-safe for a single emitter",
+         {{{pid(StringsParameterId::stereoWidth), 0.0}}}},
+        {"Strings Sul Tasto (Mono)", "strings-sul-tasto-mono", "Muted, bowed over the fingerboard: soft and airy, mono",
+         {{{pid(StringsParameterId::stereoWidth), 0.0}, {pid(StringsParameterId::sulTasto), 1.0}}}},
+        {"Strings Tremolo (Mono)", "strings-tremolo-mono", "Muted, bowed tremolo, mono",
+         {{{pid(StringsParameterId::stereoWidth), 0.0}, {pid(StringsParameterId::tremolo), 1.0}}}},
+        {"Strings Harmonics (Mono)", "strings-harmonics-mono", "Muted harmonics at the sounding pitch, mono",
+         {{{pid(StringsParameterId::stereoWidth), 0.0}, {pid(StringsParameterId::harmonics), 1.0}}}},
+        {"Solo String Con Sordino (Mono)", "strings-solo-mono", "One muted player per note, mono",
+         {{{pid(StringsParameterId::stereoWidth), 0.0}, {pid(StringsParameterId::section), 1.0}}}},
+        {"Strings Senza Sordino", "strings-senza-sordino", "A section of six per note, unmuted, stereo",
+         {{{pid(StringsParameterId::mute), 0.0}}}},
+    }};
+};
+
+struct Horn {
+    using Engine = HornEngine;
+    using Id = HornParameterId;
+    static constexpr const char* id = "com.pianocraft.horn";
+    static constexpr const char* name = "PianoCraft Horn";
+    static constexpr const char* description = "Original French horn section: CC1 is breath";
+    static constexpr const char* section = "Horn";
+    static constexpr std::array<ParameterSpec, 5> parameters{{
+        {pid(HornParameterId::stopped), "Stopped", "Articulation", 0.0, 1.0, 0.0, choiceFlags, offOnNames.data()},
+        {pid(HornParameterId::brightness), "Brightness", "Bell", 0.25, 2.0, 1.0, perNoteFlags},
+        {pid(HornParameterId::masterTune), "Master Tune", "Tuning", 415.0, 466.0, 440.0, continuousFlags},
+        {pid(HornParameterId::stereoWidth), "Stereo Width", "Mix", 0.0, 1.0, 1.0, continuousFlags},
+        {pid(HornParameterId::outputGain), "Output Gain", "Mix", 0.0, 2.0, 0.7, continuousFlags},
+    }};
+    static constexpr std::array<RemotePage, 1> pages{{
+        {"Main", {pid(HornParameterId::stopped), pid(HornParameterId::brightness), pid(HornParameterId::masterTune),
+                  pid(HornParameterId::stereoWidth), pid(HornParameterId::outputGain), CLAP_INVALID_ID,
+                  CLAP_INVALID_ID, CLAP_INVALID_ID}},
+    }};
+    static constexpr std::array<Preset, 3> presets{{
+        {"Horns", "horn", "Open horns, a player per note, stereo", {}},
+        {"Distant Horn (Mono)", "horn-distant-mono", "Darker, the bell turned away: for soft, far-off calls, mono",
+         {{{pid(HornParameterId::stereoWidth), 0.0}, {pid(HornParameterId::brightness), 0.6}}}},
+        {"Stopped Horn (Mono)", "horn-stopped-mono", "The hand closing the bell: thin, nasal and metallic, mono",
+         {{{pid(HornParameterId::stereoWidth), 0.0}, {pid(HornParameterId::stopped), 1.0}}}},
+    }};
+};
 
 // Set once in entryInit: the folder of preset marker files inside this bundle.
 std::string presetDirectory;
 
+template <class I>
 const Preset* findPreset(std::uint32_t locationKind, const char* location) noexcept
 {
     if (locationKind != CLAP_PRESET_DISCOVERY_LOCATION_FILE || location == nullptr) {
@@ -115,7 +294,7 @@ const Preset* findPreset(std::uint32_t locationKind, const char* location) noexc
     }
     const char* slash = std::strrchr(location, '/');
     const char* file = slash != nullptr ? slash + 1 : location;
-    for (const auto& preset : presets) {
+    for (const auto& preset : I::presets) {
         const std::size_t length = std::strlen(preset.loadKey);
         if (std::strncmp(file, preset.loadKey, length) == 0 && std::strcmp(file + length, ".pianocraft") == 0) {
             return &preset;
@@ -124,26 +303,30 @@ const Preset* findPreset(std::uint32_t locationKind, const char* location) noexc
     return nullptr;
 }
 
-constexpr std::size_t invalidParameterIndex = parameterSpecs.size();
-constexpr std::size_t stateSize = 12 + parameterSpecs.size() * 12;
+template <class I>
+constexpr std::size_t invalidParameterIndex = I::parameters.size();
+template <class I>
+constexpr std::size_t stateSize = 12 + I::parameters.size() * 12;
 constexpr std::uint32_t stateVersion = 1;
 static_assert(std::numeric_limits<double>::is_iec559 && sizeof(double) == 8);
 static_assert(std::atomic<double>::is_always_lock_free);
 static_assert(std::atomic<std::uint32_t>::is_always_lock_free);
 
+template <class I>
 std::size_t parameterIndex(clap_id id) noexcept
 {
-    for (std::size_t i = 0; i < parameterSpecs.size(); ++i) {
-        if (parameterSpecs[i].id == id) {
+    for (std::size_t i = 0; i < I::parameters.size(); ++i) {
+        if (I::parameters[i].id == id) {
             return i;
         }
     }
-    return invalidParameterIndex;
+    return invalidParameterIndex<I>;
 }
 
+template <class I>
 double clampedParameterValue(std::size_t index, double value) noexcept
 {
-    return std::clamp(value, parameterSpecs[index].minimum, parameterSpecs[index].maximum);
+    return std::clamp(value, I::parameters[index].minimum, I::parameters[index].maximum);
 }
 
 void copyText(char* destination, std::size_t capacity, const char* source) noexcept
@@ -154,7 +337,8 @@ void copyText(char* destination, std::size_t capacity, const char* source) noexc
     std::snprintf(destination, capacity, "%s", source);
 }
 
-void writeU32(std::array<std::uint8_t, stateSize>& bytes, std::size_t& offset,
+template <std::size_t N>
+void writeU32(std::array<std::uint8_t, N>& bytes, std::size_t& offset,
               std::uint32_t value) noexcept
 {
     for (unsigned shift = 0; shift < 32; shift += 8) {
@@ -162,7 +346,8 @@ void writeU32(std::array<std::uint8_t, stateSize>& bytes, std::size_t& offset,
     }
 }
 
-std::uint32_t readU32(const std::array<std::uint8_t, stateSize>& bytes,
+template <std::size_t N>
+std::uint32_t readU32(const std::array<std::uint8_t, N>& bytes,
                       std::size_t& offset) noexcept
 {
     std::uint32_t value = 0;
@@ -172,7 +357,8 @@ std::uint32_t readU32(const std::array<std::uint8_t, stateSize>& bytes,
     return value;
 }
 
-void writeDouble(std::array<std::uint8_t, stateSize>& bytes, std::size_t& offset,
+template <std::size_t N>
+void writeDouble(std::array<std::uint8_t, N>& bytes, std::size_t& offset,
                  double value) noexcept
 {
     std::uint64_t bits = 0;
@@ -182,7 +368,8 @@ void writeDouble(std::array<std::uint8_t, stateSize>& bytes, std::size_t& offset
     }
 }
 
-double readDouble(const std::array<std::uint8_t, stateSize>& bytes,
+template <std::size_t N>
+double readDouble(const std::array<std::uint8_t, N>& bytes,
                   std::size_t& offset) noexcept
 {
     std::uint64_t bits = 0;
@@ -230,6 +417,7 @@ bool writeExactly(const clap_ostream_t* stream, const void* source, std::size_t 
     return true;
 }
 
+template <class I>
 class Adapter {
 public:
     explicit Adapter(const clap_host_t* host) noexcept
@@ -248,8 +436,8 @@ public:
         plugin_.get_extension = &getExtension;
         plugin_.on_main_thread = &onMainThread;
 
-        for (std::size_t i = 0; i < parameterSpecs.size(); ++i) {
-            parameterValues_[i].store(parameterSpecs[i].defaultValue, std::memory_order_relaxed);
+        for (std::size_t i = 0; i < I::parameters.size(); ++i) {
+            parameterValues_[i].store(I::parameters[i].defaultValue, std::memory_order_relaxed);
         }
     }
 
@@ -319,8 +507,8 @@ private:
 
     void applyAllParameters() noexcept
     {
-        for (std::size_t i = 0; i < parameterSpecs.size(); ++i) {
-            engine_.setParameter(static_cast<ParameterId>(parameterSpecs[i].id),
+        for (std::size_t i = 0; i < I::parameters.size(); ++i) {
+            engine_.setParameter(static_cast<typename I::Id>(I::parameters[i].id),
                                  parameterValues_[i].load(std::memory_order_relaxed));
         }
         appliedParameterRevision_ = parameterRevision_.load(std::memory_order_relaxed);
@@ -333,8 +521,8 @@ private:
             return;
         }
 
-        for (std::size_t i = 0; i < parameterSpecs.size(); ++i) {
-            engine_.setParameter(static_cast<ParameterId>(parameterSpecs[i].id),
+        for (std::size_t i = 0; i < I::parameters.size(); ++i) {
+            engine_.setParameter(static_cast<typename I::Id>(I::parameters[i].id),
                                  parameterValues_[i].load(std::memory_order_relaxed));
         }
         appliedParameterRevision_ = revision;
@@ -345,11 +533,11 @@ private:
         if (!std::isfinite(value)) {
             return;
         }
-        const double clamped = clampedParameterValue(index, value);
+        const double clamped = clampedParameterValue<I>(index, value);
         parameterValues_[index].store(clamped, std::memory_order_relaxed);
         parameterRevision_.fetch_add(1, std::memory_order_release);
         if (updateEngine) {
-            engine_.setParameter(static_cast<ParameterId>(parameterSpecs[index].id), clamped);
+            engine_.setParameter(static_cast<typename I::Id>(I::parameters[index].id), clamped);
         }
     }
 
@@ -417,12 +605,12 @@ private:
         }
         const auto port = static_cast<std::int16_t>(event.port_index);
 
-        if (status == 0xB0U && event.data[1] == 64U) {
-            engine_.setSustain(channel, event.data[2] / 127.0);
+        if (status == 0xB0U) {
+            engine_.controlChange(channel, event.data[1], event.data[2] / 127.0);
             return;
         }
-        if (status == 0xB0U && event.data[1] == 67U) {
-            engine_.setSoftPedal(channel, event.data[2] / 127.0);
+        if (status == 0xE0U) {
+            engine_.pitchBend(channel, ((event.data[2] << 7 | event.data[1]) - 8192) / 8192.0);
             return;
         }
 
@@ -450,8 +638,8 @@ private:
                 return;
             }
             const auto& event = *reinterpret_cast<const clap_event_param_value_t*>(header);
-            const auto index = parameterIndex(event.param_id);
-            if (index != invalidParameterIndex) {
+            const auto index = parameterIndex<I>(event.param_id);
+            if (index != invalidParameterIndex<I>) {
                 setParameter(index, event.value, true);
             }
             return;
@@ -462,9 +650,9 @@ private:
                 return;
             }
             const auto& event = *reinterpret_cast<const clap_event_param_mod_t*>(header);
-            if (parameterIndex(event.param_id) != invalidParameterIndex) {
+            if (parameterIndex<I>(event.param_id) != invalidParameterIndex<I>) {
                 engine_.modulate(NoteAddress{event.note_id, event.port_index, event.channel, event.key},
-                                 static_cast<ParameterId>(event.param_id), event.amount);
+                                 static_cast<typename I::Id>(event.param_id), event.amount);
             }
             return;
         }
@@ -482,6 +670,8 @@ private:
                 engine_.setNotePan(target, event.value);
             } else if (event.expression_id == CLAP_NOTE_EXPRESSION_BRIGHTNESS) {
                 engine_.setNoteBrightness(target, event.value);
+            } else if (event.expression_id == CLAP_NOTE_EXPRESSION_PRESSURE) {
+                engine_.setNotePressure(target, event.value);
             }
             return;
         }
@@ -588,16 +778,16 @@ private:
 
     static std::uint32_t paramsCount(const clap_plugin_t*) noexcept
     {
-        return static_cast<std::uint32_t>(parameterSpecs.size());
+        return static_cast<std::uint32_t>(I::parameters.size());
     }
 
     static bool paramsGetInfo(const clap_plugin_t*, std::uint32_t index,
                               clap_param_info_t* info) noexcept
     {
-        if (index >= parameterSpecs.size() || info == nullptr) {
+        if (index >= I::parameters.size() || info == nullptr) {
             return false;
         }
-        const auto& spec = parameterSpecs[index];
+        const auto& spec = I::parameters[index];
         std::memset(info, 0, sizeof(*info));
         info->id = spec.id;
         info->flags = spec.flags;
@@ -613,8 +803,8 @@ private:
     static bool paramsGetValue(const clap_plugin_t* plugin, clap_id id,
                                double* value) noexcept
     {
-        const auto index = parameterIndex(id);
-        if (index == invalidParameterIndex || value == nullptr) {
+        const auto index = parameterIndex<I>(id);
+        if (index == invalidParameterIndex<I> || value == nullptr) {
             return false;
         }
         *value = self(plugin).parameterValues_[index].load(std::memory_order_acquire);
@@ -624,14 +814,15 @@ private:
     static bool paramsValueToText(const clap_plugin_t*, clap_id id, double value,
                                   char* output, std::uint32_t capacity) noexcept
     {
-        const auto index = parameterIndex(id);
-        if (index == invalidParameterIndex || output == nullptr || capacity == 0 ||
+        const auto index = parameterIndex<I>(id);
+        if (index == invalidParameterIndex<I> || output == nullptr || capacity == 0 ||
             !std::isfinite(value)) {
             return false;
         }
-        const double clamped = clampedParameterValue(index, value);
-        const auto result = parameterSpecs[index].id == static_cast<clap_id>(ParameterId::micPosition)
-            ? std::snprintf(output, capacity, "%s", micPositionNames[static_cast<std::size_t>(std::lround(clamped))])
+        const double clamped = clampedParameterValue<I>(index, value);
+        const auto* choices = I::parameters[index].choices;
+        const auto result = choices != nullptr
+            ? std::snprintf(output, capacity, "%s", choices[static_cast<std::size_t>(std::lround(clamped))])
             : std::snprintf(output, capacity, "%.6g", clamped);
         return result >= 0 && static_cast<std::uint32_t>(result) < capacity;
     }
@@ -639,13 +830,13 @@ private:
     static bool paramsTextToValue(const clap_plugin_t*, clap_id id, const char* text,
                                   double* value) noexcept
     {
-        const auto index = parameterIndex(id);
-        if (index == invalidParameterIndex || text == nullptr || value == nullptr) {
+        const auto index = parameterIndex<I>(id);
+        if (index == invalidParameterIndex<I> || text == nullptr || value == nullptr) {
             return false;
         }
-        if (id == static_cast<clap_id>(ParameterId::micPosition)) {
-            for (std::size_t i = 0; i < micPositionNames.size(); ++i) {
-                if (std::strcmp(text, micPositionNames[i]) == 0) {
+        if (const auto* choices = I::parameters[index].choices; choices != nullptr) {
+            for (std::size_t i = 0; i <= static_cast<std::size_t>(I::parameters[index].maximum); ++i) {
+                if (std::strcmp(text, choices[i]) == 0) {
                     *value = static_cast<double>(i);
                     return true;
                 }
@@ -665,7 +856,7 @@ private:
         if (*end != '\0') {
             return false;
         }
-        *value = clampedParameterValue(index, parsed);
+        *value = clampedParameterValue<I>(index, parsed);
         return true;
     }
 
@@ -686,16 +877,16 @@ private:
     static bool stateSave(const clap_plugin_t* plugin, const clap_ostream_t* stream) noexcept
     {
         const auto& adapter = self(plugin);
-        std::array<std::uint8_t, stateSize> bytes{};
+        std::array<std::uint8_t, stateSize<I>> bytes{};
         std::size_t offset = 0;
         bytes[offset++] = static_cast<std::uint8_t>('P');
         bytes[offset++] = static_cast<std::uint8_t>('C');
         bytes[offset++] = static_cast<std::uint8_t>('S');
         bytes[offset++] = static_cast<std::uint8_t>('T');
         writeU32(bytes, offset, stateVersion);
-        writeU32(bytes, offset, static_cast<std::uint32_t>(parameterSpecs.size()));
-        for (std::size_t i = 0; i < parameterSpecs.size(); ++i) {
-            writeU32(bytes, offset, parameterSpecs[i].id);
+        writeU32(bytes, offset, static_cast<std::uint32_t>(I::parameters.size()));
+        for (std::size_t i = 0; i < I::parameters.size(); ++i) {
+            writeU32(bytes, offset, I::parameters[i].id);
             writeDouble(bytes, offset, adapter.parameterValues_[i].load(std::memory_order_acquire));
         }
         return writeExactly(stream, bytes.data(), bytes.size());
@@ -705,7 +896,7 @@ private:
     {
         auto& adapter = self(plugin);
         // States from older versions carry fewer parameters; the missing ones keep defaults.
-        std::array<std::uint8_t, stateSize> bytes{};
+        std::array<std::uint8_t, stateSize<I>> bytes{};
         constexpr std::size_t headerSize = 12;
         constexpr std::size_t recordSize = 12;
         if (!readExactly(stream, bytes.data(), headerSize)) {
@@ -721,21 +912,21 @@ private:
             return false;
         }
         const std::uint32_t recordCount = readU32(bytes, offset);
-        if (recordCount == 0 || recordCount > parameterSpecs.size() ||
+        if (recordCount == 0 || recordCount > I::parameters.size() ||
             !readExactly(stream, bytes.data() + headerSize, recordCount * recordSize)) {
             return false;
         }
 
-        std::array<double, parameterSpecs.size()> loadedValues{};
-        for (std::size_t i = 0; i < parameterSpecs.size(); ++i) {
-            loadedValues[i] = parameterSpecs[i].defaultValue;
+        std::array<double, I::parameters.size()> loadedValues{};
+        for (std::size_t i = 0; i < I::parameters.size(); ++i) {
+            loadedValues[i] = I::parameters[i].defaultValue;
         }
-        std::array<bool, parameterSpecs.size()> seen{};
+        std::array<bool, I::parameters.size()> seen{};
         for (std::size_t record = 0; record < recordCount; ++record) {
-            const auto index = parameterIndex(readU32(bytes, offset));
+            const auto index = parameterIndex<I>(readU32(bytes, offset));
             const double value = readDouble(bytes, offset);
-            if (index == invalidParameterIndex || seen[index] || !std::isfinite(value) ||
-                value < parameterSpecs[index].minimum || value > parameterSpecs[index].maximum) {
+            if (index == invalidParameterIndex<I> || seen[index] || !std::isfinite(value) ||
+                value < I::parameters[index].minimum || value > I::parameters[index].maximum) {
                 return false;
             }
             seen[index] = true;
@@ -751,9 +942,9 @@ private:
     }
 
     // [main-thread] Takes a full set of parameter values (state or preset) and tells the host.
-    void adopt(const std::array<double, parameterSpecs.size()>& values) noexcept
+    void adopt(const std::array<double, I::parameters.size()>& values) noexcept
     {
-        for (std::size_t i = 0; i < parameterSpecs.size(); ++i) {
+        for (std::size_t i = 0; i < I::parameters.size(); ++i) {
             parameterValues_[i].store(values[i], std::memory_order_relaxed);
         }
         parameterRevision_.fetch_add(1, std::memory_order_release);
@@ -772,7 +963,7 @@ private:
                            const char* loadKey) noexcept
     {
         auto& adapter = self(plugin);
-        const Preset* preset = findPreset(locationKind, location);
+        const Preset* preset = findPreset<I>(locationKind, location);
         const clap_host_preset_load_t* hostPresets = nullptr;
         if (adapter.host_ != nullptr && adapter.host_->get_extension != nullptr) {
             hostPresets = static_cast<const clap_host_preset_load_t*>(
@@ -784,12 +975,14 @@ private:
             }
             return false;
         }
-        std::array<double, parameterSpecs.size()> values{};
-        for (std::size_t i = 0; i < parameterSpecs.size(); ++i) {
-            values[i] = parameterSpecs[i].defaultValue;
+        std::array<double, I::parameters.size()> values{};
+        for (std::size_t i = 0; i < I::parameters.size(); ++i) {
+            values[i] = I::parameters[i].defaultValue;
         }
         for (const auto& [id, value] : preset->changes) {
-            values[parameterIndex(pid(id))] = value;
+            if (id != 0) {
+                values[parameterIndex<I>(id)] = value;
+            }
         }
         adapter.adopt(values);
         if (hostPresets != nullptr && hostPresets->loaded != nullptr) {
@@ -802,7 +995,7 @@ private:
     // its per-voice modulators live exactly as long.
     void reportEndedNotes(const clap_output_events_t* out, std::uint32_t offset) noexcept
     {
-        std::array<PianoEngine::EndedNote, pianocraft::voiceCapacity> ended{};
+        std::array<pianocraft::EndedNote, I::Engine::voiceCapacity> ended{};
         const auto count = engine_.takeEndedNotes(ended.data(), ended.size());
         if (out == nullptr || out->try_push == nullptr) {
             return;
@@ -826,7 +1019,7 @@ private:
         if (info == nullptr) {
             return false;
         }
-        info->voice_count = static_cast<std::uint32_t>(pianocraft::voiceCapacity);
+        info->voice_count = static_cast<std::uint32_t>(I::Engine::voiceCapacity);
         info->voice_capacity = info->voice_count;
         info->flags = CLAP_VOICE_INFO_SUPPORTS_OVERLAPPING_NOTES;
         return true;
@@ -834,20 +1027,20 @@ private:
 
     static std::uint32_t remoteControlsCount(const clap_plugin_t*) noexcept
     {
-        return static_cast<std::uint32_t>(remotePages.size());
+        return static_cast<std::uint32_t>(I::pages.size());
     }
 
     static bool remoteControlsGet(const clap_plugin_t*, std::uint32_t index,
                                   clap_remote_controls_page_t* page) noexcept
     {
-        if (index >= remotePages.size() || page == nullptr) {
+        if (index >= I::pages.size() || page == nullptr) {
             return false;
         }
         std::memset(page, 0, sizeof(*page));
-        copyText(page->section_name, sizeof(page->section_name), "Piano");
+        copyText(page->section_name, sizeof(page->section_name), I::section);
         page->page_id = index;
-        copyText(page->page_name, sizeof(page->page_name), remotePages[index].name);
-        std::copy(remotePages[index].parameters.begin(), remotePages[index].parameters.end(), page->param_ids);
+        copyText(page->page_name, sizeof(page->page_name), I::pages[index].name);
+        std::copy(I::pages[index].parameters.begin(), I::pages[index].parameters.end(), page->param_ids);
         return true;
     }
 
@@ -884,9 +1077,9 @@ private:
     static void onMainThread(const clap_plugin_t*) noexcept {}
 
     const clap_host_t* host_;
-    PianoEngine engine_;
+    typename I::Engine engine_;
     clap_plugin_t plugin_{};
-    std::array<std::atomic<double>, parameterSpecs.size()> parameterValues_{};
+    std::array<std::atomic<double>, I::parameters.size()> parameterValues_{};
     std::atomic<std::uint32_t> parameterRevision_{1};
     std::uint32_t appliedParameterRevision_ = 0;
     bool active_ = false;
@@ -902,88 +1095,102 @@ private:
     static const clap_plugin_preset_load_t presetLoad_;
 };
 
-constexpr const char* const pluginFeatures[] = {
-    CLAP_PLUGIN_FEATURE_INSTRUMENT,
-    CLAP_PLUGIN_FEATURE_SYNTHESIZER,
-    CLAP_PLUGIN_FEATURE_STEREO,
-    nullptr,
+template <class I>
+const clap_plugin_descriptor_t Adapter<I>::descriptor_ = {
+    CLAP_VERSION_INIT, I::id, I::name, "PianoCraft", "", "", "", "0.1.0", I::description, pluginFeatures,
 };
 
-const clap_plugin_descriptor_t Adapter::descriptor_ = {
-    CLAP_VERSION_INIT,
-    "com.pianocraft.upright",
-    "PianoCraft Upright",
-    "PianoCraft",
-    "",
-    "",
-    "",
-    "0.1.0",
-    "Original upright piano instrument",
-    pluginFeatures,
+template <class I>
+const clap_plugin_audio_ports_t Adapter<I>::audioPorts_ = {
+    &Adapter<I>::audioPortsCount,
+    &Adapter<I>::audioPortsGet,
 };
 
-const clap_plugin_audio_ports_t Adapter::audioPorts_ = {
-    &Adapter::audioPortsCount,
-    &Adapter::audioPortsGet,
+template <class I>
+const clap_plugin_note_ports_t Adapter<I>::notePorts_ = {
+    &Adapter<I>::notePortsCount,
+    &Adapter<I>::notePortsGet,
 };
 
-const clap_plugin_note_ports_t Adapter::notePorts_ = {
-    &Adapter::notePortsCount,
-    &Adapter::notePortsGet,
+template <class I>
+const clap_plugin_params_t Adapter<I>::params_ = {
+    &Adapter<I>::paramsCount,
+    &Adapter<I>::paramsGetInfo,
+    &Adapter<I>::paramsGetValue,
+    &Adapter<I>::paramsValueToText,
+    &Adapter<I>::paramsTextToValue,
+    &Adapter<I>::paramsFlush,
 };
 
-const clap_plugin_params_t Adapter::params_ = {
-    &Adapter::paramsCount,
-    &Adapter::paramsGetInfo,
-    &Adapter::paramsGetValue,
-    &Adapter::paramsValueToText,
-    &Adapter::paramsTextToValue,
-    &Adapter::paramsFlush,
+template <class I>
+const clap_plugin_state_t Adapter<I>::state_ = {
+    &Adapter<I>::stateSave,
+    &Adapter<I>::stateLoad,
 };
 
-const clap_plugin_state_t Adapter::state_ = {
-    &Adapter::stateSave,
-    &Adapter::stateLoad,
+template <class I>
+const clap_plugin_remote_controls_t Adapter<I>::remoteControls_ = {
+    &Adapter<I>::remoteControlsCount,
+    &Adapter<I>::remoteControlsGet,
 };
 
-const clap_plugin_remote_controls_t Adapter::remoteControls_ = {
-    &Adapter::remoteControlsCount,
-    &Adapter::remoteControlsGet,
+template <class I>
+const clap_plugin_voice_info_t Adapter<I>::voiceInfo_ = {
+    &Adapter<I>::voiceInfoGet,
 };
 
-const clap_plugin_voice_info_t Adapter::voiceInfo_ = {
-    &Adapter::voiceInfoGet,
+template <class I>
+const clap_plugin_preset_load_t Adapter<I>::presetLoad_ = {
+    &Adapter<I>::presetLoad,
 };
 
-const clap_plugin_preset_load_t Adapter::presetLoad_ = {
-    &Adapter::presetLoad,
-};
+const std::array<const clap_plugin_descriptor_t*, 5> descriptors{
+    Adapter<Piano>::descriptor(), Adapter<Harp>::descriptor(), Adapter<Flute>::descriptor(),
+    Adapter<Strings>::descriptor(), Adapter<Horn>::descriptor()};
 
 std::uint32_t pluginCount(const clap_plugin_factory_t*) noexcept
 {
-    return 1;
+    return static_cast<std::uint32_t>(descriptors.size());
 }
 
 const clap_plugin_descriptor_t* pluginDescriptor(const clap_plugin_factory_t*,
                                                  std::uint32_t index) noexcept
 {
-    return index == 0 ? Adapter::descriptor() : nullptr;
+    return index < descriptors.size() ? descriptors[index] : nullptr;
+}
+
+template <class I>
+const clap_plugin_t* create(const clap_host_t* host) noexcept
+{
+    try {
+        return (new Adapter<I>(host))->plugin();
+    } catch (...) {
+        return nullptr;
+    }
 }
 
 const clap_plugin_t* createPlugin(const clap_plugin_factory_t*, const clap_host_t* host,
                                   const char* pluginId) noexcept
 {
-    if (host == nullptr || pluginId == nullptr ||
-        !clap_version_is_compatible(host->clap_version) ||
-        std::strcmp(pluginId, "com.pianocraft.upright") != 0) {
+    if (host == nullptr || pluginId == nullptr || !clap_version_is_compatible(host->clap_version)) {
         return nullptr;
     }
-
-    try {
-        return (new Adapter(host))->plugin();
-    } catch (...) {
-        return nullptr;
+    if (std::strcmp(pluginId, Piano::id) == 0) {
+        return create<Piano>(host);
     }
+    if (std::strcmp(pluginId, Harp::id) == 0) {
+        return create<Harp>(host);
+    }
+    if (std::strcmp(pluginId, Flute::id) == 0) {
+        return create<Flute>(host);
+    }
+    if (std::strcmp(pluginId, Strings::id) == 0) {
+        return create<Strings>(host);
+    }
+    if (std::strcmp(pluginId, Horn::id) == 0) {
+        return create<Horn>(host);
+    }
+    return nullptr;
 }
 
 const clap_plugin_factory_t pluginFactory = {
@@ -1014,20 +1221,31 @@ void presetProviderDestroy(const clap_preset_discovery_provider_t* provider) noe
     delete provider;
 }
 
-bool presetProviderGetMetadata(const clap_preset_discovery_provider_t*, std::uint32_t locationKind,
-                               const char* location, const clap_preset_discovery_metadata_receiver_t* receiver) noexcept
+template <class I>
+bool describePreset(std::uint32_t locationKind, const char* location,
+                    const clap_preset_discovery_metadata_receiver_t* receiver) noexcept
 {
-    const Preset* preset = findPreset(locationKind, location);
-    if (preset == nullptr || receiver == nullptr) {
+    const Preset* preset = findPreset<I>(locationKind, location);
+    if (preset == nullptr) {
         return false;
     }
-    const clap_universal_plugin_id_t pluginId{"clap", "com.pianocraft.upright"};
+    const clap_universal_plugin_id_t pluginId{"clap", I::id};
     if (receiver->begin_preset(receiver, preset->name, nullptr)) {
         receiver->add_plugin_id(receiver, &pluginId);
         receiver->set_flags(receiver, CLAP_PRESET_DISCOVERY_IS_FACTORY_CONTENT);
         receiver->set_description(receiver, preset->description);
     }
     return true;
+}
+
+bool presetProviderGetMetadata(const clap_preset_discovery_provider_t*, std::uint32_t locationKind,
+                               const char* location, const clap_preset_discovery_metadata_receiver_t* receiver) noexcept
+{
+    return receiver != nullptr && (describePreset<Piano>(locationKind, location, receiver) ||
+                                   describePreset<Harp>(locationKind, location, receiver) ||
+                                   describePreset<Flute>(locationKind, location, receiver) ||
+                                   describePreset<Strings>(locationKind, location, receiver) ||
+                                   describePreset<Horn>(locationKind, location, receiver));
 }
 
 const void* presetProviderGetExtension(const clap_preset_discovery_provider_t*, const char*) noexcept

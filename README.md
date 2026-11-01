@@ -22,6 +22,10 @@ ctest --test-dir build --output-on-failure
 
 ```sh
 ./build/pianocraft-render renders/c4.wav 60 0.8 8
+./build/pianocraft-render-voice harp renders/harp-c4.wav 60 0.8 8
+./build/pianocraft-render-voice flute renders/flute-a4.wav 69 0.7 4 3.5 cc1=0.6
+./build/pianocraft-render-voice strings renders/strings-a4.wav 69 0.7 4 3.5 cc1=0.6
+./build/pianocraft-render-voice horn renders/horn-c4.wav 60 0.7 4 3.5 cc1=0.6
 ./build/pianocraft-benchmark
 ```
 
@@ -29,7 +33,9 @@ The renderer arguments are output path, MIDI note, velocity, seconds, sustain
 pedal, body level, sympathy level, and mic position (0 spaced pair, 1 coincident,
 2 player). Optional numeric arguments use the engine
 defaults when omitted. Raw calibration recordings and renders are not included
-in the plugin.
+in the plugin. `pianocraft-render-voice` takes the instrument, output, key, velocity,
+seconds, then optionally the release time and `id=value` parameters or `ccN=value`
+controllers.
 
 ## Validate CLAP
 
@@ -78,6 +84,34 @@ Bitwig's preset browser lists four built-in voicings: Calibrated Upright
 (Age 1). They ship as marker files in the bundle's `Contents/Resources/Presets`,
 because Bitwig lists preset files, not presets held inside a plugin; the values
 live in `src/host/ClapHost.cpp`. Save your own as Bitwig presets.
+
+## Harp, flute, strings and horn
+
+The bundle also holds PianoCraft Harp, Flute, Strings and Horn, for the final act of *The Old
+House on the Corner*. They follow the orchestral-library conventions: CC11 is an expression trim,
+pitch bend ±2 semitones, no keyswitches. On the flute, strings and horn a note's Pressure is its
+dynamic too, as CC1 is: `piano.py` writes each CC1 curve again as Pressure, which Bitwig imports
+from a `.dawproject`. Their physics and what is still set by ear are in
+`docs/harp-and-flute.md` and `docs/strings-and-horn.md`; there is no reference corpus for them yet.
+
+- **Harp:** one string per key (B0-G#7). Strings ring after note-off, so glissandi keep sounding.
+  Controls: Pluck Position, Pres de la Table, Harmonics (the key is the sounding pitch), Brightness
+  (Timbre moves it per note), Note-Off Damping (CC64 holds it off), Sustain Length, Body Level,
+  Stereo Width (0 is exact mono), Master Tune. Velocity is the dynamic. Presets: Concert Harp, and
+  Harp, Pres de la Table and Harmonics in mono.
+- **Flute:** monophonic, B3-D7. CC1 is breath (loudness and tone); velocity shapes only the attack.
+  Overlapping notes slur without a new attack, and a held note holds. CC21 scales the vibrato,
+  which enters after the note speaks. Controls: Breath Noise, Brightness (Timbre moves it), Vibrato
+  Depth and Rate, Legato Time, Master Tune. Presets: Solo Flute, and Veiled Flute (breathier,
+  darker, little vibrato) for the low *Faune* register.
+- **Strings:** a section (E1-E7) by register: basses, cellos, violas, violins. CC1 is the bow
+  (loudness and tone); velocity shapes only the attack; CC21 scales the vibrato. Con Sordino is on by default. Controls: Con Sordino, Sul Tasto, Tremolo (bow reversals),
+  Harmonics, Section Size (1 is a soloist), Section Spread, Brightness (Timbre moves it), Vibrato
+  Depth and Rate, Stereo Width (0 is exact mono), Master Tune. Presets: con sordino in stereo and
+  mono, sul tasto, tremolo, harmonics, a soloist, and senza sordino.
+- **Horn:** a player per note (B-flat 1-F5). CC1 is breath: louder and brassier. Controls: Stopped,
+  Brightness (the hand in the bell; Timbre moves it), Stereo Width, Master Tune. Presets: Horns,
+  Distant Horn and Stopped Horn (mono).
 
 The recorded piano sat at A4 = 439.02 Hz; Master Tune puts A4 exactly where it
 says, so the default plays 3.9 cents above the recordings.

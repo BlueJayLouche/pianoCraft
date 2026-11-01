@@ -18,6 +18,10 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(clap)
 
 set(PIANOCRAFT_ENGINE_SOURCES
+    src/engine/FluteEngine.cpp
+    src/engine/HarpEngine.cpp
+    src/engine/HornEngine.cpp
+    src/engine/StringsEngine.cpp
     src/engine/PianoEngine.cpp
     src/engine/Soundboard.cpp
     src/engine/SympatheticBank.cpp
@@ -62,6 +66,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/render.cpp")
     target_include_directories(pianocraft-render PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 endif()
 
+add_executable(pianocraft-render-voice tools/render_voice.cpp ${PIANOCRAFT_ENGINE_SOURCES})
+target_include_directories(pianocraft-render-voice PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/benchmark.cpp")
     add_executable(pianocraft-benchmark
         tools/benchmark.cpp
@@ -79,6 +86,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/engine_tests.cpp")
     target_include_directories(pianocraft-engine-tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     add_test(NAME pianocraft-engine-tests COMMAND pianocraft-engine-tests)
 endif()
+
+add_executable(pianocraft-orchestra-tests tests/orchestra_tests.cpp ${PIANOCRAFT_ENGINE_SOURCES})
+target_include_directories(pianocraft-orchestra-tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+add_test(NAME pianocraft-orchestra-tests COMMAND pianocraft-orchestra-tests)
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/state_tests.cpp")
     add_executable(pianocraft-state-tests tests/state_tests.cpp)

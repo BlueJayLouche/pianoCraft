@@ -1,8 +1,10 @@
 // Loads the built CLAP binary and checks state compatibility (states saved before the mic
 // parameters existed must still load, malformed state must be rejected), the advertised
-// extensions, and that a finished voice reaches the host as NOTE_END.
+// extensions, and that a finished voice reaches the host as NOTE_END. The harp, flute, strings and
+// horn get the same round trip, presets and NOTE_END checks.
 #include <clap/clap.h>
 #include <dlfcn.h>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <cstdint>
@@ -40,7 +42,7 @@ static std::vector<uint8_t> blob(std::vector<std::pair<uint32_t,double>> recs, b
     if (trailing) v.push_back(0); return v;
 }
 // Preset discovery: a stand-in indexer and metadata receiver record what the provider declares.
-struct Discovered { int locations = 0; uint32_t kind = 99; std::string path; std::vector<std::string> names; bool keyed = false; bool forThisPlugin = true; };
+struct Discovered { int locations = 0; uint32_t kind = 99; std::string path; std::vector<std::string> names; bool keyed = false; std::vector<std::string> pluginIds; };
 static Discovered discovered;
 static bool declareFiletype(const clap_preset_discovery_indexer_t*, const clap_preset_discovery_filetype_t*) { return true; }
 static bool declareLocation(const clap_preset_discovery_indexer_t*, const clap_preset_discovery_location_t* l) {
@@ -53,8 +55,7 @@ static bool beginPreset(const clap_preset_discovery_metadata_receiver_t*, const 
     discovered.names.push_back(name); discovered.keyed = discovered.keyed || key != nullptr; return true;
 }
 static void addPluginId(const clap_preset_discovery_metadata_receiver_t*, const clap_universal_plugin_id_t* id) {
-    discovered.forThisPlugin = discovered.forThisPlugin && std::strcmp(id->abi, "clap") == 0 &&
-        std::strcmp(id->id, "com.pianocraft.upright") == 0;
+    discovered.pluginIds.push_back(std::strcmp(id->abi, "clap") == 0 ? id->id : "");
 }
 static void setText(const clap_preset_discovery_metadata_receiver_t*, const char*) {}
 static void setFlags(const clap_preset_discovery_metadata_receiver_t*, uint32_t) {}
@@ -114,8 +115,12 @@ int main(int argc, char** argv) {
         everyFileRead = everyFileRead && provider->get_metadata(provider, CLAP_PRESET_DISCOVERY_LOCATION_FILE,
                                                                 file.path().c_str(), &receiver);
     }
-    check(everyFileRead && discovered.names.size() == 4 && !discovered.keyed && discovered.forThisPlugin,
-          "four preset files, one unkeyed preset each, for this plugin");
+    const auto presetsFor = [&](const char* id) { return std::count(discovered.pluginIds.begin(), discovered.pluginIds.end(), id); };
+    check(everyFileRead && discovered.names.size() == 20 && discovered.pluginIds.size() == 20 && !discovered.keyed &&
+          presetsFor("com.pianocraft.upright") == 4 && presetsFor("com.pianocraft.harp") == 4 &&
+          presetsFor("com.pianocraft.flute") == 2 && presetsFor("com.pianocraft.strings") == 7 &&
+          presetsFor("com.pianocraft.horn") == 3,
+          "twenty preset files, one unkeyed preset each: 4 piano, 4 harp, 2 flute, 7 strings, 3 horn");
     provider->destroy(provider);
     auto* presetLoad = static_cast<const clap_plugin_preset_load_t*>(plugin->get_extension(plugin, CLAP_EXT_PRESET_LOAD));
     auto loadPreset = [&](const char* file) {
@@ -162,7 +167,67 @@ int main(int argc, char** argv) {
     check(output.notes.size() == 1 && output.notes[0].note_id == 5 && output.notes[0].key == 60 &&
           output.notes[0].header.time < 512, "choked note reported as NOTE_END");
     plugin->stop_processing(plugin); plugin->deactivate(plugin);
-    plugin->destroy(plugin); entry->deinit();
+    plugin->destroy(plugin);
+
+    // The other voices: state round trip, a preset over defaults, choice text, and NOTE_END.
+    check(factory->get_plugin_count(factory) == 5, "the bundle holds piano, harp, flute, strings and horn");
+    struct Other { const char* id; const char* preset; clap_id changed; double expected; clap_id choice; const char* choiceText; };
+    for (const Other& other : {Other{"com.pianocraft.harp", "/harp-harmonics-mono.pianocraft", 4, 1.0, 4, "On"},
+                               Other{"com.pianocraft.flute", "/flute-veiled.pianocraft", 2, 1.8, CLAP_INVALID_ID, nullptr},
+                               Other{"com.pianocraft.strings", "/strings-harmonics-mono.pianocraft", 6, 1.0, 6, "On"},
+                               Other{"com.pianocraft.horn", "/horn-stopped-mono.pianocraft", 2, 1.0, 2, "On"}}) {
+        auto* instance = factory->create_plugin(factory, &host, other.id);
+        instance->init(instance);
+        auto* otherState = static_cast<const clap_plugin_state_t*>(instance->get_extension(instance, CLAP_EXT_STATE));
+        auto* otherParams = static_cast<const clap_plugin_params_t*>(instance->get_extension(instance, CLAP_EXT_PARAMS));
+        auto* otherPresets = static_cast<const clap_plugin_preset_load_t*>(instance->get_extension(instance, CLAP_EXT_PRESET_LOAD));
+        auto otherValue = [&](clap_id id) { double v = -1; otherParams->get_value(instance, id, &v); return v; };
+        const std::string name = other.id;
+        check(otherPresets->from_location(instance, CLAP_PRESET_DISCOVERY_LOCATION_FILE, (discovered.path + other.preset).c_str(), nullptr) &&
+              otherValue(other.changed) == other.expected, (name + ": preset loads").c_str());
+        check(!otherPresets->from_location(instance, CLAP_PRESET_DISCOVERY_LOCATION_FILE, (discovered.path + "/calibrated.pianocraft").c_str(), nullptr),
+              (name + ": another instrument's preset is rejected").c_str());
+        Buffer saved; clap_ostream_t savedStream{&saved, writeFn};
+        Buffer reloaded{};
+        const bool savedOk = otherState->save(instance, &savedStream);
+        reloaded.data = saved.data;
+        clap_istream_t reloadStream{&reloaded, readFn};
+        check(savedOk && otherState->load(instance, &reloadStream) && otherValue(other.changed) == other.expected,
+              (name + ": state round-trips").c_str());
+        if (other.choice != CLAP_INVALID_ID) {
+            char choiceText[64]; double choiceValue = -1;
+            otherParams->value_to_text(instance, other.choice, 1.0, choiceText, sizeof(choiceText));
+            otherParams->text_to_value(instance, other.choice, choiceText, &choiceValue);
+            check(std::strcmp(choiceText, other.choiceText) == 0 && choiceValue == 1.0, (name + ": choice text round-trips").c_str());
+        }
+        instance->activate(instance, 48000.0, 512, 512);
+        instance->start_processing(instance);
+        Events otherInput, otherOutput;
+        otherInput.notes = {noteEvent(CLAP_EVENT_NOTE_ON, 0, 7), noteEvent(CLAP_EVENT_NOTE_CHOKE, 4000 % 512, 7)};
+        clap_input_events_t otherIn{&otherInput, eventsSize, eventsGet};
+        clap_output_events_t otherOut{&otherOutput, eventsPush};
+        float peak = 0.0F;
+        for (int block = 0; block < 5; ++block) {
+            clap_process_t process{};
+            process.steady_time = block * 512LL; process.frames_count = 512;
+            process.audio_outputs = &audio; process.audio_outputs_count = 1;
+            process.in_events = &otherIn; process.out_events = &otherOut;
+            if (block == 0) {
+                otherInput.notes.pop_back(); // sound first (a horn takes ~30 ms to speak), choke later
+            }
+            if (block == 3) {
+                otherInput.notes = {noteEvent(CLAP_EVENT_NOTE_CHOKE, 0, 7)};
+            }
+            instance->process(instance, &process);
+            for (float sample : left) peak = std::max(peak, std::abs(sample));
+            otherInput.notes.clear();
+        }
+        check(peak > 1.0e-4F && otherOutput.notes.size() == 1 && otherOutput.notes[0].note_id == 7,
+              (name + ": sounds, and a choked note is reported as NOTE_END").c_str());
+        instance->stop_processing(instance); instance->deactivate(instance);
+        instance->destroy(instance);
+    }
+    entry->deinit();
     std::printf("%s\n", failures ? "FAILED" : "all state checks passed");
     return failures != 0;
 }
