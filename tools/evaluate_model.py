@@ -91,25 +91,38 @@ def parallel(function, items):
 BANDS = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
 
 
-def octave_bands(rate: int, stereo: np.ndarray) -> np.ndarray:
-    left = stereo[:, 0]
-    start = onset(left)
-    window = left[start + int(0.01 * rate):start + int(0.4 * rate)]
+def band_powers(window: np.ndarray, rate: int) -> tuple[np.ndarray, float]:
     power = np.abs(np.fft.rfft(window * np.hanning(len(window)))) ** 2
     freq = np.fft.rfftfreq(len(window), 1 / rate)
-    return np.array([10 * np.log10(power[(freq >= lo) & (freq < hi)].sum() / power.sum() + 1e-12)
-                     for lo, hi in zip(BANDS[:-1], BANDS[1:])])
+    return np.array([power[(freq >= lo) & (freq < hi)].sum() for lo, hi in zip(BANDS[:-1], BANDS[1:])]), power.sum()
+
+
+def octave_bands(rate: int, stereo: np.ndarray, floor: bool = False):
+    """Octave-band levels 10-400 ms after onset, dB re the window's total. With floor, also each
+    band's noise floor in the same units: the quietest such window after the first 0.4 s, short of
+    the last 1.6 s, where the samples fade out. The recordings' hiss sits there, ~-84 dBFS per band."""
+    left = stereo[:, 0]
+    start = onset(left) + int(0.01 * rate)
+    length = int(0.39 * rate)
+    bands, total = band_powers(left[start:start + length], rate)
+    levels = 10 * np.log10(bands / total + 1e-12)
+    if not floor:
+        return levels
+    starts = range(start + int(0.4 * rate), len(left) - int(1.6 * rate) - length, length // 2)
+    quiet = np.min([band_powers(left[s:s + length], rate)[0] for s in starts], axis=0)
+    return levels, 10 * np.log10(quiet / total + 1e-12)
 
 
 def spectrum_error(layers: list[int]) -> float:
-    """Octave-band shape (left channel, 10-400 ms) vs reference; below f0 only excess counts."""
+    """Octave-band shape (left channel, 10-400 ms) vs reference. Below f0, and where the reference
+    is within 6 dB of its noise floor (most of 8-16 kHz), only the model's excess counts."""
     def one(item):
         midi, layer = item
         model = octave_bands(*render(midi, layer, 1.0))
-        diff = model - octave_bands(*reference(midi, layer))
+        ref, floor = octave_bands(*reference(midi, layer), floor=True)
+        audible = ref > floor + 6
         above = np.array([hi > fundamental(midi) for hi in BANDS[1:]])
-        error = np.where(above, diff, np.maximum(diff, 0.0))
-        return error[model > -90]
+        return np.where(above & audible, model - ref, np.maximum(model - np.where(audible, ref, floor), 0.0))
     errors = np.concatenate(parallel(one, [(m, l) for m in (28, 36, 48, 60, 72, 84, 96) for l in layers]))
     return float(np.sqrt(np.mean(np.clip(errors, -40, 40) ** 2)))
 
@@ -258,14 +271,35 @@ def onset_error() -> tuple[float, float, float]:
 
 
 def brightness_by_layer() -> dict[int, float]:
-    """Mean octave-band level 1-8 kHz (dB re total), model minus reference, per layer."""
+    """Mean octave-band level 1-8 kHz (dB re total), model minus reference, per layer, over the
+    bands where the reference is 6 dB above its noise floor (soft notes' 4-8 kHz often is not)."""
     high = [i for i, lo in enumerate(BANDS[:-1]) if 1000 <= lo < 8000]
     def one(item):
         midi, layer = item
-        diff = octave_bands(*render(midi, layer, 0.6)) - octave_bands(*reference(midi, layer))
-        return layer, float(np.mean(diff[high]))
+        ref, floor = octave_bands(*reference(midi, layer), floor=True)
+        diff = octave_bands(*render(midi, layer, 0.6)) - ref
+        return layer, [diff[i] for i in high if ref[i] > floor[i] + 6]
     results = parallel(one, [(m, l) for m in (36, 48, 60, 72, 84) for l in (1, 2, 3, 4)])
-    return {layer: float(np.mean([v for l, v in results if l == layer])) for layer in (1, 2, 3, 4)}
+    return {layer: float(np.mean([d for l, v in results if l == layer for d in v])) for layer in (1, 2, 3, 4)}
+
+
+def attack_share(rate: int, stereo: np.ndarray) -> float:
+    """2-8 kHz share of the attack, 2 ms before to 10 ms after onset, dB re the attack's own energy:
+    against the whole note, the recordings' room swell would make the dry model look hot."""
+    left = stereo[:, 0]
+    start = onset(left)
+    window = slice(max(start - int(0.002 * rate), 0), start + int(0.01 * rate))
+    high = sosfilt(butter(6, [2000, 8000], btype="band", fs=rate, output="sos"), left)
+    return 10 * np.log10(np.sum(high[window] ** 2) / np.sum(left[window] ** 2))
+
+
+def attack_brightness() -> dict[int, float]:
+    """Attack 2-8 kHz share, model minus reference, per layer, C2-C6."""
+    def one(item):
+        midi, layer = item
+        return layer, attack_share(*render(midi, layer, 0.4)) - attack_share(*reference(midi, layer))
+    results = parallel(one, [(m, l) for m in (36, 48, 60, 72, 84) for l in (1, 2, 3, 4)])
+    return {layer: float(np.mean([d for l, d in results if l == layer])) for layer in (1, 2, 3, 4)}
 
 
 # --- closed-form refits ----------------------------------------------------------------------
@@ -358,6 +392,8 @@ def main() -> None:
     print(f"onset overshoot mean/max:             {mean:+5.1f}/{worst:+5.1f} dB; low-frequency share vs ref {low:+5.1f} dB")
     bright = brightness_by_layer()
     print("1-8 kHz brightness, model minus ref:  " + "  ".join(f"L{l} {v:+5.1f}" for l, v in bright.items()) + " dB")
+    attack = attack_brightness()
+    print("attack 2-8 kHz share, model - ref:    " + "  ".join(f"L{l} {v:+5.1f}" for l, v in attack.items()) + " dB")
     if "--refit" in sys.argv:
         (early_a, early_b), (late_a, late_b), counts = decay_laws()
         print(f"decay fits: {counts}")

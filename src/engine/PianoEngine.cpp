@@ -76,6 +76,7 @@ struct Voice {
     std::array<double, 8> highpassState{};
     std::array<double, 5> velocityShelf{1.0, 0.0, 0.0, 0.0, 0.0};
     std::array<double, 8> shelfState{};
+    std::array<double, 4> knockState{};
     // Per-note CLAP modulation and expressions.
     double hardnessModulation = 0.0;
     double brightness = 0.0; // Timbre's share of the hardness offset
@@ -115,6 +116,7 @@ struct Voice {
         highpassState = {};
         velocityShelf = {1.0, 0.0, 0.0, 0.0, 0.0};
         shelfState = {};
+        knockState = {};
         neutralExpressions();
         volume = 1.0;
         panLeft = 1.0;
@@ -334,12 +336,14 @@ struct PianoEngine::Impl {
         voice.hammer.mass = voice.key->hammerMass;
         voice.hammer.load = 0.0;
         voice.hammer.active = true;
-        // Velocity EQ (the excitation-filter fallback in the research notes): +-8 dB per doubling
-        // of velocity above 1 kHz, flat at mf. The hammer alone brightens ~10 dB too little from
-        // pp to ff: in the mid register the string's give, not the felt, sets the contact time.
+        // Velocity EQ (the excitation-filter fallback in the research notes) above 1 kHz, flat at
+        // mf: 8 dB per doubling of velocity above mf, 20 dB per halving below. The hammer alone
+        // brightens ~10 dB too little from pp to ff: in the mid register the string's give, not the
+        // felt, sets the contact time.
+        const double octaves = std::log2(std::max(velocity, 0.01) / referenceVelocity);
         voice.velocityShelf = highShelf(std::min(1000.0, 0.45 * sampleRate),
-                                        8.0 * parameters[parameterIndex(ParameterId::velocityBrightness)] *
-                                            std::log2(std::max(velocity, 0.01) / referenceVelocity),
+                                        (octaves < 0.0 ? 20.0 : 8.0) * octaves *
+                                            parameters[parameterIndex(ParameterId::velocityBrightness)],
                                         sampleRate);
     }
 
@@ -487,11 +491,13 @@ struct PianoEngine::Impl {
         const double gain = voice.velocityGain * voice.chokeGain * voice.volume;
         // The impact also knocks the board through the action and frame; scaled by force alone, not
         // by the key level law. Fitted to the recordings' broadband energy 20-100 ms after the
-        // strike, which was 8 dB short.
+        // strike, which was 8 dB short. It is the same force, so it takes the strings' velocity EQ:
+        // without it a soft note began with a click as bright as a loud one's.
         const std::size_t noiseIndex = parameterIndex(ParameterId::hammerNoise);
         const double noise =
             std::clamp(parameters[noiseIndex] + modulation[noiseIndex] + voice.noiseModulation, 0.0, 2.0);
-        const double knock = force * voice.knockGain * voice.chokeGain * voice.volume * 0.05 * noise;
+        const double knock = biquad(voice.velocityShelf, voice.knockState.data(),
+                                    force * voice.knockGain * voice.chokeGain * voice.volume * 0.05 * noise);
         const double radiatedLeft = radiated(voice, bridge, 0) * gain;
         const VoiceSample sample{radiatedLeft * voice.panLeft, radiated(voice, bridgeRight, 1) * gain * voice.panRight,
                                  radiatedLeft * 0.5 * (voice.panLeft + voice.panRight), bridge * gain, knock};

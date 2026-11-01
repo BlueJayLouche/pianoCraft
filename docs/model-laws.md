@@ -46,9 +46,9 @@ Status column:
 | Coupled unisons fitted to beat (0.18 + 0.0006 f)(0.6-1.4) Hz and slow mode -18 dB (-35 dB top octave) | `InstrumentModel.cpp` | Analytic | Register-wide estimates from aggregate late intercepts and envelope modulation. `calibrate.py` accepted 0 of 106 per-partial secondary candidates (`model/calibration-report.json`), so these are not measured unisons. The inversion is exact: with r + eta fixed by the two decay rates, w = pi beat + i(fast - slow)/2 gives kappa = Im(w^2)/(2 eta), and the mistuning follows from w^2 = coupling^2 + delta^2/4. Eta is bisected for the slow mode's level. Unison Detune scales the mistuning, so at 0 the aftersound is gone. |
 | Phantom partials: longitudinal modes at n x 13.06 f0, T60 0.1 s, board coupling 0.03 | `InstrumentModel.cpp`, `PianoEngine.cpp` | Analytic ratio, Selected coupling | E1's strongest peak at ff is the phantom f6 + f7 at 532 Hz, 16 dB above partial 13 beside it: a longitudinal resonance at 13.06 f0. No other key shows one clearly. T60 0.1 s follows Bank & Sujbert's decay time. Coupling 0.015 / 0.03 / 0.05 gave phantom level -5.0 / -0.2 / +3.8 dB re the recordings. The recordings' phantom level rises with velocity relative to the partials (A1 +7 dB pp to ff), and so does the model's (+8 dB). |
 | Velocity gain law keeps 0.2 of its slope above mf | `PianoEngine.cpp` | Selected | From mf to ff the recordings rise 4.5 dB and the full law gave 10.1 dB. Velocity span L1-L4, model minus recordings: +6.2 -> -0.8 dB. |
-| Velocity treble shelf, +-8 dB per velocity doubling above 1 kHz | `PianoEngine.cpp` | Selected | Rauhala-Välimäki excitation-filter fallback. With the physical hammer, scaling it to 0.6 or 0.3 only traded pp brightness against ff, so it stays at 1. |
+| Velocity treble shelf above 1 kHz: 8 dB per velocity doubling above mf, 20 dB per halving below | `PianoEngine.cpp` | Selected | Rauhala-Välimäki excitation-filter fallback, re-selected under the reference-floor gate. Below mf, 8 / 14 / 20 / 24 / 28 dB gave layers 1/3/4 spectrum error 6.53 / 6.28 / 6.17 / 6.17 / 6.20 dB and L1 brightness +5.2 / +1.7 / 0.0 / -0.2 / -0.1 dB. One slope both ways can't do it: 12 or 16 brightened ff (L4 +1.3, +3.0 dB). |
 | Bridge high-pass at 0.7 f0, radiated path only | `InstrumentModel.cpp` | Selected | Low-frequency share of the first ms of the attack. Onset overshoot mean -0.7 dB, max +4.5 dB. |
-| Hammer knock 0.05 x force into the soundboard | `PianoEngine.cpp` | Selected | Between-partial energy 20-100 ms, layer 3: +0.5 dB re the recordings (0.04 gave -1.2, 0.06 +1.2). |
+| Hammer knock 0.05 x force into the soundboard, through the velocity shelf | `PianoEngine.cpp` | Selected | Between-partial energy 20-100 ms, layer 3: +0.5 dB re the recordings (0.04 gave -1.2, 0.06 +1.2). Unshelved, it gave pp attacks their bright click: attack 2-8 kHz share L1 +17.6 -> +0.9 dB. Also scaling it by the velocity gain law evened its level error across layers (L1/L4 +3.1/-1.4 -> -1.8/-0.5 dB) but left pp 5 dB too quiet (velocity span +4.8 dB), so it doesn't. |
 | Output high-pass, 3 x one-pole at 100 Hz | `PianoEngine.cpp` | Selected | Bass octave bands; low fundamentals 4-8 dB closer, C2 still ~16 dB strong. |
 | Partial extension to 4 kHz along measured inharmonicity | `InstrumentModel.cpp` | Selected | Energy above the 32nd partial, A0-E2: within ~3 dB on average. |
 | Soundboard: ~70 shared modes, Q 40 | `Soundboard.cpp` | Selected | Between-partial energy 20-300 ms. Q 80 matched averages but rang metallically per note (by ear). |
@@ -88,10 +88,38 @@ evidence, as above.
 The phantom metric counts any energy at the phantom frequencies, so the baseline's -1.7 dB is
 broadband noise, not phantoms. The velocity dependence above is what identifies real ones.
 
-The spectrum metric skips any band where the model is below -90 dB. C5's empty 8-16 kHz band
-crossed that gate (-92.3 -> -89.5 dB), which adds a 38 dB deficit to layer 2 that `a472304`
-also has. Without the gate, both builds score far worse because bass and mid notes have almost
-nothing above 4-8 kHz: layers 1/3/4 14.55 -> 13.85 dB, layer 2 14.40 -> 15.01 dB.
+The table's spectrum and brightness rows used a gate on the model (bands below -90 dB were
+skipped), so they compared the model with the recordings' hiss. After the first 40 ms the
+recordings hold only their noise floor above 8 kHz, a steady ~-84 dBFS per band that is noise-like
+(no partial peaks) from 0.1 s until the samples fade out. Soft notes' 4-8 kHz is mostly floor too.
+The evaluator now gates on the reference instead: a band within 6 dB of the recording's floor (its
+quietest 390 ms after the first 0.4 s) counts only the model's excess over that floor. Re-scored,
+the current build reads:
 
-The largest remaining errors are three. The top octave plays about 9 dB loud. G#7's and C5's
-sustain is off. Bass and mid notes are missing energy above 4-8 kHz.
+| Metric (reference-floor gate) | Above table's tree | Current |
+|---|---|---|
+| Spectrum error, layers 1/3/4 | 6.53 dB | 6.16 dB |
+| Spectrum error, layer 2 | 6.22 dB | 5.77 dB |
+| 1-8 kHz brightness L1 / L2 / L3 / L4 | +5.2 / +6.0 / +1.9 / -0.4 dB | +0.1 / +2.7 / +1.9 / -0.4 dB |
+| Attack 2-8 kHz share L1 / L2 / L3 / L4 | +17.6 / +13.6 / +8.2 / +3.9 dB | +0.9 / +6.7 / +8.2 / +6.2 dB |
+| Velocity span L1-L4 | -0.8 dB | +0.4 dB |
+| Onset overshoot mean / max | -0.7 / +4.5 dB | -1.1 / +6.1 dB (C2 ff) |
+
+So the high end was not missing: soft notes were too bright, in two ways. The velocity shelf cut
+too little below mf, and the knock skipped it, so a pp note began with an ff note's click. The
+attack metric (2 ms before to 10 ms after onset, re the attack's own energy) found the click: the
+others start 10 ms in. In the recordings ff carries 13 / 19 / 13 / 20 dB more of its 0-400 ms
+energy in 2-8 kHz than pp at C2 / C3 / C4 / C5. The model carried 5 / 0 / 1 / 6 dB more and now
+carries 25 / 20 / 21 / 18 dB more. The metrics not in this table are unchanged.
+
+Tried and not kept: a hammer contact patch of fixed length (Gaussian, 1.5-4 mm) instead of the
+per-partial-number roll-off, partials extended to 8-10 kHz, and the bridge corner re-selected
+(300-500 Hz). The best, 2.5 mm with 8 kHz and 380 Hz, gave the bass its missing 4-8 kHz partials
+(-7.9 -> +1.9 dB after 100 ms) and layers 1/3/4 6.53 -> 6.07 dB, but held-out layer 2 stayed at
+6.21 dB, key levels, sustain and velocity span got slightly worse, and C4's ff-over-pp brightness
+fell below the engine test's 3 dB.
+
+The largest remaining errors are four. The top octave plays about 9 dB loud. G#7's and C5's
+sustain is off. Bass and mid notes are missing energy above 4-8 kHz. The bass attack is too bright
+at every velocity (C2's 2-8 kHz attack share +22 dB at mf, +24 dB at ff), which is why C2's ff
+overshoot and ff-over-pp contrast now run high.
