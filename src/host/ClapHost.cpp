@@ -2,6 +2,7 @@
 #include "../engine/HarpEngine.hpp"
 #include "../engine/HornEngine.hpp"
 #include "../engine/PianoEngine.hpp"
+#include "../engine/ReedEngine.hpp"
 #include "../engine/StringsEngine.hpp"
 
 #include <clap/clap.h>
@@ -33,6 +34,7 @@ using pianocraft::HornParameterId;
 using pianocraft::NoteAddress;
 using pianocraft::ParameterId;
 using pianocraft::PianoEngine;
+using pianocraft::ReedParameterId;
 using pianocraft::StringsEngine;
 using pianocraft::StringsParameterId;
 
@@ -148,23 +150,27 @@ struct Harp {
     static constexpr const char* name = "PianoCraft Harp";
     static constexpr const char* description = "Original concert harp instrument";
     static constexpr const char* section = "Harp";
-    static constexpr std::array<ParameterSpec, 10> parameters{{
+    static constexpr std::array<ParameterSpec, 11> parameters{{
         {pid(HarpParameterId::pluckPosition), "Pluck Position", "Pluck", 0.03, 0.5, 0.35, perNoteFlags},
         {pid(HarpParameterId::presDeLaTable), "Pres de la Table", "Pluck", 0.0, 1.0, 0.0, continuousFlags},
         {pid(HarpParameterId::harmonics), "Harmonics", "Pluck", 0.0, 1.0, 0.0, choiceFlags, offOnNames.data()},
         {pid(HarpParameterId::brightness), "Brightness", "Pluck", 0.25, 2.0, 1.0, perNoteFlags},
         {pid(HarpParameterId::damping), "Note-Off Damping", "Strings", 0.0, 1.0, 0.0, continuousFlags},
         {pid(HarpParameterId::sustainLength), "Sustain Length", "Strings", 0.25, 4.0, 1.0, continuousFlags},
+        {pid(HarpParameterId::sympatheticLevel), "Sympathetic Level", "Strings", 0.0, 2.0, 1.0, continuousFlags},
         {pid(HarpParameterId::masterTune), "Master Tune", "Tuning", 415.0, 466.0, 440.0, continuousFlags},
         {pid(HarpParameterId::bodyLevel), "Body Level", "Mix", 0.0, 2.0, 1.0, continuousFlags},
         {pid(HarpParameterId::stereoWidth), "Stereo Width", "Mix", 0.0, 1.0, 1.0, continuousFlags},
         {pid(HarpParameterId::outputGain), "Output Gain", "Mix", 0.0, 2.0, 0.7, continuousFlags},
     }};
-    static constexpr std::array<RemotePage, 1> pages{{
+    static constexpr std::array<RemotePage, 2> pages{{
         {"Main", {pid(HarpParameterId::pluckPosition), pid(HarpParameterId::presDeLaTable),
                   pid(HarpParameterId::harmonics), pid(HarpParameterId::brightness),
                   pid(HarpParameterId::damping), pid(HarpParameterId::sustainLength),
                   pid(HarpParameterId::stereoWidth), pid(HarpParameterId::outputGain)}},
+        {"Strings", {pid(HarpParameterId::sympatheticLevel), pid(HarpParameterId::bodyLevel),
+                     pid(HarpParameterId::masterTune), CLAP_INVALID_ID, CLAP_INVALID_ID, CLAP_INVALID_ID,
+                     CLAP_INVALID_ID, CLAP_INVALID_ID}},
     }};
     static constexpr std::array<Preset, 4> presets{{
         {"Concert Harp", "harp-concert", "Ordinary plucks, strings let ring, stereo",
@@ -205,6 +211,56 @@ struct Flute {
         {"Veiled Flute", "flute-veiled", "Breathier and darker, little vibrato: the low Faune register",
          {{{pid(FluteParameterId::breathNoise), 1.8}, {pid(FluteParameterId::brightness), 0.7},
            {pid(FluteParameterId::vibratoDepth), 0.4}}}},
+    }};
+};
+
+// Oboe and clarinet: reed waveguides played as the flute is (docs/oboe-and-clarinet.md).
+template <class E>
+struct Reed {
+    using Engine = E;
+    using Id = ReedParameterId;
+    static constexpr std::array<ParameterSpec, 7> parametersWith(double vibrato) {
+        return {{
+            {pid(ReedParameterId::breathNoise), "Breath Noise", "Breath", 0.0, 2.0, 1.0, continuousFlags},
+            {pid(ReedParameterId::brightness), "Brightness", "Breath", 0.25, 2.0, 1.0, perNoteFlags},
+            {pid(ReedParameterId::vibratoDepth), "Vibrato Depth", "Vibrato", 0.0, 2.0, vibrato, continuousFlags},
+            {pid(ReedParameterId::vibratoRate), "Vibrato Rate", "Vibrato", 3.0, 8.0, 5.0, continuousFlags},
+            {pid(ReedParameterId::legatoTime), "Legato Time", "Phrasing", 0.0, 0.2, 0.012, continuousFlags},
+            {pid(ReedParameterId::masterTune), "Master Tune", "Tuning", 415.0, 466.0, 440.0, continuousFlags},
+            {pid(ReedParameterId::outputGain), "Output Gain", "Mix", 0.0, 2.0, 0.7, continuousFlags},
+        }};
+    }
+    static constexpr std::array<RemotePage, 1> pages{{
+        {"Main", {pid(ReedParameterId::breathNoise), pid(ReedParameterId::brightness),
+                  pid(ReedParameterId::vibratoDepth), pid(ReedParameterId::vibratoRate),
+                  pid(ReedParameterId::legatoTime), pid(ReedParameterId::masterTune),
+                  pid(ReedParameterId::outputGain), CLAP_INVALID_ID}},
+    }};
+};
+
+struct Oboe : Reed<pianocraft::OboeEngine> {
+    static constexpr const char* id = "com.pianocraft.oboe";
+    static constexpr const char* name = "PianoCraft Oboe";
+    static constexpr const char* description = "Original solo oboe instrument: CC1 is breath";
+    static constexpr const char* section = "Oboe";
+    static constexpr auto parameters = parametersWith(0.6);
+    static constexpr std::array<Preset, 2> presets{{
+        {"Oboe", "oboe", "Breath on CC1, a gentle vibrato after the note speaks", {}},
+        {"Oboe Dolce", "oboe-dolce", "Darker and sweeter, less vibrato",
+         {{{pid(ReedParameterId::brightness), 0.75}, {pid(ReedParameterId::vibratoDepth), 0.4}}}},
+    }};
+};
+
+struct Clarinet : Reed<pianocraft::ClarinetEngine> {
+    static constexpr const char* id = "com.pianocraft.clarinet";
+    static constexpr const char* name = "PianoCraft Clarinet";
+    static constexpr const char* description = "Original solo B-flat clarinet instrument: CC1 is breath";
+    static constexpr const char* section = "Clarinet";
+    static constexpr auto parameters = parametersWith(0.0);
+    static constexpr std::array<Preset, 2> presets{{
+        {"Clarinet", "clarinet", "Breath on CC1, straight tone", {}},
+        {"Clarinet Dolce", "clarinet-dolce", "Darker and softer-edged",
+         {{{pid(ReedParameterId::brightness), 0.75}}}},
     }};
 };
 
@@ -1144,9 +1200,10 @@ const clap_plugin_preset_load_t Adapter<I>::presetLoad_ = {
     &Adapter<I>::presetLoad,
 };
 
-const std::array<const clap_plugin_descriptor_t*, 5> descriptors{
+const std::array<const clap_plugin_descriptor_t*, 7> descriptors{
     Adapter<Piano>::descriptor(), Adapter<Harp>::descriptor(), Adapter<Flute>::descriptor(),
-    Adapter<Strings>::descriptor(), Adapter<Horn>::descriptor()};
+    Adapter<Strings>::descriptor(), Adapter<Horn>::descriptor(), Adapter<Oboe>::descriptor(),
+    Adapter<Clarinet>::descriptor()};
 
 std::uint32_t pluginCount(const clap_plugin_factory_t*) noexcept
 {
@@ -1189,6 +1246,12 @@ const clap_plugin_t* createPlugin(const clap_plugin_factory_t*, const clap_host_
     }
     if (std::strcmp(pluginId, Horn::id) == 0) {
         return create<Horn>(host);
+    }
+    if (std::strcmp(pluginId, Oboe::id) == 0) {
+        return create<Oboe>(host);
+    }
+    if (std::strcmp(pluginId, Clarinet::id) == 0) {
+        return create<Clarinet>(host);
     }
     return nullptr;
 }
@@ -1245,7 +1308,9 @@ bool presetProviderGetMetadata(const clap_preset_discovery_provider_t*, std::uin
                                    describePreset<Harp>(locationKind, location, receiver) ||
                                    describePreset<Flute>(locationKind, location, receiver) ||
                                    describePreset<Strings>(locationKind, location, receiver) ||
-                                   describePreset<Horn>(locationKind, location, receiver));
+                                   describePreset<Horn>(locationKind, location, receiver) ||
+                                   describePreset<Oboe>(locationKind, location, receiver) ||
+                                   describePreset<Clarinet>(locationKind, location, receiver));
 }
 
 const void* presetProviderGetExtension(const clap_preset_discovery_provider_t*, const char*) noexcept

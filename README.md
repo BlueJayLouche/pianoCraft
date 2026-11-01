@@ -26,6 +26,7 @@ ctest --test-dir build --output-on-failure
 ./build/pianocraft-render-voice flute renders/flute-a4.wav 69 0.7 4 3.5 cc1=0.6
 ./build/pianocraft-render-voice strings renders/strings-a4.wav 69 0.7 4 3.5 cc1=0.6
 ./build/pianocraft-render-voice horn renders/horn-c4.wav 60 0.7 4 3.5 cc1=0.6
+./build/pianocraft-render-voice oboe renders/oboe-a4.wav 69 0.7 4 3.5 cc1=0.6
 ./build/pianocraft-benchmark
 ```
 
@@ -85,18 +86,20 @@ Bitwig's preset browser lists four built-in voicings: Calibrated Upright
 because Bitwig lists preset files, not presets held inside a plugin; the values
 live in `src/host/ClapHost.cpp`. Save your own as Bitwig presets.
 
-## Harp, flute, strings and horn
+## Harp, flute, oboe, clarinet, strings and horn
 
-The bundle also holds PianoCraft Harp, Flute, Strings and Horn, for the final act of *The Old
-House on the Corner*. They follow the orchestral-library conventions: CC11 is an expression trim,
+The bundle also holds PianoCraft Harp, Flute, Oboe, Clarinet, Strings and Horn, for the final act of
+*The Old House on the Corner*. They follow the orchestral-library conventions: CC11 is an expression trim,
 pitch bend ±2 semitones, no keyswitches. On the flute, strings and horn a note's Pressure is its
 dynamic too, as CC1 is: `piano.py` writes each CC1 curve again as Pressure, which Bitwig imports
 from a `.dawproject`. Their physics and what is still set by ear are in
-`docs/harp-and-flute.md` and `docs/strings-and-horn.md`; there is no reference corpus for them yet.
+`docs/harp-and-flute.md`, `docs/oboe-and-clarinet.md` and `docs/strings-and-horn.md`; there is no
+reference corpus for them yet.
 
 - **Harp:** one string per key (B0-G#7). Strings ring after note-off, so glissandi keep sounding.
-  Controls: Pluck Position, Pres de la Table, Harmonics (the key is the sounding pitch), Brightness
-  (Timbre moves it per note), Note-Off Damping (CC64 holds it off), Sustain Length, Body Level,
+  The strings the pedals sound (set by what you play) ring in sympathy. Controls: Pluck Position,
+  Pres de la Table, Harmonics (the key is the sounding pitch), Brightness (Timbre moves it per note),
+  Note-Off Damping (CC64 holds it off), Sustain Length, Sympathetic Level, Body Level,
   Stereo Width (0 is exact mono), Master Tune. Velocity is the dynamic. Presets: Concert Harp, and
   Harp, Pres de la Table and Harmonics in mono.
 - **Flute:** monophonic, B3-D7. CC1 is breath (loudness and tone); velocity shapes only the attack.
@@ -104,6 +107,10 @@ from a `.dawproject`. Their physics and what is still set by ear are in
   which enters after the note speaks. Controls: Breath Noise, Brightness (Timbre moves it), Vibrato
   Depth and Rate, Legato Time, Master Tune. Presets: Solo Flute, and Veiled Flute (breathier,
   darker, little vibrato) for the low *Faune* register.
+- **Oboe and clarinet:** reed waveguides played as the flute is (slurs, tonguing, CC1 or Pressure as
+  breath, CC21 vibrato). The clarinet (D3-B-flat 6) sounds odd harmonics, straight-toned; the oboe
+  (B-flat 3-A6) every harmonic, with a gentle vibrato. Both are nearly pure at pp and full at ff.
+  Controls as the flute's. Presets: Oboe, Oboe Dolce, Clarinet, Clarinet Dolce.
 - **Strings:** a section (E1-E7) by register: basses, cellos, violas, violins. CC1 is the bow
   (loudness and tone); velocity shapes only the attack; CC21 scales the vibrato. Con Sordino is on by default. Controls: Con Sordino, Sul Tasto, Tremolo (bow reversals),
   Harmonics, Section Size (1 is a soloist), Section Spread, Brightness (Timbre moves it), Vibrato

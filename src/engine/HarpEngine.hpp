@@ -19,6 +19,7 @@ enum class HarpParameterId : std::uint32_t {
     bodyLevel = 8,
     stereoWidth = 9,
     masterTune = 10,
+    sympatheticLevel = 11,
 };
 
 // A concert harp: one string per key (C1-G7, B0 with the C-flat pedal), plucked from rest into
@@ -55,7 +56,10 @@ public:
 
 private:
     static constexpr std::size_t modeLimit = 52;
-    static constexpr std::size_t parameterCount = 11;
+    static constexpr std::size_t parameterCount = 12;
+    static constexpr int lowestString = 23; // B0
+    static constexpr std::size_t stringCount = 82; // to G#7
+    static constexpr std::size_t sympatheticPartials = 6;
     static constexpr std::size_t bodyModeCount = 12;
 
     struct Mode {
@@ -91,6 +95,16 @@ private:
         double timbre = 0.0;
         // A note-on plucks at the next render, so per-note modulation sent with it applies.
         double pendingVelocity = -1.0;
+        int stringKey = -1; // the string it plucked (an octave down for harmonics)
+    };
+
+    // A string the pedals sound, ringing in sympathy: driven by the soundboard, undamped.
+    struct Sympathetic {
+        std::array<Mode, sympatheticPartials> modes{};
+        std::array<double, sympatheticPartials> drive{};
+        std::array<double, sympatheticPartials> radiation{};
+        std::size_t count = 0;
+        double level = 0.0;
     };
 
     struct BodyMode {
@@ -102,6 +116,8 @@ private:
     void pluck(Voice& voice, double velocity);
     void damp(Voice& voice);
     void retune(Voice& voice);
+    void tuneSympathy();
+    void setPedal(int pitchClass);
     void endNote(const NoteAddress& address);
     double tuningFactor(std::int16_t channel) const;
 
@@ -110,6 +126,10 @@ private:
     std::array<double, parameterCount> globalModulation_{};
     std::array<Voice, voiceCapacity> voices_{};
     std::array<BodyMode, bodyModeCount> body_{};
+    std::array<Sympathetic, stringCount> sympathy_{};
+    std::array<bool, 12> pedals_{};            // pitch classes the pedals give the strings
+    std::array<std::uint64_t, 12> pedalUsed_{};
+    std::uint64_t clock_ = 0;                  // counts plucks, for the pedals' last use
     std::array<double, 16> bend_{};
     std::array<bool, 16> sustain_{};
     double expression_ = 1.0;

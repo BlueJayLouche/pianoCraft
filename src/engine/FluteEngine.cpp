@@ -56,15 +56,7 @@ std::size_t index(FluteParameterId id) {
 
 } // namespace
 
-FluteEngine::FluteEngine() {
-    parameters_[index(FluteParameterId::outputGain)] = 0.7;
-    parameters_[index(FluteParameterId::breathNoise)] = 1.0;
-    parameters_[index(FluteParameterId::vibratoDepth)] = 1.0;
-    parameters_[index(FluteParameterId::vibratoRate)] = 5.0;
-    parameters_[index(FluteParameterId::brightness)] = 1.0;
-    parameters_[index(FluteParameterId::legatoTime)] = 0.012;
-    parameters_[index(FluteParameterId::masterTune)] = 440.0;
-}
+FluteEngine::FluteEngine() : MonoWind(lowestKey, highestKey) {}
 
 void FluteEngine::prepare(double sampleRate) {
     sampleRate_ = sampleRate;
@@ -72,10 +64,8 @@ void FluteEngine::prepare(double sampleRate) {
 }
 
 void FluteEngine::reset() {
-    sounding_ = keyDown_ = false;
-    releasedAt_ = -1.0;
-    slurSeconds_ = 1.0e9;
-    envelope_ = level_ = jetLow_ = 0.0;
+    resetPlayer();
+    jetLow_ = 0.0;
     bore_ = {};
     jet_ = {};
     write_ = 0;
@@ -83,159 +73,16 @@ void FluteEngine::reset() {
     formant_ = {};
     boreLevel_ = 0.0;
     noise_ = 0x9E3779B9u;
-    breath_ = breathTarget_ = 0.8;
-    expression_ = expressionTarget_ = 1.0;
-    vibratoAmount_ = 1.0;
-    vibratoPhase_ = 0.0;
-    bend_ = 0.0;
-    endedCount_ = 0;
 }
 
-double FluteEngine::period(int key) const {
-    return sampleRate_ / (parameters_[index(FluteParameterId::masterTune)] * std::pow(2.0, (key - 69) / 12.0));
-}
-
-void FluteEngine::endNote(const NoteAddress& address) {
-    if (endedCount_ < ended_.size()) {
-        ended_[endedCount_++] = {address, frame_};
-    }
-}
-
-void FluteEngine::startNote(const NoteAddress& address, double velocity, bool legato) {
-    if (sounding_) {
-        endNote(note_); // the slur or re-attack takes over the sounding note's voice
-    }
-    note_ = address;
-    sounding_ = keyDown_ = true;
-    releasedAt_ = -1.0;
-    periodTarget_ = period(address.key);
-    volume_ = volumeTarget_ = 1.0;
-    pan_ = 0.5;
-    timbre_ = brightnessModulation_ = 0.0;
-    if (!legato) {
-        // Velocity shapes only the attack: how fast the breath arrives and how hard the tongue
-        // releases it.
-        velocity_ = velocity;
-        attackSeconds_ = 0.09 - 0.06 * velocity;
-        noteSeconds_ = 0.0;
-        period_ = periodTarget_;
-        envelope_ = 0.0; // the tongue stops the air before it releases it again
-    } else {
-        slurSeconds_ = 0.0;
-    }
-}
-
-void FluteEngine::noteOn(const NoteAddress& address, double velocity) {
-    if (address.key < lowestKey || address.key > highestKey) {
-        endNote(address);
-        return;
-    }
-    // A note that starts the instant the last one ends (piano.py's slides touch their notes; hosts
-    // send the note-off first) slurs too, unless it repeats the pitch: that is tongued.
-    const bool joined = sounding_ && releasedAt_ >= 0.0 && noteSeconds_ - releasedAt_ < 0.005 && address.key != note_.key;
-    // Only a note that is sounding can be slurred from: out of one that never spoke, the next note
-    // would appear at full breath with no attack, a click.
-    const bool speaking = level_ > 0.05;
-    startNote(address, std::clamp(velocity, 0.0, 1.0),
-              (keyDown_ || joined) && speaking && parameters_[index(FluteParameterId::legatoTime)] >= 0.0);
-}
-
-void FluteEngine::noteOff(const NoteAddress& address, double) {
-    if (keyDown_ && matches(address, note_)) {
-        keyDown_ = false;
-        releasedAt_ = noteSeconds_;
-    }
-}
-
-void FluteEngine::choke(const NoteAddress& address) {
-    if (sounding_ && matches(address, note_)) {
-        endNote(note_);
-        sounding_ = keyDown_ = false;
-        envelope_ = 0.0;
-        bore_ = {};
-        jet_ = {};
-    }
-}
-
-void FluteEngine::controlChange(std::int16_t, std::uint8_t controller, double value) {
-    value = std::clamp(value, 0.0, 1.0);
-    if (controller == 1) {
-        breathTarget_ = value;
-    } else if (controller == 11) {
-        expressionTarget_ = value;
-    } else if (controller == 21) {
-        vibratoAmount_ = 2.0 * value;
-    }
-}
-
-void FluteEngine::pitchBend(std::int16_t, double bend) {
-    if (std::isfinite(bend)) {
-        bend_ = std::clamp(bend, -1.0, 1.0);
-    }
-}
-
-void FluteEngine::setParameter(FluteParameterId id, double value) {
-    const auto i = index(id);
-    if (i != 0 && i < parameterCount && std::isfinite(value)) {
-        parameters_[i] = value;
-        if (id == FluteParameterId::masterTune && sounding_) {
-            periodTarget_ = period(note_.key);
-        }
-    }
-}
-
-double FluteEngine::parameterValue(FluteParameterId id) const {
-    const auto i = index(id);
-    return i < parameterCount ? parameters_[i] : 0.0;
-}
-
-void FluteEngine::modulate(const NoteAddress& target, FluteParameterId id, double amount) {
-    const bool global = target.noteId < 0 && target.port < 0 && target.channel < 0 && target.key < 0;
-    if (id == FluteParameterId::brightness && std::isfinite(amount) && (global || matches(target, note_))) {
-        brightnessModulation_ = amount;
-    }
-}
-
-void FluteEngine::setNoteVolume(const NoteAddress& target, double gain) {
-    if (sounding_ && matches(target, note_) && std::isfinite(gain)) {
-        volumeTarget_ = std::clamp(gain, 0.0, 4.0);
-    }
-}
-
-void FluteEngine::setNotePan(const NoteAddress& target, double pan) {
-    if (sounding_ && matches(target, note_) && std::isfinite(pan)) {
-        pan_ = std::clamp(pan, 0.0, 1.0);
-    }
-}
-
-void FluteEngine::setNoteBrightness(const NoteAddress& target, double brightness) {
-    if (sounding_ && matches(target, note_) && std::isfinite(brightness)) {
-        timbre_ = 2.0 * (std::clamp(brightness, 0.0, 1.0) - 0.5);
-    }
-}
-
-void FluteEngine::setNotePressure(const NoteAddress& target, double pressure) {
-    if (sounding_ && matches(target, note_) && std::isfinite(pressure)) {
-        breathTarget_ = std::clamp(pressure, 0.0, 1.0);
-    }
-}
-
-std::size_t FluteEngine::takeEndedNotes(EndedNote* destination, std::size_t capacity) {
-    const std::size_t count = std::min(capacity, endedCount_);
-    std::copy_n(ended_.begin(), count, destination);
-    endedCount_ = 0;
-    return count;
-}
-
-std::size_t FluteEngine::activeVoiceCount() const {
-    return sounding_ ? 1 : 0;
+void FluteEngine::silence() {
+    bore_ = {};
+    jet_ = {};
 }
 
 void FluteEngine::render(float* left, float* right, std::uint32_t frameCount) {
     const auto& p = parameters_;
-    if (!sounding_) {
-        std::fill_n(left, frameCount, 0.0F);
-        std::fill_n(right, frameCount, 0.0F);
+    if (silent(left, right, frameCount)) {
         return;
     }
     const double fs = sampleRate_;
@@ -244,14 +91,8 @@ void FluteEngine::render(float* left, float* right, std::uint32_t frameCount) {
     const double brightness = std::clamp(p[index(FluteParameterId::brightness)] + brightnessModulation_ + timbre_, 0.25, 3.0);
     const double pole = std::pow(std::clamp(0.45 - 0.15 * (brightness - 1.0), 0.1, 0.8), rateScale);
     const double dcPole = std::pow(0.9995, rateScale);
-    const double smooth = 1.0 - std::exp(-1.0 / (0.015 * fs));
-    const double glide = 1.0 - std::exp(-1.0 / (0.01 * fs));
-    const double legato = 1.0 - std::exp(-3.0 / (std::max(p[index(FluteParameterId::legatoTime)], 0.001) * fs));
-    const double attack = 1.0 - std::exp(-1.0 / (attackSeconds_ * fs));
-    const double releaseRate = 1.0 - std::exp(-1.0 / (0.06 * fs));
+    const Pace pacing = pace();
     const double bendFactor = std::pow(2.0, 2.0 * bend_ / 12.0);
-    const double vibratoStep = 2.0 * pi * std::clamp(p[index(FluteParameterId::vibratoRate)], 0.5, 12.0) / fs;
-    const double vibratoDepth = std::max(p[index(FluteParameterId::vibratoDepth)], 0.0) * vibratoAmount_;
     const double noiseLevel = std::max(p[index(FluteParameterId::breathNoise)], 0.0);
     const double air = 1.0 - std::exp(-2.0 * pi * 5000.0 / fs);
     const double airFloor = 1.0 - std::exp(-2.0 * pi * 800.0 / fs);
@@ -284,51 +125,37 @@ void FluteEngine::render(float* left, float* right, std::uint32_t frameCount) {
 
     for (std::uint32_t frame = 0; frame < frameCount; ++frame) {
         frame_ = frame;
-        breath_ += smooth * (breathTarget_ - breath_);
-        expression_ += glide * (expressionTarget_ - expression_);
-        volume_ += glide * (volumeTarget_ - volume_);
-        if (keyDown_) {
-            // The tongue releases a puff that settles to the held breath within ~50 ms.
-            const double target = 1.0 + 0.35 * velocity_ * std::exp(-noteSeconds_ / 0.05);
-            envelope_ += attack * (target - envelope_);
-        } else {
-            envelope_ -= releaseRate * envelope_;
-        }
-        noteSeconds_ += 1.0 / fs;
-        slurSeconds_ += 1.0 / fs;
-        // A slur is the keys moving, about 10 ms (Almeida, Chow, Smith and Wolfe, JASA 2009), not a
-        // glide: the bore's length changes that fast, and while the new resonance takes over from
-        // the old the jet is disturbed, a little less steady and a little noisier for ~15 ms.
-        const double slur = std::exp(-slurSeconds_ / 0.012);
-        period_ += legato * (periodTarget_ - period_);
-
-        // Players let vibrato in after the note has spoken.
-        const double vibrato = std::sin(vibratoPhase_) * vibratoDepth * std::clamp((noteSeconds_ - 0.25) / 0.6, 0.0, 1.0);
-        vibratoPhase_ = std::fmod(vibratoPhase_ + vibratoStep, 2.0 * pi);
+        const Breath player = advance(pacing);
+        // While a slur's new resonance takes over, the jet is a little less steady and noisier.
+        const double slur = player.slur;
+        const double vibrato = player.vibrato;
         // CC1 sets the jet's speed; the pressure behind it is its square. Vibrato pulses that
         // pressure by +-10% (Fletcher), so it is mostly a vibrato of the upper partials.
-        const double breath = std::max(breath_ * (1.0 + 0.05 * vibrato), 0.0);
+        const double breath = std::max(player.breath * (1.0 + 0.05 * vibrato), 0.0);
         const double jetSpeed = envelope_ * std::pow(breath, fundamentalLaw) * (1.0 - 0.15 * slur);
-        const double cycle = period_ * jetTuning * registerTuning / bendFactor * (1.0 - 0.0025 * vibrato);
+        const double tuned = jetTuning * registerTuning / bendFactor * (1.0 - 0.0025 * vibrato);
+        const double cycle = period_ * tuned;
 
         // Delays: the bore round trip less its filters' phase delay at the fundamental, and the
         // jet's flight over half a period less its own low-pass (corner 2 f0: the jet can't follow
         // the higher harmonics as well), which keeps it in the first register.
         const double omega = 2.0 * pi / cycle;
-        const double loopDelay = phaseDelay(1.0 - pole, 0.0, pole, omega) + phaseDelay(1.0, -1.0, dcPole, omega);
-        const double boreDelay = std::clamp(cycle - loopDelay, 4.0, static_cast<double>(delaySize - 4));
+        const auto boreAt = [&](double length) {
+            const double w = 2.0 * pi / length;
+            const double loopDelay = phaseDelay(1.0 - pole, 0.0, pole, w) + phaseDelay(1.0, -1.0, dcPole, w);
+            return lagrange(bore_.data(), delaySize - 1, write_, std::clamp(length - loopDelay, 4.0, static_cast<double>(delaySize - 4)));
+        };
         const double jetPole = std::exp(-2.0 * omega);
         const double jetDelay = std::clamp(jetRatio * cycle - phaseDelay(1.0 - jetPole, 0.0, jetPole, omega), 1.0,
                                            static_cast<double>(delaySize - 2));
 
-        // Cubic Lagrange read of the bore.
-        const double position = static_cast<double>(write_ + delaySize) - boreDelay;
-        const auto base = static_cast<std::size_t>(position);
-        const double d = position - static_cast<double>(base);
-        const auto at = [&](std::size_t offset) { return bore_[(base + offset + delaySize - 1) % delaySize]; };
-        const double ym1 = at(0), y0 = at(1), y1 = at(2), y2 = at(3);
-        const double boreOut = y0 + d * (0.5 * (y1 - ym1) + d * (ym1 - 2.5 * y0 + 2.0 * y1 - 0.5 * y2 +
-                                                                  d * (1.5 * (y0 - y1) + 0.5 * (y2 - ym1))));
+        // The bore, cubic Lagrange. While a slur's keys move, the loop takes the new length half way
+        // (a pad seating, player.seat), and what radiates crossfades from the old length's reading to
+        // the new: the pitches between hardly sound.
+        const double fromOld = player.keys < 1.0 ? boreAt(periodFrom_ * tuned) : 0.0;
+        const double toNew = boreAt(cycle);
+        const double boreOut = player.keys < 1.0 ? (1.0 - player.seat) * fromOld + player.seat * toNew : toNew;
+        const double heard = player.keys < 1.0 ? (1.0 - player.keys) * fromOld + player.keys * toNew : toNew;
         reflection_ = (1.0 - pole) * boreOut + pole * reflection_;
 
         noise_ ^= noise_ << 13;
@@ -358,8 +185,8 @@ void FluteEngine::render(float* left, float* right, std::uint32_t frameCount) {
         // The bore's pressure, high-passed for safety at a quarter of the fundamental, split again at
         // the labium and shaped by the formant. The breath's own air is band-limited noise riding
         // on the jet.
-        radiated_ += highpass * (boreOut - radiated_);
-        const double wave = boreOut - radiated_;
+        radiated_ += highpass * (heard - radiated_);
+        const double wave = heard - radiated_;
         boreLevel_ += follow * (wave * wave - boreLevel_);
         const double amplitude = std::sqrt(2.0 * boreLevel_) + 1.0e-12;
         const double drive = std::max(envelope_ * labiumRegister * (labiumSoft + (labiumLoud - labiumSoft) * std::pow(std::min(breath, 1.0), 2.0)), labiumStep);
@@ -375,11 +202,7 @@ void FluteEngine::render(float* left, float* right, std::uint32_t frameCount) {
         left[frame] = static_cast<float>(gain * sample * gainLeft);
         right[frame] = static_cast<float>(gain * sample * gainRight);
     }
-    frame_ = 0;
-    if (!keyDown_ && envelope_ < 1.0e-4 && level_ < 1.0e-6) {
-        endNote(note_);
-        sounding_ = false;
-    }
+    finishBlock();
 }
 
 } // namespace pianocraft

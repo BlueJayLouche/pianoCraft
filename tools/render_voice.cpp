@@ -1,10 +1,11 @@
-// Renders one harp, flute, strings or horn note to a 24-bit stereo WAV at 48 kHz:
-//   pianocraft-render-voice <harp|flute|strings|horn> out.wav key velocity seconds [hold] [id=value ...]
+// Renders one harp, flute, strings, horn, oboe or clarinet note to a 24-bit stereo WAV at 48 kHz:
+//   pianocraft-render-voice <harp|flute|strings|horn|oboe|clarinet> out.wav key velocity seconds [hold] [id=value ...]
 // hold is when the key is released (default: 40% of the length); id=value sets a parameter by id,
 // ccN=value sends MIDI controller N (0-1) before the note.
 #include "engine/FluteEngine.hpp"
 #include "engine/HarpEngine.hpp"
 #include "engine/HornEngine.hpp"
+#include "engine/ReedEngine.hpp"
 #include "engine/StringsEngine.hpp"
 
 #include <algorithm>
@@ -101,7 +102,7 @@ std::vector<float> renderNote(int argc, char** argv, int key, double velocity, d
 int main(int argc, char** argv) {
     try {
         if (argc < 6) {
-            std::cerr << "Usage: pianocraft-render-voice <harp|flute|strings|horn> out.wav key velocity seconds [hold] [id=value ...]\n";
+            std::cerr << "Usage: pianocraft-render-voice <harp|flute|strings|horn|oboe|clarinet> out.wav key velocity seconds [hold] [id=value ...]\n";
             return 2;
         }
         const std::string instrument = argv[1];
@@ -120,7 +121,11 @@ int main(int argc, char** argv) {
             ? renderNote<pianocraft::StringsEngine, pianocraft::StringsParameterId>(argc, argv, key, velocity, seconds, hold)
             : instrument == "horn"
             ? renderNote<pianocraft::HornEngine, pianocraft::HornParameterId>(argc, argv, key, velocity, seconds, hold)
-            : throw std::runtime_error("Instrument must be harp, flute, strings or horn");
+            : instrument == "oboe"
+            ? renderNote<pianocraft::OboeEngine, pianocraft::ReedParameterId>(argc, argv, key, velocity, seconds, hold)
+            : instrument == "clarinet"
+            ? renderNote<pianocraft::ClarinetEngine, pianocraft::ReedParameterId>(argc, argv, key, velocity, seconds, hold)
+            : throw std::runtime_error("Instrument must be harp, flute, strings, horn, oboe or clarinet");
         writeWav(argv[2], samples, 48000);
         return 0;
     } catch (const std::exception& error) {

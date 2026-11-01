@@ -5,6 +5,7 @@
 #include "engine/FluteEngine.hpp"
 #include "engine/HarpEngine.hpp"
 #include "engine/HornEngine.hpp"
+#include "engine/ReedEngine.hpp"
 #include "engine/StringsEngine.hpp"
 
 #include <algorithm>
@@ -12,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <initializer_list>
 #include <iterator>
 #include <string>
 #include <utility>
@@ -28,6 +30,9 @@ using pianocraft::HornParameterId;
 using pianocraft::StringsEngine;
 using pianocraft::StringsParameterId;
 using pianocraft::NoteAddress;
+using pianocraft::ClarinetEngine;
+using pianocraft::OboeEngine;
+using pianocraft::ReedParameterId;
 
 constexpr double pi = 3.141592653589793;
 int failures = 0;
@@ -167,6 +172,7 @@ void harpTests() {
         HarpEngine damped;
         damped.prepare(48000.0);
         damped.setParameter(HarpParameterId::damping, 1.0);
+        damped.setParameter(HarpParameterId::sympatheticLevel, 0.0); // the other strings ring on, rightly
         const auto y = render(damped, 2.0, 48000.0, [&](std::size_t f) {
             if (f == 0) damped.noteOn(note(60), 0.8);
             if (f == 4800) damped.noteOff(note(60), 0.0);
@@ -213,6 +219,36 @@ void harpTests() {
             return render(harp, 0.5, 48000.0, [&](std::size_t f) { if (f == 0) harp.noteOn(note(55), 0.6); });
         };
         expect(take() == take(), "harp renders repeat exactly");
+    }
+    {
+        // A C3 damped by the hand at 0.35 s: its octave rings on in sympathy; C#4, which the pedals
+        // (C major until something else is played) don't sound, stays quiet.
+        const auto damped = [](double sympathy) {
+            HarpEngine harp;
+            harp.prepare(48000.0);
+            harp.setParameter(HarpParameterId::damping, 1.0);
+            harp.setParameter(HarpParameterId::sympatheticLevel, sympathy);
+            return render(harp, 2.0, 48000.0, [&](std::size_t f) {
+                if (f == 0) harp.noteOn(note(48), 0.8);
+                if (f == 16768) harp.noteOff(note(48), 0.0); // 0.35 s, on a block
+            });
+        };
+        const auto ringing = damped(1.0), silent = damped(0.0);
+        const double octave = powerAt(ringing, 1.0, 2.0, 48000.0, frequency(60));
+        const double unpedalled = powerAt(ringing, 1.0, 2.0, 48000.0, frequency(61));
+        expect(10.0 * std::log10(octave / (powerAt(silent, 1.0, 2.0, 48000.0, frequency(60)) + 1e-30)) > 30.0 &&
+                   10.0 * std::log10(unpedalled / octave) < -20.0,
+               "a damped string's octave rings on in sympathy, a string the pedals don't sound doesn't");
+        // Playing an F# moves the F pedal: then a damped F#3's octave rings, and F4 no longer does.
+        HarpEngine harp;
+        harp.prepare(48000.0);
+        harp.setParameter(HarpParameterId::damping, 1.0);
+        const auto moved = render(harp, 2.0, 48000.0, [&](std::size_t f) {
+            if (f == 0) harp.noteOn(note(54), 0.8);
+            if (f == 16768) harp.noteOff(note(54), 0.0);
+        });
+        expect(10.0 * std::log10(powerAt(moved, 1.0, 2.0, 48000.0, frequency(65)) / powerAt(moved, 1.0, 2.0, 48000.0, frequency(66))) < -20.0,
+               "an F# moves the F pedal: the F# strings ring in sympathy, the F strings don't");
     }
 }
 
@@ -442,6 +478,72 @@ void hornTests() {
     }
 }
 
+// Oboe and clarinet: in tune, holding, CC1 louder and richer, each bore's signature, and slurs at pp.
+template <class Engine>
+void reedTests(const char* name, std::initializer_list<int> keys) {
+    using R = ReedParameterId;
+    const std::string instrument = name;
+    const auto straight = std::vector<std::pair<R, double>>{{R::vibratoDepth, 0.0}};
+    for (const double rate : {48000.0, 96000.0}) {
+        for (const int key : keys) {
+            const auto x = sustain<Engine, R>(key, 0.6, 2.0, rate, straight);
+            const double off = centsOff(x, 1.0, 2.0, rate, frequency(key));
+            expect(std::abs(off) <= 5.0, instrument + " key " + std::to_string(key) + " in tune at " +
+                                             std::to_string(static_cast<int>(rate)) + " Hz: " + std::to_string(off) + " cents");
+        }
+    }
+    const int middle = *(keys.begin() + 1);
+    const auto held = sustain<Engine, R>(middle, 0.6, 7.0, 48000.0, straight);
+    expect(std::abs(rmsDb(held, 6.0, 7.0, 48000.0) - rmsDb(held, 1.0, 2.0, 48000.0)) < 1.0, "a held " + instrument + " note holds its level");
+    const auto soft = sustain<Engine, R>(middle, 0.2, 2.0, 48000.0, straight), loud = sustain<Engine, R>(middle, 1.0, 2.0, 48000.0, straight);
+    const double louder = rmsDb(loud, 1.0, 2.0, 48000.0) - rmsDb(soft, 1.0, 2.0, 48000.0);
+    const double richer = tilt(loud, 1.0, 2.0, 48000.0) - tilt(soft, 1.0, 2.0, 48000.0);
+    expect(louder > 12.0 && richer > 6.0, instrument + ": CC1 is breath, " + std::to_string(louder) + " dB louder and " +
+                                              std::to_string(richer) + " dB richer from 0.2 to 1");
+    expect(sustain<Engine, R>(middle, 0.6, 1.0, 48000.0, {}) == sustain<Engine, R>(middle, 0.6, 1.0, 48000.0, {}),
+           instrument + " renders repeat exactly");
+    // Touching notes slur even at pp: whether a note is speaking is judged before the dynamic.
+    Engine reed;
+    reed.prepare(48000.0);
+    reed.controlChange(0, 1, 0.15);
+    reed.setParameter(R::vibratoDepth, 0.0);
+    std::size_t endedAtSlur = 0;
+    const auto x = render(reed, 1.0, 48000.0, [&](std::size_t f) {
+        if (f == 0) reed.noteOn(note(middle, 1), 0.7);
+        if (f == 24000) {
+            reed.noteOff(note(middle, 1), 0.0);
+            reed.noteOn(note(middle + 2, 2), 0.7);
+        }
+    });
+    double quietest = 0.0;
+    for (double t = 0.5; t < 0.6; t += 0.005) {
+        quietest = std::min(quietest, rmsDb(x, t, t + 0.01, 48000.0) - rmsDb(x, 0.35, 0.5, 48000.0));
+    }
+    expect(quietest > -6.0, instrument + ": touching notes slur at pp (dip " + std::to_string(quietest) + " dB)");
+}
+
+// A slur is keys changing the tube, not a glide: in an octave slur, the tritone between the two
+// notes must stay well under both while the keys move (a 12 ms glide put it 7 dB over them).
+template <class Engine>
+double between(const char* name) {
+    Engine wind;
+    wind.prepare(48000.0);
+    wind.controlChange(0, 1, 0.6);
+    wind.setParameter(pianocraft::WindParameterId::vibratoDepth, 0.0);
+    const auto x = render(wind, 1.0, 48000.0, [&](std::size_t f) {
+        if (f == 0) wind.noteOn(note(62, 1), 0.7);
+        if (f == 24000) wind.noteOn(note(74, 2), 0.7);
+        if (f == 24512) wind.noteOff(note(62, 1), 0.0);
+    });
+    double worst = -1.0e9;
+    for (double t = 0.49; t <= 0.52; t += 0.002) {
+        const double ends = std::max(powerAt(x, t, t + 0.02, 48000.0, frequency(62)), powerAt(x, t, t + 0.02, 48000.0, frequency(74)));
+        worst = std::max(worst, 10.0 * std::log10(powerAt(x, t, t + 0.02, 48000.0, frequency(68)) / ends));
+    }
+    expect(worst < -6.0, std::string(name) + ": a slur changes the tube, no glide (the pitch between " + std::to_string(worst) + " dB re the notes)");
+    return worst;
+}
+
 // piano.py writes each clip's CC1 curve again as per-note Pressure, the expression Bitwig imports
 // from a .dawproject, so Pressure alone must carry the dynamics.
 template <class Engine>
@@ -461,9 +563,11 @@ void pressureTests() {
     const double flute = pressed<FluteEngine>(69, 1.0) - pressed<FluteEngine>(69, 0.3);
     const double strings = pressed<StringsEngine>(69, 1.0) - pressed<StringsEngine>(69, 0.3);
     const double horn = pressed<HornEngine>(60, 1.0) - pressed<HornEngine>(60, 0.3);
-    expect(flute > 4.0 && strings > 4.0 && horn > 4.0, "per-note Pressure is the dynamic without CC1: flute +" +
-                                                            std::to_string(flute) + ", strings +" + std::to_string(strings) +
-                                                            ", horn +" + std::to_string(horn) + " dB");
+    const double oboe = pressed<OboeEngine>(69, 1.0) - pressed<OboeEngine>(69, 0.3);
+    const double clarinet = pressed<ClarinetEngine>(62, 1.0) - pressed<ClarinetEngine>(62, 0.3);
+    expect(flute > 4.0 && strings > 4.0 && horn > 4.0 && oboe > 4.0 && clarinet > 4.0,
+           "per-note Pressure is the dynamic without CC1: flute +" + std::to_string(flute) + ", strings +" + std::to_string(strings) +
+               ", horn +" + std::to_string(horn) + ", oboe +" + std::to_string(oboe) + ", clarinet +" + std::to_string(clarinet) + " dB");
 }
 
 } // namespace
@@ -473,6 +577,24 @@ int main() {
     fluteTests();
     stringsTests();
     hornTests();
+    between<FluteEngine>("flute");
+    between<OboeEngine>("oboe");
+    between<ClarinetEngine>("clarinet");
+    reedTests<OboeEngine>("oboe", {58, 69, 81, 93});
+    reedTests<ClarinetEngine>("clarinet", {50, 62, 76, 94});
+    {
+        // Each bore's signature in its low register: the clarinet's cylinder sounds odd harmonics
+        // only; the oboe's cone every one, its second as strong as its first.
+        using R = ReedParameterId;
+        const auto clarinet = sustain<ClarinetEngine, R>(50, 0.8, 2.0, 48000.0, {{R::vibratoDepth, 0.0}});
+        const double even = 10.0 * std::log10(powerAt(clarinet, 1.0, 2.0, 48000.0, 2.0 * frequency(50)) /
+                                              powerAt(clarinet, 1.0, 2.0, 48000.0, 3.0 * frequency(50)));
+        const auto oboe = sustain<OboeEngine, R>(58, 0.8, 2.0, 48000.0, {{R::vibratoDepth, 0.0}});
+        const double second = 10.0 * std::log10(powerAt(oboe, 1.0, 2.0, 48000.0, 2.0 * frequency(58)) /
+                                                powerAt(oboe, 1.0, 2.0, 48000.0, frequency(58)));
+        expect(even < -20.0 && second > -6.0, "the clarinet's 2nd harmonic is " + std::to_string(even) +
+                                                  " dB under its 3rd; the oboe's 2nd is " + std::to_string(second) + " dB re its 1st");
+    }
     pressureTests();
     std::printf("%s\n", failures ? "FAILED" : "all orchestra checks passed");
     return failures != 0;

@@ -21,8 +21,10 @@ set(PIANOCRAFT_ENGINE_SOURCES
     src/engine/FluteEngine.cpp
     src/engine/HarpEngine.cpp
     src/engine/HornEngine.cpp
+    src/engine/MonoWind.cpp
     src/engine/StringsEngine.cpp
     src/engine/PianoEngine.cpp
+    src/engine/ReedEngine.cpp
     src/engine/Soundboard.cpp
     src/engine/SympatheticBank.cpp
     src/model/InstrumentModel.cpp

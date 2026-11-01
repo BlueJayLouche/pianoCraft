@@ -39,6 +39,29 @@ double radiusFor(double t60, double sampleRate) {
     return std::exp(-ln1000 / (t60 * sampleRate));
 }
 
+// Partial n of a string at A4 = 440 Hz: its frequency (gut and nylon nearly harmonic, short treble
+// strings stiffer) and its T60 x Sustain Length. The wire-wound bass strings' own losses, a loss
+// factor eta (T60 = ln 1000 / (pi f eta)), fade out by C4 where gut takes over: the bass loses its
+// upper partials soonest.
+std::pair<double, double> partial(int stringKey, int n, double sustain) {
+    const double fundamental = 440.0 * std::pow(2.0, (stringKey - 69) / 12.0);
+    const double inharmonicity = 1.5e-5 * std::pow(2.0, (stringKey - 60) / 24.0);
+    const double eta = 2.0e-3 * std::clamp((60.0 - stringKey) / 20.0, 0.0, 1.0);
+    const double k = static_cast<double>(n);
+    const double frequency = k * fundamental * std::sqrt((1.0 + inharmonicity * k * k) / (1.0 + inharmonicity));
+    const double t60 = std::clamp(sustain / (1.0 / (5.0 * std::pow(frequency / 440.0, -0.7)) + pi * frequency * eta / ln1000), 0.08, 35.0);
+    return {frequency, t60};
+}
+
+// How well the board radiates a partial: weak below ~120 Hz, gently falling above 6 kHz.
+double radiation(double frequency) {
+    return (frequency / 120.0) / std::sqrt(1.0 + std::pow(frequency / 120.0, 2.0)) / std::sqrt(1.0 + std::pow(frequency / 6000.0, 2.0));
+}
+
+// Sympathetic coupling: a string partial in tune with a partial in the board's motion settles at
+// this share of it.
+constexpr double sympathy = 0.2;
+
 } // namespace
 
 HarpEngine::HarpEngine() {
@@ -52,6 +75,7 @@ HarpEngine::HarpEngine() {
     parameters_[index(HarpParameterId::bodyLevel)] = 1.0;
     parameters_[index(HarpParameterId::stereoWidth)] = 1.0;
     parameters_[index(HarpParameterId::masterTune)] = 440.0;
+    parameters_[index(HarpParameterId::sympatheticLevel)] = 1.0;
 }
 
 void HarpEngine::prepare(double sampleRate) {
@@ -65,6 +89,53 @@ void HarpEngine::prepare(double sampleRate) {
         body_[i].gain = bodyModes[i][2];
     }
     reset();
+    tuneSympathy();
+}
+
+// Every string rings in sympathy, its first partials tuned and damped as a plucked one.
+void HarpEngine::tuneSympathy() {
+    const double sustain = parameters_[index(HarpParameterId::sustainLength)];
+    const double tune = parameters_[index(HarpParameterId::masterTune)] / 440.0;
+    for (std::size_t s = 0; s < stringCount; ++s) {
+        auto& string = sympathy_[s];
+        string.count = 0;
+        for (int n = 1; n <= static_cast<int>(sympatheticPartials); ++n) {
+            const auto [frequency, t60] = partial(lowestString + static_cast<int>(s), n, sustain);
+            const double omega = 2.0 * pi * frequency * tune / sampleRate_;
+            if (omega > 0.9 * pi) {
+                break;
+            }
+            auto& mode = string.modes[string.count];
+            mode.frequency = frequency;
+            mode.radius = radiusFor(t60, sampleRate_);
+            mode.a1 = 2.0 * mode.radius * std::cos(omega);
+            mode.a2 = mode.radius * mode.radius;
+            // Normalised so the resonance's gain at its own frequency is `sympathy`.
+            string.drive[string.count] = sympathy * (1.0 - mode.radius) * 2.0 * std::sin(omega);
+            string.radiation[string.count++] = radiation(frequency);
+        }
+    }
+}
+
+// A harp has seven strings an octave, one per letter, set flat, natural or sharp by its pedals. A
+// note outside the setting moves a pedal: it takes the place of the neighbour (sharing its letter)
+// played least recently.
+void HarpEngine::setPedal(int pitchClass) {
+    const auto pc = static_cast<std::size_t>(pitchClass % 12);
+    pedalUsed_[pc] = ++clock_;
+    if (pedals_[pc]) {
+        return;
+    }
+    const std::size_t below = (pc + 11) % 12, above = (pc + 1) % 12;
+    std::size_t out = pedals_[below] && (!pedals_[above] || pedalUsed_[below] <= pedalUsed_[above]) ? below : above;
+    if (!pedals_[out]) {
+        // ponytail: neither neighbour sounds, so give up the least recently played pitch class.
+        for (std::size_t i = 0; i < 12; ++i) {
+            out = pedals_[i] && (!pedals_[out] || pedalUsed_[i] < pedalUsed_[out]) ? i : out;
+        }
+    }
+    pedals_[out] = false;
+    pedals_[pc] = true;
 }
 
 void HarpEngine::reset() {
@@ -78,6 +149,15 @@ void HarpEngine::reset() {
     sustain_ = {};
     expression_ = expressionTarget_ = 1.0;
     endedCount_ = 0;
+    for (auto& string : sympathy_) {
+        for (auto& mode : string.modes) {
+            mode.y1 = mode.y2 = 0.0;
+        }
+        string.level = 0.0;
+    }
+    pedals_ = {true, false, true, false, true, true, false, true, false, true, false, true}; // C major
+    pedalUsed_ = {};
+    clock_ = 0;
 }
 
 double HarpEngine::tuningFactor(std::int16_t channel) const {
@@ -119,13 +199,9 @@ void HarpEngine::pluck(Voice& voice, double velocity) {
     const bool harmonics = p[index(HarpParameterId::harmonics)] >= 0.5 && key - 12 >= lowestKey;
     const int stringKey = harmonics ? key - 12 : key;
     const double fundamental = 440.0 * std::pow(2.0, (stringKey - 69) / 12.0);
-    const double inharmonicity = 1.5e-5 * std::pow(2.0, (stringKey - 60) / 24.0);
     const double corner = 3000.0 * hardness * (0.55 + 0.65 * velocity) * (1.0 + 1.5 * table) * (harmonics ? 0.5 : 1.0);
     const double sustain = p[index(HarpParameterId::sustainLength)];
     const double limit = std::min(0.45 * sampleRate_, 14000.0);
-    // The wire-wound bass strings' own losses, a loss factor eta (T60 = ln 1000 / (pi f eta)), fading
-    // out by C4 where gut takes over: the bass loses its upper partials soonest.
-    const double eta = 2.0e-3 * std::clamp((60.0 - stringKey) / 20.0, 0.0, 1.0);
 
     std::array<Mode, modeLimit> modes{};
     std::array<double, modeLimit> amplitude{};
@@ -133,18 +209,14 @@ void HarpEngine::pluck(Voice& voice, double velocity) {
     double energy = 0.0;
     for (std::size_t n = 1; n <= partialLimit && count < modeLimit; ++n) {
         const double k = static_cast<double>(n);
-        const double frequency = k * fundamental * std::sqrt((1.0 + inharmonicity * k * k) / (1.0 + inharmonicity));
+        const auto [frequency, stringT60] = partial(stringKey, static_cast<int>(n), sustain);
         if (frequency > limit) {
             break;
         }
-        const double radiation = (frequency / 120.0) / std::sqrt(1.0 + std::pow(frequency / 120.0, 2.0)) /
-                                 std::sqrt(1.0 + std::pow(frequency / 6000.0, 2.0));
-        double a = std::sin(k * pi * beta) / k / (1.0 + std::pow(frequency / corner, 2.0)) * radiation;
+        double a = std::sin(k * pi * beta) / k / (1.0 + std::pow(frequency / corner, 2.0)) * radiation(frequency);
         const bool touched = harmonics && n % 2 == 1;
         // The touched string's odd partials only tick before the palm stops them.
-        const double t60 = touched ? 0.05
-                                   : std::clamp(sustain / (1.0 / (5.0 * std::pow(frequency / 440.0, -0.7)) + pi * frequency * eta / ln1000),
-                                                0.08, 35.0);
+        const double t60 = touched ? 0.05 : stringT60;
         if (n == 1) {
             // A hard pluck stretches a low string: up to 8 cents sharp, settling as its swing (squared) dies.
             voice.glideCents = 8.0 * velocity * velocity * std::clamp((76.0 - stringKey) / 36.0, 0.0, 1.0);
@@ -177,6 +249,14 @@ void HarpEngine::pluck(Voice& voice, double velocity) {
     voice.modes = modes;
     voice.modeCount = count;
     voice.damped = false;
+    voice.stringKey = stringKey;
+    if (stringKey >= lowestString && stringKey < lowestString + static_cast<int>(stringCount)) {
+        auto& string = sympathy_[static_cast<std::size_t>(stringKey - lowestString)]; // the finger takes it
+        for (auto& mode : string.modes) {
+            mode.y1 = mode.y2 = 0.0;
+        }
+        string.level = 0.0;
+    }
     retune(voice);
     const double factor = tuningFactor(voice.address.channel) * std::pow(2.0, voice.glideCents / 1200.0);
     double load = 0.0;
@@ -251,6 +331,7 @@ void HarpEngine::noteOn(const NoteAddress& address, double velocity) {
     voice->pan = 0.5;
     voice->brightnessModulation = voice->positionModulation = voice->timbre = 0.0;
     voice->pendingVelocity = std::clamp(velocity, 0.0, 1.0);
+    setPedal(address.key);
 }
 
 void HarpEngine::noteOff(const NoteAddress& address, double) {
@@ -307,6 +388,9 @@ void HarpEngine::setParameter(HarpParameterId id, double value) {
         return;
     }
     parameters_[i] = value;
+    if (id == HarpParameterId::masterTune || id == HarpParameterId::sustainLength) {
+        tuneSympathy();
+    }
     if (id == HarpParameterId::masterTune) {
         for (auto& voice : voices_) {
             if (voice.active && voice.pendingVelocity < 0.0) {
@@ -391,9 +475,28 @@ void HarpEngine::render(float* left, float* right, std::uint32_t frameCount) {
             retune(voice); // the tension glide, block by block
         }
         const double spread = std::clamp((voice.address.key - 63) / 40.0, -1.0, 1.0) * 0.35 * width;
-        const double angle = std::clamp(0.5 + spread + (voice.pan - 0.5), 0.0, 1.0) * 0.5 * pi;
-        gainLeft[v] = std::cos(angle);
-        gainRight[v] = std::sin(angle);
+        const double place = std::clamp(0.5 + spread + (voice.pan - 0.5), 0.0, 1.0);
+        // cos on both sides, so the centre is equal to the bit (Stereo Width 0 is exact mono).
+        gainLeft[v] = std::cos(place * 0.5 * pi);
+        gainRight[v] = std::cos((1.0 - place) * 0.5 * pi);
+    }
+    // The sympathetic strings: placed as the plucked ones; driven unless the pedals don't sound them
+    // or that string is the one being played.
+    const double sympatheticLevel = std::max(parameters_[index(HarpParameterId::sympatheticLevel)], 0.0);
+    std::array<bool, stringCount> driven{};
+    std::array<double, stringCount> stringLeft{};
+    std::array<double, stringCount> stringRight{};
+    for (std::size_t s = 0; s < stringCount; ++s) {
+        const int key = lowestString + static_cast<int>(s);
+        driven[s] = sympatheticLevel > 0.0 && pedals_[static_cast<std::size_t>(key % 12)];
+        const double place = 0.5 + std::clamp((key - 63) / 40.0, -1.0, 1.0) * 0.35 * width;
+        stringLeft[s] = std::cos(place * 0.5 * pi) * sympatheticLevel;
+        stringRight[s] = std::cos((1.0 - place) * 0.5 * pi) * sympatheticLevel;
+    }
+    for (const auto& voice : voices_) {
+        if (voice.active && voice.stringKey >= lowestString && voice.stringKey < lowestString + static_cast<int>(stringCount)) {
+            driven[static_cast<std::size_t>(voice.stringKey - lowestString)] = false;
+        }
     }
     const double glide = 100.0 / sampleRate_;
     const double release = 0.05 * sampleRate_;
@@ -428,6 +531,30 @@ void HarpEngine::render(float* left, float* right, std::uint32_t frameCount) {
                 voice = Voice{};
             }
         }
+        // The board's motion drives every undamped string; each resonates where a partial lands on
+        // its own (octaves, fifths, a third's 5th partial a little off), and radiates through the
+        // board in turn.
+        double ringing = 0.0;
+        for (std::size_t s = 0; s < stringCount; ++s) {
+            auto& string = sympathy_[s];
+            if (!driven[s] && string.level < 1.0e-7) {
+                continue;
+            }
+            const double input = driven[s] ? mono : 0.0;
+            double y = 0.0;
+            for (std::size_t n = 0; n < string.count; ++n) {
+                auto& mode = string.modes[n];
+                const double v = mode.a1 * mode.y1 - mode.a2 * mode.y2 + string.drive[n] * input;
+                mode.y2 = mode.y1;
+                mode.y1 = std::abs(v) < 1.0e-30 ? 0.0 : v;
+                y += v * string.radiation[n];
+            }
+            string.level = std::max(std::abs(y), string.level * 0.9995);
+            sumLeft += y * stringLeft[s];
+            sumRight += y * stringRight[s];
+            ringing += y;
+        }
+        mono += ringing * sympatheticLevel;
         double box = 0.0;
         for (auto& mode : body_) {
             box += mode.gain * biquad(mode.coefficients, mode.state, mono);
