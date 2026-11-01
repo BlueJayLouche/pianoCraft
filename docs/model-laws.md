@@ -48,7 +48,7 @@ Status column:
 | Velocity gain law keeps 0.2 of its slope above mf | `PianoEngine.cpp` | Selected | From mf to ff the recordings rise 4.5 dB and the full law gave 10.1 dB. Velocity span L1-L4, model minus recordings: +6.2 -> -0.8 dB. |
 | Velocity treble shelf above 1 kHz: 8 dB per velocity doubling above mf, 20 dB per halving below | `PianoEngine.cpp` | Selected | Rauhala-Välimäki excitation-filter fallback, re-selected under the reference-floor gate. Below mf, 8 / 14 / 20 / 24 / 28 dB gave layers 1/3/4 spectrum error 6.53 / 6.28 / 6.17 / 6.17 / 6.20 dB and L1 brightness +5.2 / +1.7 / 0.0 / -0.2 / -0.1 dB. One slope both ways can't do it: 12 or 16 brightened ff (L4 +1.3, +3.0 dB). |
 | Bridge high-pass at 0.7 f0, radiated path only | `InstrumentModel.cpp` | Selected | Low-frequency share of the first ms of the attack. Onset overshoot mean -0.7 dB, max +4.5 dB. |
-| Hammer knock 0.05 x force into the soundboard, through the velocity shelf | `PianoEngine.cpp` | Selected | Between-partial energy 20-100 ms, layer 3: +0.5 dB re the recordings (0.04 gave -1.2, 0.06 +1.2). Unshelved, it gave pp attacks their bright click: attack 2-8 kHz share L1 +17.6 -> +0.9 dB. Also scaling it by the velocity gain law evened its level error across layers (L1/L4 +3.1/-1.4 -> -1.8/-0.5 dB) but left pp 5 dB too quiet (velocity span +4.8 dB), so it doesn't. |
+| Hammer knock 0.05 x force into the soundboard, through the velocity shelf and two poles at 16 f0 | `PianoEngine.cpp` | Selected | Between-partial energy 20-100 ms, layer 3: +0.4 dB re the recordings (0.04 gave -1.2, 0.06 +1.2). Unshelved, it gave pp attacks their bright click: attack 2-8 kHz share L1 +17.6 -> +0.9 dB. Unfiltered, it was most of C2's and C3's attack excess at every velocity, while C5 and C6 need its treble. A fixed corner darkened the treble's pp attacks too; 8 f0 one pole / 8 f0 two / 16 f0 two / 32 f0 two gave attack share L1-L4 means -3.6..+4.1 / -5.8..+2.3 / -3.7..+3.4 / -0.8..+6.2 dB, and 16 f0 left C3 and C4 within 2.3 dB of the recordings at every layer. Also scaling it by the velocity gain law evened its level error across layers (L1/L4 +3.1/-1.4 -> -1.8/-0.5 dB) but left pp 5 dB too quiet (velocity span +4.8 dB), so it doesn't. |
 | Output high-pass, 3 x one-pole at 100 Hz | `PianoEngine.cpp` | Selected | Bass octave bands; low fundamentals 4-8 dB closer, C2 still ~16 dB strong. |
 | Partial extension to 4 kHz along measured inharmonicity | `InstrumentModel.cpp` | Selected | Energy above the 32nd partial, A0-E2: within ~3 dB on average. |
 | Soundboard: ~70 shared modes, Q 40 | `Soundboard.cpp` | Selected | Between-partial energy 20-300 ms. Q 80 matched averages but rang metallically per note (by ear). |
@@ -101,16 +101,18 @@ the current build reads:
 | Spectrum error, layers 1/3/4 | 6.53 dB | 6.16 dB |
 | Spectrum error, layer 2 | 6.22 dB | 5.77 dB |
 | 1-8 kHz brightness L1 / L2 / L3 / L4 | +5.2 / +6.0 / +1.9 / -0.4 dB | +0.1 / +2.7 / +1.9 / -0.4 dB |
-| Attack 2-8 kHz share L1 / L2 / L3 / L4 | +17.6 / +13.6 / +8.2 / +3.9 dB | +0.9 / +6.7 / +8.2 / +6.2 dB |
+| Attack 2-8 kHz share L1 / L2 / L3 / L4 | +17.6 / +13.6 / +8.2 / +3.9 dB | -3.7 / +1.9 / +3.4 / +1.5 dB |
 | Velocity span L1-L4 | -0.8 dB | +0.4 dB |
-| Onset overshoot mean / max | -0.7 / +4.5 dB | -1.1 / +6.1 dB (C2 ff) |
+| Onset overshoot mean / max | -0.7 / +4.5 dB | -1.7 / +1.6 dB |
 
 So the high end was not missing: soft notes were too bright, in two ways. The velocity shelf cut
 too little below mf, and the knock skipped it, so a pp note began with an ff note's click. The
+knock was also too bright in the bass at every velocity. The
 attack metric (2 ms before to 10 ms after onset, re the attack's own energy) found the click: the
 others start 10 ms in. In the recordings ff carries 13 / 19 / 13 / 20 dB more of its 0-400 ms
 energy in 2-8 kHz than pp at C2 / C3 / C4 / C5. The model carried 5 / 0 / 1 / 6 dB more and now
-carries 25 / 20 / 21 / 18 dB more. The metrics not in this table are unchanged.
+carried 25 / 20 / 21 / 18 dB more before the knock's low-pass. Key level std and sustain error moved
+by 0.01 and 0.05 dB; the metrics not in this table are otherwise unchanged.
 
 Tried and not kept: a hammer contact patch of fixed length (Gaussian, 1.5-4 mm) instead of the
 per-partial-number roll-off, partials extended to 8-10 kHz, and the bridge corner re-selected
@@ -120,6 +122,9 @@ per-partial-number roll-off, partials extended to 8-10 kHz, and the bridge corne
 fell below the engine test's 3 dB.
 
 The largest remaining errors are four. The top octave plays about 9 dB loud. G#7's and C5's
-sustain is off. Bass and mid notes are missing energy above 4-8 kHz. The bass attack is too bright
-at every velocity (C2's 2-8 kHz attack share +22 dB at mf, +24 dB at ff), which is why C2's ff
-overshoot and ff-over-pp contrast now run high.
+sustain is off. Bass and mid notes are missing energy above 4-8 kHz. The bass's strings are too
+bright at 2-4 kHz, F#1-F#2 by 7-14 dB through the whole note (C2 +14 dB), while above 4 kHz,
+where the partial series stops, they are short. C2's attack is still 7-13 dB bright for that
+reason, not the knock. The recordings' own C2 is 20 dB darker at 2-4 kHz than their C3; the model
+has nothing that changes between the two (one string length below D3, no wound-string model), so
+this wants a second piano's evidence before it is fitted.

@@ -77,6 +77,8 @@ struct Voice {
     std::array<double, 5> velocityShelf{1.0, 0.0, 0.0, 0.0, 0.0};
     std::array<double, 8> shelfState{};
     std::array<double, 4> knockState{};
+    std::array<double, 2> knockLow{};
+    double knockLowpass = 1.0;
     // Per-note CLAP modulation and expressions.
     double hardnessModulation = 0.0;
     double brightness = 0.0; // Timbre's share of the hardness offset
@@ -117,6 +119,8 @@ struct Voice {
         velocityShelf = {1.0, 0.0, 0.0, 0.0, 0.0};
         shelfState = {};
         knockState = {};
+        knockLow = {};
+        knockLowpass = 1.0;
         neutralExpressions();
         volume = 1.0;
         panLeft = 1.0;
@@ -331,6 +335,9 @@ struct PianoEngine::Impl {
             std::pow(hammerSpeed(velocity) / hammerSpeed(referenceVelocity), dynamics - 1.0) *
             voice.key->outputGain * voice.key->wearGain;
         voice.knockGain = std::pow(hammerSpeed(velocity) / hammerSpeed(referenceVelocity), dynamics - 1.0);
+        // A heavy bass hammer thumps the board low and a light treble one clicks: two poles at 16 f0.
+        voice.knockLowpass =
+            1.0 - std::exp(-2.0 * 3.141592653589793 * std::min(16.0 * voice.key->fundamental, 0.45 * sampleRate) / sampleRate);
         voice.hammer.position = voice.displacement - 0.004;
         voice.hammer.velocity = hammerSpeed(velocity);
         voice.hammer.mass = voice.key->hammerMass;
@@ -498,9 +505,11 @@ struct PianoEngine::Impl {
             std::clamp(parameters[noiseIndex] + modulation[noiseIndex] + voice.noiseModulation, 0.0, 2.0);
         const double knock = biquad(voice.velocityShelf, voice.knockState.data(),
                                     force * voice.knockGain * voice.chokeGain * voice.volume * 0.05 * noise);
+        voice.knockLow[0] += voice.knockLowpass * (knock - voice.knockLow[0]);
+        voice.knockLow[1] += voice.knockLowpass * (voice.knockLow[0] - voice.knockLow[1]);
         const double radiatedLeft = radiated(voice, bridge, 0) * gain;
         const VoiceSample sample{radiatedLeft * voice.panLeft, radiated(voice, bridgeRight, 1) * gain * voice.panRight,
-                                 radiatedLeft * 0.5 * (voice.panLeft + voice.panRight), bridge * gain, knock};
+                                 radiatedLeft * 0.5 * (voice.panLeft + voice.panRight), bridge * gain, voice.knockLow[1]};
         voice.level = std::max({std::abs(sample.left), std::abs(sample.right), voice.level * 0.99995});
         if (!voice.hammer.active && voice.level < 1.0e-8 && voice.age > sampleRate) {
             voice.active = false;
