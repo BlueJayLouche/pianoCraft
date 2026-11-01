@@ -90,3 +90,6 @@ endif()
 install(TARGETS pianocraft
     DESTINATION "$ENV{HOME}/Library/Audio/Plug-Ins/CLAP"
 )
+# Bitwig rescans a bundle's plugins and presets only when Contents/Info.plist's date changes, and
+# install skips that file while its contents are unchanged.
+install(CODE "execute_process(COMMAND touch \"$ENV{HOME}/Library/Audio/Plug-Ins/CLAP/PianoCraft.clap/Contents/Info.plist\")")
