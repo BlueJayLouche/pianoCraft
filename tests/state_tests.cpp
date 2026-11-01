@@ -7,6 +7,7 @@
 #include <cstring>
 #include <cstdint>
 #include <algorithm>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -39,17 +40,17 @@ static std::vector<uint8_t> blob(std::vector<std::pair<uint32_t,double>> recs, b
     if (trailing) v.push_back(0); return v;
 }
 // Preset discovery: a stand-in indexer and metadata receiver record what the provider declares.
-struct Discovered { int locations = 0; uint32_t kind = 99; std::vector<std::string> keys; bool forThisPlugin = true; };
+struct Discovered { int locations = 0; uint32_t kind = 99; std::string path; std::vector<std::string> names; bool keyed = false; bool forThisPlugin = true; };
 static Discovered discovered;
 static bool declareFiletype(const clap_preset_discovery_indexer_t*, const clap_preset_discovery_filetype_t*) { return true; }
 static bool declareLocation(const clap_preset_discovery_indexer_t*, const clap_preset_discovery_location_t* l) {
-    ++discovered.locations; discovered.kind = l->kind; return true;
+    ++discovered.locations; discovered.kind = l->kind; discovered.path = l->location ? l->location : ""; return true;
 }
 static bool declareSoundpack(const clap_preset_discovery_indexer_t*, const clap_preset_discovery_soundpack_t*) { return true; }
 static const void* indexerExtension(const clap_preset_discovery_indexer_t*, const char*) { return nullptr; }
 static void onError(const clap_preset_discovery_metadata_receiver_t*, int32_t, const char*) {}
-static bool beginPreset(const clap_preset_discovery_metadata_receiver_t*, const char*, const char* key) {
-    discovered.keys.push_back(key); return true;
+static bool beginPreset(const clap_preset_discovery_metadata_receiver_t*, const char* name, const char* key) {
+    discovered.names.push_back(name); discovered.keyed = discovered.keyed || key != nullptr; return true;
 }
 static void addPluginId(const clap_preset_discovery_metadata_receiver_t*, const clap_universal_plugin_id_t* id) {
     discovered.forThisPlugin = discovered.forThisPlugin && std::strcmp(id->abi, "clap") == 0 &&
@@ -61,10 +62,10 @@ static void setTimestamps(const clap_preset_discovery_metadata_receiver_t*, clap
 static void addExtraInfo(const clap_preset_discovery_metadata_receiver_t*, const char*, const char*) {}
 
 int main(int argc, char** argv) {
-    if (argc < 2) { std::printf("usage: pianocraft-state-tests <plugin binary>\n"); return 2; }
+    if (argc < 3) { std::printf("usage: pianocraft-state-tests <plugin binary> <plugin bundle>\n"); return 2; }
     void* lib = dlopen(argv[1], RTLD_NOW); if (!lib) { std::printf("dlopen failed: %s\n", dlerror()); return 1; }
     auto* entry = static_cast<const clap_plugin_entry_t*>(dlsym(lib, "clap_entry"));
-    entry->init(argv[1]);
+    entry->init(argv[2]);
     auto* factory = static_cast<const clap_plugin_factory_t*>(entry->get_factory(CLAP_PLUGIN_FACTORY_ID));
     clap_host_t host{CLAP_VERSION, nullptr, "harness", "", "", "1", hostExt, noop, noop, noop};
     auto* plugin = factory->create_plugin(factory, &host, factory->get_plugin_descriptor(factory, 0)->id);
@@ -97,26 +98,33 @@ int main(int argc, char** argv) {
     auto* voices = static_cast<const clap_plugin_voice_info_t*>(plugin->get_extension(plugin, CLAP_EXT_VOICE_INFO));
     clap_voice_info_t voiceInfo{};
     check(voices != nullptr && voices->get(plugin, &voiceInfo) && voiceInfo.voice_capacity == 96, "voice info reports 96 voices");
-    // Built-in presets are discoverable and load by key.
+    // Built-in presets are discoverable as marker files in the bundle and load by file.
     auto* discovery = static_cast<const clap_preset_discovery_factory_t*>(entry->get_factory(CLAP_PRESET_DISCOVERY_FACTORY_ID));
     check(discovery != nullptr && discovery->count(discovery) == 1, "preset discovery has one provider");
     clap_preset_discovery_indexer_t indexer{CLAP_VERSION, "harness", "", "", "1", nullptr,
                                             declareFiletype, declareLocation, declareSoundpack, indexerExtension};
     auto* provider = discovery->create(discovery, &indexer, discovery->get_descriptor(discovery, 0)->id);
     check(provider != nullptr && provider->init(provider) && discovered.locations == 1 &&
-          discovered.kind == CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, "provider declares its internal presets");
+          discovered.kind == CLAP_PRESET_DISCOVERY_LOCATION_FILE && std::filesystem::is_directory(discovered.path),
+          "provider declares the bundle's preset folder");
     clap_preset_discovery_metadata_receiver_t receiver{nullptr, onError, beginPreset, addPluginId, setText, setFlags,
                                                        setText, setText, setTimestamps, setText, addExtraInfo};
-    check(provider->get_metadata(provider, CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, nullptr, &receiver) &&
-          discovered.keys.size() == 4 && discovered.forThisPlugin, "four presets listed for this plugin");
+    bool everyFileRead = true;
+    for (const auto& file : std::filesystem::directory_iterator(discovered.path)) {
+        everyFileRead = everyFileRead && provider->get_metadata(provider, CLAP_PRESET_DISCOVERY_LOCATION_FILE,
+                                                                file.path().c_str(), &receiver);
+    }
+    check(everyFileRead && discovered.names.size() == 4 && !discovered.keyed && discovered.forThisPlugin,
+          "four preset files, one unkeyed preset each, for this plugin");
     provider->destroy(provider);
     auto* presetLoad = static_cast<const clap_plugin_preset_load_t*>(plugin->get_extension(plugin, CLAP_EXT_PRESET_LOAD));
-    check(presetLoad != nullptr && presetLoad->from_location(plugin, CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, nullptr, "most-worn-mono") &&
+    auto loadPreset = [&](const char* file) {
+        return presetLoad->from_location(plugin, CLAP_PRESET_DISCOVERY_LOCATION_FILE, (discovered.path + file).c_str(), nullptr);
+    };
+    check(presetLoad != nullptr && loadPreset("/most-worn-mono.pianocraft") &&
           value(16) == 1.0 && value(6) == 0.0 && value(1) == 0.7 && value(2) == 1.0, "Most Worn (Mono) loads over defaults");
-    check(presetLoad->from_location(plugin, CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, nullptr, "calibrated") &&
-          value(16) == 0.0 && value(6) == 1.0, "Calibrated Upright restores defaults");
-    check(!presetLoad->from_location(plugin, CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, nullptr, "no-such-preset"),
-          "unknown preset rejected");
+    check(loadPreset("/calibrated.pianocraft") && value(16) == 0.0 && value(6) == 1.0, "Calibrated Upright restores defaults");
+    check(!loadPreset("/no-such-preset.pianocraft") && !loadPreset("/calibrated.pianocraft.bak"), "unknown preset rejected");
     // Current state round-trips.
     check(load(blob({{1, 0.5}, {2, 1.0}, {3, 0.35}, {4, 1.0}, {5, 2.0}, {6, 0.4}})), "6-parameter state loads");
     Buffer out; clap_ostream_t os{&out, writeFn}; state->save(plugin, &os);

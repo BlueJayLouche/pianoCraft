@@ -28,6 +28,9 @@ add_library(pianocraft MODULE
     src/host/ClapHost.cpp
     ${PIANOCRAFT_ENGINE_SOURCES}
 )
+file(GLOB PIANOCRAFT_PRESETS CONFIGURE_DEPENDS resources/presets/*.pianocraft)
+target_sources(pianocraft PRIVATE ${PIANOCRAFT_PRESETS})
+set_source_files_properties(${PIANOCRAFT_PRESETS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/Presets)
 target_link_libraries(pianocraft PRIVATE clap)
 target_include_directories(pianocraft PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 set_target_properties(pianocraft PROPERTIES
@@ -81,7 +84,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/state_tests.cpp")
     add_executable(pianocraft-state-tests tests/state_tests.cpp)
     target_link_libraries(pianocraft-state-tests PRIVATE clap)
     add_dependencies(pianocraft-state-tests pianocraft)
-    add_test(NAME pianocraft-state-tests COMMAND pianocraft-state-tests $<TARGET_FILE:pianocraft>)
+    add_test(NAME pianocraft-state-tests COMMAND pianocraft-state-tests $<TARGET_FILE:pianocraft> $<TARGET_BUNDLE_DIR:pianocraft>)
 endif()
 
 install(TARGETS pianocraft

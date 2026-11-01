@@ -14,6 +14,7 @@
 #include <cstring>
 #include <limits>
 #include <new>
+#include <string>
 #include <type_traits>
 #include <utility>
 
@@ -84,6 +85,8 @@ constexpr std::array<RemotePage, 2> remotePages{{
 
 // Built-in voicings for Bitwig's browser (CLAP preset discovery): every parameter at its default
 // except those listed. The Old House score bounces mono, so its wear stages use Stereo Width 0.
+// Bitwig lists preset files, not presets held inside the plugin, so each one ships as a marker file
+// <loadKey>.pianocraft in the bundle's Resources/Presets; the values stay here.
 struct Preset {
     const char* name;
     const char* loadKey;
@@ -101,6 +104,25 @@ constexpr std::array<Preset, 4> presets{{
     {"Most Worn (Mono)", "most-worn-mono", "Age 1, mono-safe for a single emitter",
      {{{ParameterId::stereoWidth, 0.0}, {ParameterId::age, 1.0}}}},
 }};
+
+// Set once in entryInit: the folder of preset marker files inside this bundle.
+std::string presetDirectory;
+
+const Preset* findPreset(std::uint32_t locationKind, const char* location) noexcept
+{
+    if (locationKind != CLAP_PRESET_DISCOVERY_LOCATION_FILE || location == nullptr) {
+        return nullptr;
+    }
+    const char* slash = std::strrchr(location, '/');
+    const char* file = slash != nullptr ? slash + 1 : location;
+    for (const auto& preset : presets) {
+        const std::size_t length = std::strlen(preset.loadKey);
+        if (std::strncmp(file, preset.loadKey, length) == 0 && std::strcmp(file + length, ".pianocraft") == 0) {
+            return &preset;
+        }
+    }
+    return nullptr;
+}
 
 constexpr std::size_t invalidParameterIndex = parameterSpecs.size();
 constexpr std::size_t stateSize = 12 + parameterSpecs.size() * 12;
@@ -750,16 +772,13 @@ private:
                            const char* loadKey) noexcept
     {
         auto& adapter = self(plugin);
-        const auto* preset = locationKind == CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN && loadKey != nullptr
-            ? std::find_if(presets.begin(), presets.end(),
-                           [loadKey](const Preset& p) { return std::strcmp(p.loadKey, loadKey) == 0; })
-            : presets.end();
+        const Preset* preset = findPreset(locationKind, location);
         const clap_host_preset_load_t* hostPresets = nullptr;
         if (adapter.host_ != nullptr && adapter.host_->get_extension != nullptr) {
             hostPresets = static_cast<const clap_host_preset_load_t*>(
                 adapter.host_->get_extension(adapter.host_, CLAP_EXT_PRESET_LOAD));
         }
-        if (preset == presets.end()) {
+        if (preset == nullptr) {
             if (hostPresets != nullptr && hostPresets->on_error != nullptr) {
                 hostPresets->on_error(adapter.host_, locationKind, location, loadKey, 0, "Unknown PianoCraft preset");
             }
@@ -973,7 +992,7 @@ const clap_plugin_factory_t pluginFactory = {
     &createPlugin,
 };
 
-// Preset discovery: one provider whose presets live inside the plugin, loaded by key.
+// Preset discovery: one provider, one folder of marker files in the bundle, one preset per file.
 const clap_preset_discovery_provider_descriptor_t presetProviderDescriptor = {
     CLAP_VERSION_INIT,
     "com.pianocraft.upright.presets",
@@ -984,9 +1003,10 @@ const clap_preset_discovery_provider_descriptor_t presetProviderDescriptor = {
 bool presetProviderInit(const clap_preset_discovery_provider_t* provider) noexcept
 {
     const auto* indexer = static_cast<const clap_preset_discovery_indexer_t*>(provider->provider_data);
-    const clap_preset_discovery_location_t location{
-        CLAP_PRESET_DISCOVERY_IS_FACTORY_CONTENT, "PianoCraft", CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, nullptr};
-    return indexer->declare_location(indexer, &location);
+    const clap_preset_discovery_filetype_t filetype{"PianoCraft preset", "A built-in PianoCraft voicing", "pianocraft"};
+    const clap_preset_discovery_location_t location{CLAP_PRESET_DISCOVERY_IS_FACTORY_CONTENT, "PianoCraft",
+                                                    CLAP_PRESET_DISCOVERY_LOCATION_FILE, presetDirectory.c_str()};
+    return indexer->declare_filetype(indexer, &filetype) && indexer->declare_location(indexer, &location);
 }
 
 void presetProviderDestroy(const clap_preset_discovery_provider_t* provider) noexcept
@@ -994,20 +1014,18 @@ void presetProviderDestroy(const clap_preset_discovery_provider_t* provider) noe
     delete provider;
 }
 
-bool presetProviderGetMetadata(const clap_preset_discovery_provider_t*, std::uint32_t locationKind, const char*,
-                               const clap_preset_discovery_metadata_receiver_t* receiver) noexcept
+bool presetProviderGetMetadata(const clap_preset_discovery_provider_t*, std::uint32_t locationKind,
+                               const char* location, const clap_preset_discovery_metadata_receiver_t* receiver) noexcept
 {
-    if (locationKind != CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN || receiver == nullptr) {
+    const Preset* preset = findPreset(locationKind, location);
+    if (preset == nullptr || receiver == nullptr) {
         return false;
     }
     const clap_universal_plugin_id_t pluginId{"clap", "com.pianocraft.upright"};
-    for (const auto& preset : presets) {
-        if (!receiver->begin_preset(receiver, preset.name, preset.loadKey)) {
-            break;
-        }
+    if (receiver->begin_preset(receiver, preset->name, nullptr)) {
         receiver->add_plugin_id(receiver, &pluginId);
         receiver->set_flags(receiver, CLAP_PRESET_DISCOVERY_IS_FACTORY_CONTENT);
-        receiver->set_description(receiver, preset.description);
+        receiver->set_description(receiver, preset->description);
     }
     return true;
 }
@@ -1046,8 +1064,13 @@ const clap_preset_discovery_factory_t presetDiscoveryFactory = {
     &presetProviderCreate,
 };
 
-bool entryInit(const char*) noexcept
+bool entryInit(const char* pluginPath) noexcept
 {
+    try {
+        presetDirectory = std::string(pluginPath != nullptr ? pluginPath : "") + "/Contents/Resources/Presets";
+    } catch (...) {
+        return false;
+    }
     return true;
 }
 

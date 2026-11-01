@@ -38,13 +38,9 @@ bundle. The release archive is verified against its published SHA-256 digest.
 
 ```sh
 python3 tools/fetch_validator.py
-build/tools/clap-validator-0.4.1/clap-validator validate build/PianoCraft.clap --only-failed -x "preset-discovery-(crawl|load)"
+build/tools/clap-validator-0.4.1/clap-validator validate build/PianoCraft.clap --only-failed
 build/tools/clap-validator-0.4.1/clap-validator fuzz -j2 -d30s build/PianoCraft.clap
 ```
-
-The two excluded tests hang in validator 0.4.1 on any plugin with more than one built-in
-preset: its metadata receiver locks its own mutex twice (fix pending upstream,
-free-audio/clap-validator#41). `pianocraft-state-tests` crawls and loads the presets instead.
 
 ## Install for Bitwig
 
@@ -79,7 +75,9 @@ between 0 and 1 crossfade to the microphone pair.
 
 Bitwig's preset browser lists four built-in voicings: Calibrated Upright
 (stereo) and, for mono bounces, Whole, Lightly Worn (Age 0.3) and Most Worn
-(Age 1). Save your own as Bitwig presets.
+(Age 1). They ship as marker files in the bundle's `Contents/Resources/Presets`,
+because Bitwig lists preset files, not presets held inside a plugin; the values
+live in `src/host/ClapHost.cpp`. Save your own as Bitwig presets.
 
 The recorded piano sat at A4 = 439.02 Hz; Master Tune puts A4 exactly where it
 says, so the default plays 3.9 cents above the recordings.
