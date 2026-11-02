@@ -17,10 +17,10 @@ inline double phaseDelay(double b0, double b1, double a, double omega) {
     return -(numerator - denominator) / omega;
 }
 
-// RBJ biquads {b0, b1, b2, a1, a2}: Butterworth high- or low-pass at corner (Hz), and a band-pass
-// with unit peak gain.
-inline std::array<double, 5> butterworth(bool highpass, double corner, double fs) {
-    const double w = 2.0 * pi * corner / fs, c = std::cos(w), alpha = std::sin(w) / std::sqrt(2.0), a0 = 1.0 + alpha;
+// RBJ biquads {b0, b1, b2, a1, a2}: Butterworth high- or low-pass at corner (Hz) (another Q makes
+// the second-order section of a higher-order Butterworth), and a band-pass with unit peak gain.
+inline std::array<double, 5> butterworth(bool highpass, double corner, double fs, double q = 0.7071067811865476) {
+    const double w = 2.0 * pi * std::min(corner, 0.45 * fs) / fs, c = std::cos(w), alpha = std::sin(w) / (2.0 * q), a0 = 1.0 + alpha;
     const double b0 = (highpass ? 1.0 + c : 1.0 - c) / 2.0;
     return {b0 / a0, (highpass ? -2.0 : 2.0) * b0 / a0, b0 / a0, -2.0 * c / a0, (1.0 - alpha) / a0};
 }
@@ -59,5 +59,45 @@ double lagrange(const T* line, std::size_t mask, std::size_t write, double delay
     const double ym1 = line[(base - 1) & mask], y0 = line[base & mask], y1 = line[(base + 1) & mask], y2 = line[(base + 2) & mask];
     return y0 + d * (0.5 * (y1 - ym1) + d * (ym1 - 2.5 * y0 + 2.0 * y1 - 0.5 * y2 + d * (1.5 * (y0 - y1) + 0.5 * (y2 - ym1))));
 }
+
+// A fitted output stage (tools/iowa_calibration.py): a Butterworth high-pass of order 1 to 3 (0: none)
+// at `highpass` Hz, three one-pole low-passes at tone x (1 + bloom breath^3) x (f0 / C3)^track Hz
+// (tone 0: none), and a gain.
+struct Voicing {
+    int order;
+    double highpass, tone, bloom, track, gain;
+};
+
+class VoicingStage {
+public:
+    void block(const Voicing& v, double breath, double f0, double fs) {
+        rate_ = 1.0 - std::exp(-2.0 * pi * v.highpass / fs);
+        section_ = butterworth(true, v.highpass, fs, v.order == 3 ? 1.0 : 0.7071067811865476);
+        const double corner = v.tone * (1.0 + v.bloom * breath * breath * breath) * std::pow(f0 / 130.81, v.track);
+        lp_ = v.tone > 0.0 ? 1.0 - std::exp(-2.0 * pi * std::min(corner, 0.4 * fs) / fs) : 1.0;
+        order_ = v.order;
+        gain_ = v.gain;
+    }
+    double process(double x) {
+        if (order_ == 1 || order_ == 3) {
+            s_[0] += rate_ * (x - s_[0]);
+            x -= s_[0];
+        }
+        if (order_ >= 2) {
+            x = biquad(section_, x, s_[1], s_[2]);
+        }
+        for (std::size_t i = 3; i < 6; ++i) {
+            x = s_[i] += lp_ * (x - s_[i]);
+        }
+        return gain_ * x;
+    }
+    void reset() { s_ = {}; }
+
+private:
+    std::array<double, 5> section_{};
+    std::array<double, 6> s_{};
+    double rate_ = 0.0, lp_ = 1.0, gain_ = 1.0;
+    int order_ = 0;
+};
 
 } // namespace pianocraft::filters

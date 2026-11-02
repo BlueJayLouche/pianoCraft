@@ -26,6 +26,7 @@ ctest --test-dir build --output-on-failure
 ./build/pianocraft-render-voice flute renders/flute-a4.wav 69 0.7 4 3.5 cc1=0.6
 ./build/pianocraft-render-voice strings renders/strings-a4.wav 69 0.7 4 3.5 cc1=0.6
 ./build/pianocraft-render-voice horn renders/horn-c4.wav 60 0.7 4 3.5 cc1=0.6
+./build/pianocraft-render-voice trumpet renders/trumpet-g4.wav 67 0.7 4 3.5 cc1=0.6
 ./build/pianocraft-render-voice oboe renders/oboe-a4.wav 69 0.7 4 3.5 cc1=0.6
 ./build/pianocraft-benchmark
 ```
@@ -86,15 +87,16 @@ Bitwig's preset browser lists four built-in voicings: Calibrated Upright
 because Bitwig lists preset files, not presets held inside a plugin; the values
 live in `src/host/ClapHost.cpp`. Save your own as Bitwig presets.
 
-## Harp, flute, oboe, clarinet, strings and horn
+## Harp, flute, oboe, clarinet, strings and brass
 
 The bundle also holds PianoCraft Harp, Flute, Oboe, Clarinet, Strings and Horn, for the final act of
-*The Old House on the Corner*. They follow the orchestral-library conventions: CC11 is an expression trim,
-pitch bend ±2 semitones, no keyswitches. On the flute, strings and horn a note's Pressure is its
+*The Old House on the Corner*, and Trumpet, Trombone and Tuba. They follow the orchestral-library conventions: CC11 is an expression trim,
+pitch bend ±2 semitones, no keyswitches. On the winds, strings and brass a note's Pressure is its
 dynamic too, as CC1 is: `piano.py` writes each CC1 curve again as Pressure, which Bitwig imports
 from a `.dawproject`. Their physics and what is still set by ear are in
-`docs/harp-and-flute.md`, `docs/oboe-and-clarinet.md` and `docs/strings-and-horn.md`; there is no
-reference corpus for them yet.
+`docs/harp-and-flute.md`, `docs/oboe-and-clarinet.md`, `docs/strings-and-horn.md` and
+`docs/brass.md`. The brass, woodwinds and strings are calibrated against the University of Iowa's
+recordings (`tools/iowa_calibration.py`); the harp has no reference corpus yet.
 
 - **Harp:** one string per key (B0-G#7). Strings ring after note-off, so glissandi keep sounding.
   The strings the pedals sound (set by what you play) ring in sympathy. Controls: Pluck Position,
@@ -119,6 +121,12 @@ reference corpus for them yet.
 - **Horn:** a player per note (B-flat 1-F5). CC1 is breath: louder and brassier. Controls: Stopped,
   Brightness (the hand in the bell; Timbre moves it), Stereo Width, Master Tune. Presets: Horns,
   Distant Horn and Stopped Horn (mono).
+- **Trumpet, trombone and tuba:** the horn's engine with their own bells, a player per note: the
+  trumpet (E3-C6) brightest, the trombone (E2-F5) between, both turning brassy at ff; the tuba
+  (D1-F4) darkest. Controls as the horn's, with Straight Mute for Stopped. Presets: Trumpets and
+  Muted Trumpet (mono), Trombones and Muted Trombone (mono), Tuba in stereo and mono. Each is
+  levelled by its loudest ff note; within an instrument the levels follow the recordings, so low
+  trombone notes at mf are far quieter than high ones.
 
 The recorded piano sat at A4 = 439.02 Hz; Master Tune puts A4 exactly where it
 says, so the default plays 3.9 cents above the recordings.

@@ -31,6 +31,11 @@ constexpr double labiumSoft = 0.3;
 constexpr double labiumLoud = 5.0;
 constexpr double labiumOffset = 0.9; // the even partials
 constexpr double labiumStep = 0.1;   // drive step of labiumFundamental's table
+// Fitted to the University of Iowa recordings (docs/harp-and-flute.md, tools/iowa_calibration.py):
+// the radiated sound rises 6 dB an octave below 977 Hz and falls above 4.1 kHz, richer than
+// Fletcher's formant alone (the gain keeps C5's level at mf), and the breath wanders.
+constexpr filters::Voicing voicing{1, 977.0, 4137.0, 0.0, 0.0, 2.25};
+constexpr double wander = 15.0; // the player's breath, never quite steady, as a share of it x 0.008 rms (MonoWind)
 
 // The fundamental's amplitude of tanh(drive cos t + labiumOffset) - tanh(labiumOffset), for drive
 // 0, labiumStep, ... 6.4.
@@ -56,7 +61,9 @@ std::size_t index(FluteParameterId id) {
 
 } // namespace
 
-FluteEngine::FluteEngine() : MonoWind(lowestKey, highestKey) {}
+FluteEngine::FluteEngine() : MonoWind(lowestKey, highestKey) {
+    wander_ = wander;
+}
 
 void FluteEngine::prepare(double sampleRate) {
     sampleRate_ = sampleRate;
@@ -71,6 +78,7 @@ void FluteEngine::reset() {
     write_ = 0;
     reflection_ = dcInput_ = dcOutput_ = radiated_ = noiseLow_ = airLow_ = airHigh_ = 0.0;
     formant_ = {};
+    voicing_.reset();
     boreLevel_ = 0.0;
     noise_ = 0x9E3779B9u;
 }
@@ -109,6 +117,7 @@ void FluteEngine::render(float* left, float* right, std::uint32_t frameCount) {
     const std::array<double, 5> fall{1.0 - fallPole, 0.0, 0.0, -fallPole, 0.0};
     const double fundamental = 2.0 * pi * bendFactor / period_;
     const double formantGain = 1.0 / (magnitude(rise, fundamental) * magnitude(fall, fundamental));
+    voicing_.block(voicing, formantBreath, fs / period_ * bendFactor, fs);
     const double follow = 1.0 - std::exp(-1.0 / (0.03 * fs));
     // Players blow harder for higher notes (Fletcher: pressure ~ frequency), so the jet is faster and
     // its air louder: as jet speed, the square root of the pressure, from C4 up.
@@ -149,14 +158,11 @@ void FluteEngine::render(float* left, float* right, std::uint32_t frameCount) {
         const double jetDelay = std::clamp(jetRatio * cycle - phaseDelay(1.0 - jetPole, 0.0, jetPole, omega), 1.0,
                                            static_cast<double>(delaySize - 2));
 
-        // The bore, cubic Lagrange. While a slur's keys move, the loop takes the new length half way
-        // (a pad seating, player.seat), and what radiates crossfades from the old length's reading to
-        // the new: the pitches between hardly sound.
-        const double fromOld = player.keys < 1.0 ? boreAt(periodFrom_ * tuned) : 0.0;
+        // The bore, cubic Lagrange. While a slur's keys move, the jet hears it at both lengths, in the
+        // shares the pads give them (player.seat), and the half-open holes lose more (player.leak).
         const double toNew = boreAt(cycle);
-        const double boreOut = player.keys < 1.0 ? (1.0 - player.seat) * fromOld + player.seat * toNew : toNew;
-        const double heard = player.keys < 1.0 ? (1.0 - player.keys) * fromOld + player.keys * toNew : toNew;
-        reflection_ = (1.0 - pole) * boreOut + pole * reflection_;
+        const double heard = player.keys < 1.0 ? (1.0 - player.seat) * boreAt(player.from * tuned) + player.seat * boreAt(player.to * tuned) : toNew;
+        reflection_ = (1.0 - pole) * heard + pole * reflection_;
 
         noise_ ^= noise_ << 13;
         noise_ ^= noise_ >> 17;
@@ -176,7 +182,7 @@ void FluteEngine::render(float* left, float* right, std::uint32_t frameCount) {
         const double deflection = jet_[jetBase % delaySize] * (1.0 - jetFraction) + jet_[(jetBase + 1) % delaySize] * jetFraction;
         const double flow = jetSpeed * (std::tanh(deflection + jetOffset) - std::tanh(jetOffset));
 
-        const double input = jetDrive * flow + endReflection * reflection_;
+        const double input = jetDrive * flow + endReflection * (1.0 - leakLoss * player.leak) * reflection_;
         dcOutput_ = input - dcInput_ + dcPole * dcOutput_;
         dcInput_ = input;
         bore_[write_] = std::abs(dcOutput_) < 1.0e-30 ? 0.0 : dcOutput_;
@@ -194,8 +200,9 @@ void FluteEngine::render(float* left, float* right, std::uint32_t frameCount) {
         const double radiated = formantGain * biquad(fall, biquad(rise, split, formant_[0], formant_[1]), formant_[2], formant_[3]);
         airLow_ += air * (white - airLow_);
         airHigh_ += airFloor * (airLow_ - airHigh_);
-        const double sample = (radiated + 0.03 * noiseLevel * jetSpeed * airGain * (airLow_ - airHigh_)) * volume_;
-        level_ = std::max(std::abs(sample), level_ * 0.9995);
+        const double raw = (radiated + 0.09 * noiseLevel * jetSpeed * airGain * (airLow_ - airHigh_)) * volume_;
+        level_ = std::max(std::abs(raw), level_ * 0.9995);
+        const double sample = voicing_.process(raw);
         // Players blow high notes harder (Fletcher: pressure ~ frequency) and the open end radiates
         // them better: the level rises 3 dB an octave, so the third octave rings out as a flute's does.
         const double gain = output * expression_ * std::sqrt(fs / period_ / 261.6);

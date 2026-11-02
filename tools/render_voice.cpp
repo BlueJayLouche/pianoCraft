@@ -1,10 +1,11 @@
-// Renders one harp, flute, strings, horn, oboe or clarinet note to a 24-bit stereo WAV at 48 kHz:
-//   pianocraft-render-voice <harp|flute|strings|horn|oboe|clarinet> out.wav key velocity seconds [hold] [id=value ...]
+// Renders one harp, flute, strings, horn, trumpet, trombone, tuba, oboe or clarinet note to a 24-bit stereo WAV at 48 kHz:
+//   pianocraft-render-voice <harp|flute|strings|horn|trumpet|trombone|tuba|oboe|clarinet> out.wav key velocity seconds [hold] [id=value ...]
 // hold is when the key is released (default: 40% of the length); id=value sets a parameter by id,
-// ccN=value sends MIDI controller N (0-1) before the note.
+// ccN=value sends MIDI controller N (0-1) before the note; slurK=seconds presses key K then, the
+// sounding note released 10 ms later (a slur), and the last note is released at hold.
 #include "engine/FluteEngine.hpp"
 #include "engine/HarpEngine.hpp"
-#include "engine/HornEngine.hpp"
+#include "engine/BrassEngine.hpp"
 #include "engine/ReedEngine.hpp"
 #include "engine/StringsEngine.hpp"
 
@@ -15,6 +16,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -61,6 +63,7 @@ std::vector<float> renderNote(int argc, char** argv, int key, double velocity, d
     constexpr std::uint32_t block = 64;
     Engine engine;
     engine.prepare(sampleRate);
+    std::vector<std::pair<std::uint64_t, int>> slurs;
     for (int i = 7; i < argc; ++i) {
         const std::string assignment = argv[i];
         const auto equals = assignment.find('=');
@@ -68,13 +71,17 @@ std::vector<float> renderNote(int argc, char** argv, int key, double velocity, d
             throw std::runtime_error("Expected id=value: " + assignment);
         }
         const double value = std::stod(assignment.substr(equals + 1));
-        if (assignment.rfind("cc", 0) == 0) {
+        if (assignment.rfind("slur", 0) == 0) {
+            slurs.emplace_back(static_cast<std::uint64_t>(value * sampleRate), std::stoi(assignment.substr(4, equals - 4)));
+        } else if (assignment.rfind("cc", 0) == 0) {
             engine.controlChange(0, static_cast<std::uint8_t>(std::stoi(assignment.substr(2, equals - 2))), value);
         } else {
             engine.setParameter(static_cast<Id>(std::stoi(assignment.substr(0, equals))), value);
         }
     }
-    const pianocraft::NoteAddress note{-1, 0, 0, static_cast<std::int16_t>(key)};
+    pianocraft::NoteAddress note{-1, 0, 0, static_cast<std::int16_t>(key)};
+    pianocraft::NoteAddress previous = note;
+    std::uint64_t previousOff = 0;
     const auto total = static_cast<std::uint64_t>(seconds * sampleRate);
     const auto on = static_cast<std::uint64_t>(0.05 * sampleRate);
     const auto off = static_cast<std::uint64_t>(hold * sampleRate);
@@ -83,6 +90,18 @@ std::vector<float> renderNote(int argc, char** argv, int key, double velocity, d
     for (std::uint64_t frame = 0; frame < total; frame += block) {
         if (frame <= on && on < frame + block) {
             engine.noteOn(note, velocity);
+        }
+        for (const auto& [at, slurKey] : slurs) {
+            if (frame <= at && at < frame + block) {
+                previous = note;
+                previousOff = at + sampleRate / 100;
+                note = {-1, 0, 0, static_cast<std::int16_t>(slurKey)};
+                engine.noteOn(note, velocity);
+            }
+        }
+        if (previousOff != 0 && frame <= previousOff && previousOff < frame + block) {
+            engine.noteOff(previous, 0.0);
+            previousOff = 0;
         }
         if (frame <= off && off < frame + block) {
             engine.noteOff(note, 0.0);
@@ -102,7 +121,7 @@ std::vector<float> renderNote(int argc, char** argv, int key, double velocity, d
 int main(int argc, char** argv) {
     try {
         if (argc < 6) {
-            std::cerr << "Usage: pianocraft-render-voice <harp|flute|strings|horn|oboe|clarinet> out.wav key velocity seconds [hold] [id=value ...]\n";
+            std::cerr << "Usage: pianocraft-render-voice <harp|flute|strings|horn|trumpet|trombone|tuba|oboe|clarinet> out.wav key velocity seconds [hold] [id=value ...]\n";
             return 2;
         }
         const std::string instrument = argv[1];
@@ -121,11 +140,17 @@ int main(int argc, char** argv) {
             ? renderNote<pianocraft::StringsEngine, pianocraft::StringsParameterId>(argc, argv, key, velocity, seconds, hold)
             : instrument == "horn"
             ? renderNote<pianocraft::HornEngine, pianocraft::HornParameterId>(argc, argv, key, velocity, seconds, hold)
+            : instrument == "trumpet"
+            ? renderNote<pianocraft::TrumpetEngine, pianocraft::BrassParameterId>(argc, argv, key, velocity, seconds, hold)
+            : instrument == "trombone"
+            ? renderNote<pianocraft::TromboneEngine, pianocraft::BrassParameterId>(argc, argv, key, velocity, seconds, hold)
+            : instrument == "tuba"
+            ? renderNote<pianocraft::TubaEngine, pianocraft::BrassParameterId>(argc, argv, key, velocity, seconds, hold)
             : instrument == "oboe"
             ? renderNote<pianocraft::OboeEngine, pianocraft::ReedParameterId>(argc, argv, key, velocity, seconds, hold)
             : instrument == "clarinet"
             ? renderNote<pianocraft::ClarinetEngine, pianocraft::ReedParameterId>(argc, argv, key, velocity, seconds, hold)
-            : throw std::runtime_error("Instrument must be harp, flute, strings, horn, oboe or clarinet");
+            : throw std::runtime_error("Instrument must be harp, flute, strings, horn, trumpet, trombone, tuba, oboe or clarinet");
         writeWav(argv[2], samples, 48000);
         return 0;
     } catch (const std::exception& error) {

@@ -1,0 +1,666 @@
+{
+  "schema_version": 1,
+  "instrument": "PianoCraft horn, trumpet, trombone, tuba, flute, oboe, clarinet and strings",
+  "corpus": "University of Iowa Electronic Music Studios, Musical Instrument Samples (MIS)",
+  "license": "Public: \"may be downloaded and used for any projects, without restrictions\" (https://theremin.music.uiowa.edu/MIS.html, read 2026-11-02)",
+  "usage": "Analysis and fitted synthesis constants only (src/engine); raw audio stays in calibration/ (git-ignored) and is never bundled or played",
+  "tool": "tools/iowa_calibration.py",
+  "sources": [
+    {
+      "instrument": "horn",
+      "page": "https://theremin.music.uiowa.edu/MISFrenchhorn.html",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Brass/frenchhorn/Horn.zip",
+      "archive": "Horn.zip",
+      "sha256": "99c2cb783797c01cc7e22dc1385b0e1c6fd6432ca82a039259ecd29f6bc34242",
+      "recording": "French horn, Jessica Wiskus, 27 July 1997, anechoic chamber, Neumann KM 84 at 5 feet, 16-bit 44.1 kHz mono; pp, mf, ff chromatic runs (pp lacks C2-B3, mf lacks C3-B3)"
+    },
+    {
+      "instrument": "trumpet",
+      "page": "https://theremin.music.uiowa.edu/MISBbtrumpet.html",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Brass/Bbtrumpet/Trumpet.novib.zip",
+      "archive": "Trumpet.novib.zip",
+      "sha256": "ef7949baf708b1737c739490f170b95290385b9e948d6e7a7f5fd6f291ef09c3",
+      "recording": "B-flat trumpet (Bach 180S37 Stradivarius), Aren Van Houzen, 16 May 2003, anechoic chamber, Neumann KM 84 at 5 feet, 16-bit 44.1 kHz mono; without vibrato, pp, mf, ff, E3-E-flat 6"
+    },
+    {
+      "instrument": "trombone",
+      "page": "https://theremin.music.uiowa.edu/MIStenortrombone.html",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Brass/tenortrombone/TenorTrombone.zip",
+      "archive": "TenorTrombone.zip",
+      "sha256": "175725e27f9e3a89efc5e6c4cd70ba3e07443afe47a09b89807ee8a1eb8e2020",
+      "recording": "Tenor trombone, 27 July 1997, anechoic chamber, Neumann KM 84 at 5 feet, 16-bit 44.1 kHz mono; pp, mf, ff, E2-C5"
+    },
+    {
+      "instrument": "tuba",
+      "page": "https://theremin.music.uiowa.edu/MIStuba.html",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Brass/tuba/tuba.zip",
+      "archive": "tuba.zip",
+      "sha256": "bc682e0bdc8289d833ed22e6695021e52086b76ad47ed9d8796030abd6681901",
+      "recording": "CC tuba (Mirafone 1865U), David Spies, November 2003, anechoic chamber, Earthworks at 5 feet, 16-bit 44.1 kHz mono (from 96 kHz); pp, mf, ff, C1-C4. Recorded quietly: harmonics more than 45 dB under the strongest, or above 3 kHz, are left out of the fit"
+    },
+    {
+      "instrument": "flute",
+      "page": "https://theremin.music.uiowa.edu/MISflute.html",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Woodwinds/flute/flute.nonvib.zip",
+      "archive": "flute.nonvib.zip",
+      "sha256": "59bc63492c801ba9db15b24641d95388c9ee2d62164bea5a5478580505b5d75a",
+      "recording": "Flute, Sonja Feig, April 2000, anechoic chamber, Neumann KM 84, 16-bit 44.1 kHz mono; without vibrato, pp, mf, ff, B3-D-flat 7"
+    },
+    {
+      "instrument": "oboe",
+      "page": "https://theremin.music.uiowa.edu/MISoboe.html",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Woodwinds/oboe/oboe.zip",
+      "archive": "oboe.zip",
+      "sha256": "ec68c95509d539543b2ff25e7f7137c2d0f84132aaaf8acc0b6e8cb7fa3c3d3b",
+      "recording": "Oboe (Howarth S5), Kira Wharton, 23 July 1997, anechoic chamber, Neumann KM 84 at 5 feet, 16-bit 44.1 kHz mono; pp, mf, ff, B-flat 3-A-flat 6"
+    },
+    {
+      "instrument": "clarinet",
+      "page": "https://theremin.music.uiowa.edu/MISBbclarinet.html",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Woodwinds/Bbclarinet/BbClar.zip",
+      "archive": "BbClar.zip",
+      "sha256": "3c01b5331fc69a4476a69d5210f89c748b686723f42c8c8097a4e6b3d40fd876",
+      "recording": "B-flat clarinet (Buffet R13), Christine Bellomy, 3 August 1998, anechoic chamber, Neumann KM 84 at 5 feet, 16-bit 44.1 kHz mono; pp, mf, ff, D3-C7"
+    },
+    {
+      "instrument": "violin",
+      "page": "https://theremin.music.uiowa.edu/MISviolin.html",
+      "recording": "Violin, Josue Jean-Francois, anechoic chamber, Neumann KM 84 at 5 feet, 16-bit 44.1 kHz mono; arco by string, pp, mf, ff, G3-B7",
+      "files": [
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.ff.sulA.A4B4.aiff",
+          "sha256": "a16a1281b31a703ec275baa5aed7e538692d049e9f1b01b163c49a40baef24e2"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.ff.sulA.C5Db6.aiff",
+          "sha256": "bea3ed0ee046eccf93df15e4352ce55a7cc6c4de692e0f0d2b0ec743a769472f"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.ff.sulA.D6G6.aiff",
+          "sha256": "b8b9c1735324e4454ea4cbb4f77ec932de23dba3800c6cce45981e26586e3279"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.ff.sulD.C5D6.aiff",
+          "sha256": "f270df9c5845ebd632db6714bde6a552460b9a4f8da3e877b988db5b0ba4d48d"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.ff.sulD.D4B4.aiff",
+          "sha256": "042b27a88302fa9c03579d8a693ec9ae9a3e8ad8afad0a7d0fb6da3622a9304e"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.ff.sulE.Ab7B7.aiff",
+          "sha256": "031d5079b7329dc14f2c53557bfbfb2ede172d6d79eb6b30a6641e343f85d684"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.ff.sulE.C6Gb7.aiff",
+          "sha256": "218b4f84f0f505a86839bc58b499226e13eaa6b34d6ecb2789f00951db4594a0"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.ff.sulE.E5B5.aiff",
+          "sha256": "6b9f797cb5892192d3a28048c6c6903c2b50d3dcd3ebf26c9be9def68eefffb6"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.ff.sulG.C4Eb5.aiff",
+          "sha256": "d17e195d627161af271c052694b41e2c09d78811cad3d58b2c0d2d1207e133a2"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.ff.sulG.E5Gb5.aiff",
+          "sha256": "22def3cb5211b40040de3e683c3f2e6e7a0fdd8577e9560b234019f22617c8b4"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.ff.sulG.G3B3.aiff",
+          "sha256": "39f124996a859462dccb74ff94ae810b933846cd64c76e162358fca91c3e162a"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.mf.sulA.A4B4.aiff",
+          "sha256": "d314f949de13cd2326e539131e59d8c63fd9c044bc1000baac0684b0d5c3b57b"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.mf.sulA.C5C6.aiff",
+          "sha256": "6cd86026a7786f6052bb78467e2428fe79c2e95a128b1f89637e10d28d1e3c67"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.mf.sulA.Db6Ab6.aiff",
+          "sha256": "c0da38204683b7f36bfe60c2a809b4ab3d8f51b1ed9d60f88dd2f885f5f820e4"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.mf.sulD.Bb4C6.aiff",
+          "sha256": "d7dd7ee936e790f83e500c73ab2b99fedc3f15490e64ee82e8eeb60301b6a537"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.mf.sulD.D4A4.aiff",
+          "sha256": "412bc9f34bc2ba15242aacc18eff105277d746cb52878c478f7704c5f6b079b6"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.mf.sulD.D6.aiff",
+          "sha256": "1010427c6450fe7d4c7ef50ce02a0cd868b06b77ac5ba8e2817e0245e2b61595"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.mf.sulE.Ab7A7.aiff",
+          "sha256": "4d68687e7ba87a770e58dbdf149f8ee22171dd704c1516f36c8eca5e4c8fdf3a"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.mf.sulE.C6Gb7.aiff",
+          "sha256": "cee2b64078e54e68395234278d259a470b530568e5615003d08530359fef422b"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.mf.sulE.E5B5.aiff",
+          "sha256": "aec7ba76149b5bf7fd7cdaf5631a619966bc91ea472a7effaf50726811f4812f"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.mf.sulG.B3B4.aiff",
+          "sha256": "962d27fccc8bbdc30ef4734d99afe58060a1930308ab9c9b00867b1de54ac770"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.mf.sulG.C5G5.aiff",
+          "sha256": "60a2859cde464365a5cf9c3e627dbbef531d219918f8b1cd7e13976eb95efeb9"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.mf.sulG.G3B3.aiff",
+          "sha256": "50c53128788531062b239f5007fb48cf17c4e8b4474f9caf871163993d46b80d"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.pp.sulA.A4B4.aiff",
+          "sha256": "e2e761ed114eec59eec000cc220d0cccef6a32a9fb06dd89d54c0c667ddaddca"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.pp.sulA.Bb5Ab6.aiff",
+          "sha256": "98707404e37d8dbb26ee07156c98882403d150d1180d38f92c939712703bbd6d"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.pp.sulA.C5A5.aiff",
+          "sha256": "febe4764b4d3831f5b0c6696cff60db8e905df3dd6e09159ff3d2293bc6873e0"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.pp.sulD.B4A5.aiff",
+          "sha256": "1513e2a0c5c37f71780168da639a3aa82a3360aa0b6efc4b72f62654911a4eff"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.pp.sulD.Bb5Db6.aiff",
+          "sha256": "01a38549cc2c714610ce5319ddce29b7ac176dfdb4f4dd851375ccb060d9ce13"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.pp.sulD.D4Bb4.aiff",
+          "sha256": "55bbfe5d1b8272758c4dbc5352a37c80113b938f1d2cd26408f5a62c827f2f62"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.pp.sulE.A5G6.aiff",
+          "sha256": "790312b3f1b077dc51ad38ec84c2e60076b630efec24a23ca0c17a6352133aca"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.pp.sulE.Ab6B7.aiff",
+          "sha256": "bad32f044446e441d4ce1b0cb43a0b22c91f6af24814045030b44cb7bfdab00a"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.pp.sulE.E5A5.aiff",
+          "sha256": "faef815aee638d74b1464cd8e284af9aea3316a5b4dc25c11ae970543e479692"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.pp.sulG.A4Gb5.aiff",
+          "sha256": "7903cfe7c2eaacca76111189db86b6178eba6b85e8fbb863ef0a3364a5e5dad2"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.pp.sulG.B3Ab4.aiff",
+          "sha256": "49d2e10936e71c5f34b94e67f5a729d453e8e8a6e8ec19a5312876e77bb44980"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin/Violin.arco.pp.sulG.G3B3.aiff",
+          "sha256": "d283c884c4143c215634739453b788fea23d4f22d777aabaabda654224baf721"
+        }
+      ]
+    },
+    {
+      "instrument": "viola",
+      "page": "https://theremin.music.uiowa.edu/MISviola.html",
+      "recording": "Viola, Charletta Taylor, 2 March 1996, anechoic chamber, Neumann KM 84 at 5 feet, 16-bit 44.1 kHz mono; arco by string, pp, mf, ff, C3-B-flat 6",
+      "files": [
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulA.ff.A4B4.aiff",
+          "sha256": "f1c5a9ab792afacb308cd7ebc63341f76b7b5243c1074b4eaa35281f760d7963"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulA.ff.C5B5.aiff",
+          "sha256": "4147580f3d3aa87c70644d234956df03610f8dcb96d6178d9755e44c80ba8dce"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulA.ff.C6Bb6.aiff",
+          "sha256": "e08f44b882355291437d2d64ed492ecc90108aee31017f5b1fe855796e79d6c7"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulA.mf.A4B4.aiff",
+          "sha256": "53bcbf77a8b92d7cca0bc4bc58e242bfe14ef5b1d866b3e9d32fca74594b2284"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulA.mf.C5B5.aiff",
+          "sha256": "38ddcccf6fff4d35f3ef99e73bf7b76a04cee0f6916339243b6e295e225441d5"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulA.mf.C6Ab6.aiff",
+          "sha256": "aa24fbf2311eef8063f17d857b517277936ebdac48beaa78749a4fc4efb76052"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulA.pp.A4B4.aiff",
+          "sha256": "3e73a1970738e58ec80ad36ab7bd9719695a2c783709af19f02cb64ea27e5efb"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulA.pp.C5B5.aiff",
+          "sha256": "ae12e142a107738511ed18a7d2a2e748fa9aca8becfc7288fa3a4b9b924c50c5"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulA.pp.C6G6.aiff",
+          "sha256": "2efb51d4b16cd1cb931ee9ab7bbb6d87a782c4baa24d8dea3827d8828796464a"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulC.ff.C3B3.aiff",
+          "sha256": "7cbc2973460f33195f6799f8805b4d3162b869c2a839b8fc018a91c48a5309a0"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulC.ff.C4B4.aiff",
+          "sha256": "e2b434f14ce90eb05d44f9c00bd3381cd157ef68ec3d2bbfe0aaa1bd0f723d90"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulC.mf.C3B3.aiff",
+          "sha256": "c718be7173117c1aa0fc0039a2df54191bc3c40582bf4fed1376f482c2f52e1e"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulC.mf.C4B4.aiff",
+          "sha256": "20f56a6320ba515a834f4e8b98d646e455be8c17320ab962774b9be305abf67b"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulC.pp.C3B3.aiff",
+          "sha256": "8f68bead6985602b70babdb899c263489017de82da830062ddbf5ab2e3ab8490"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulC.pp.Db4C5.aiff",
+          "sha256": "902b5cd66cd2d76939c1f2caf5faa18f2a165f8a3a2ec5a30722d3fb57b00138"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulD.ff.C5B5.aiff",
+          "sha256": "c3b3ad49694529dd3637e1f0086910e15ece1ea3058c96be832070e11daae112"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulD.ff.C6D6.aiff",
+          "sha256": "2f08dcfc7b90a73120ae5614104ade485b110ee7c150a26c3c5b2583352320e3"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulD.ff.D4B4.aiff",
+          "sha256": "a5d419cae973718a3a601f946f5f46be6cdb7cfe361c58810abf14ddffbce74f"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulD.mf.C5B5.aiff",
+          "sha256": "40a089ff05154a70d1919eb8422a91b13631e39c3d1432e0a5e92a2c56f41f6b"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulD.mf.C6Eb6.aiff",
+          "sha256": "3a234777cb8559d396c3cd77dc0c0a835b4158ad22a2b5e924139629c56bf4da"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulD.mf.D4B4.aiff",
+          "sha256": "eefd4a8d9e913da891c716439d5bfd4112a3c51210037c48f5f316051fb7f2ef"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulD.pp.C5B5.aiff",
+          "sha256": "f23cac7ec2893aef534c52b40f9708cda113ac130dbd11c21b679827cee43bb7"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulD.pp.D4B4.aiff",
+          "sha256": "913280032362d36c4b568fe2c74fadb2b736cbd2ab42494f5518d62539658fac"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulG.ff.C4B4.aiff",
+          "sha256": "d10f7132abdc2a698b5fbd9ff01e2166fd79548b82d89d026755cef5c59c3413"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulG.ff.C5Ab5.aiff",
+          "sha256": "5f9604a5b53d530108f7923fd89ce68ac15c032ad458b9498aa013533ffa0e80"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulG.ff.G3B3.aiff",
+          "sha256": "cf94072d4b63b404196b4a74703a31508bbd9e68f340aecd0c3130aefc1f5a82"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulG.mf.C4B4.aiff",
+          "sha256": "41ba41e8011514508594e19dab5098c38370940825c16cd0940875b49c918a35"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulG.mf.C5G5.aiff",
+          "sha256": "d5ea5f621a04ed0610f1ad050f1b36cfa1e24fc775c9cfd4ad0504bc0d64bed7"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulG.mf.G3B3.aiff",
+          "sha256": "531cdc507259bdf51a74a7cc42429077e75e0b945e4d5e95a716a327cfc0f97a"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulG.pp.C5Gb5.aiff",
+          "sha256": "1390ff12ff0da0453fd11950510f2e4bf6dea03828f55c33be6e2b9e4d704c3f"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulG.pp.Db4B4.aiff",
+          "sha256": "9917415943656fef69991e77f60d8d6ba1812683028e825dbe0dad1cd5da1907"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/viola/Viola.arco.sulG.pp.G3B3.aiff",
+          "sha256": "60eade21bd37286a61b5b2eac44b30d6837e6aeeef93d7d052f5e5020f1f937a"
+        }
+      ]
+    },
+    {
+      "instrument": "cello",
+      "page": "https://theremin.music.uiowa.edu/MIScello.html",
+      "recording": "Cello (Stradivarius copy), Jean Montes, 16 November 2001, anechoic chamber, Neumann KM 84 at 5 feet, 16-bit 44.1 kHz mono; arco by string, pp, mf, ff, C2-B-flat 5",
+      "files": [
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.ff.sulA.A3B3.aiff",
+          "sha256": "404fc6d966868e0409ef9437c2785ea9ff37bf571ecc089ab97752a148632dea"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.ff.sulA.C4B4.aiff",
+          "sha256": "53cacc8ba58dfd5a8c731d03dc4411d26168a9e863e3e9193f0fae4c972cf33d"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.ff.sulA.C5Bb5.aiff",
+          "sha256": "6241e6103128995a879acd4dc07ca7a358b3e2c5e56d5975edd096ba4b521ea5"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.ff.sulC.Bb2F3.aiff",
+          "sha256": "37627af18e75943f0520b51b2bc0cce4d2af2fcd381af550156a4f9cbdab4c7b"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.ff.sulC.C2A2.aiff",
+          "sha256": "cd1c57b6f2cf5373b1d2aa950beab967652ae2efdf4c6bd243511dae35bcbe8e"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.ff.sulC.Gb3Db4.aiff",
+          "sha256": "ace3f6905235efd7e91bfeb50ed3d83b21762c0eeb53a4c76e81149f9bdad0c0"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.ff.sulD.B4D5.aiff",
+          "sha256": "405530b0c3e68f72de9757a702b8d7e21f94b1daa975930e2d8c32a96ed895bd"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.ff.sulD.C4Bb4.aiff",
+          "sha256": "f49f2df8d3a14db743e65a0f6771469d130e62615846c4aed12f9b76450866a7"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.ff.sulD.D3B3.aiff",
+          "sha256": "fb9ca888cd0fd803848b584c4c9664a100648cf64dd06b56841fef5ae60b5bdd"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.ff.sulG.B2Bb3.aiff",
+          "sha256": "1ad2d6bf99d54b36c5eeb24b994bcc7e5f82042c309f44ac0df8e1819011e09c"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.ff.sulG.B3Gb4.aiff",
+          "sha256": "1ea8ad543d65db0389c6a8bab2b4edf319ae2be307be90b3840dba9d609f539c"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.ff.sulG.G2B2.aiff",
+          "sha256": "e6e308a363c65c9c55292d7176247ef486a1c3357f71dd6ddcaeab1cafaa7e4e"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.ff.sulG.G4.aiff",
+          "sha256": "1c7fbe793c310669a9ea6c1971aaa36c68b33a5c337f12ee7ab990588a8677be"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.mf.sulA.A3B3.aiff",
+          "sha256": "59d2457357d62df927a0b4ff80e685df8c8b028386322576ac3efa562c61bf9c"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.mf.sulA.C4C5.aiff",
+          "sha256": "4d2da113625445434f331e0d453e47f82be01b83795e99b29d43f8551b12d4fc"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.mf.sulA.C5Ab5.aiff",
+          "sha256": "874f6da697ccc8d0d598aa30903f521e7b3e177545da70d1a85c3bd31c90fe97"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.mf.sulC.A2Gb3.aiff",
+          "sha256": "3289772e71ff803b1904625704cf9351ca6e390449799943abc910661cd2fc16"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.mf.sulC.C2Ab2.aiff",
+          "sha256": "8942170087befce24773228679e3a8961c34b8d684ce287db0e551f3a3236fb4"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.mf.sulC.C4Gb4.aiff",
+          "sha256": "d6db2d2dd3a92979c0b28de8f3b0453ab53f3e7427c7aa80fd9acd11fb3f240f"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.mf.sulD.B4Eb5.aiff",
+          "sha256": "3e33b437e3d7c202b00ad5b582640c67245cf46cf710800a676f0f2dcfeb4183"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.mf.sulD.C4Bb4.aiff",
+          "sha256": "0eb5b4bf2f38999cbf2b697cc277564ed84d3bac1986201607ace1e34a6efb50"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.mf.sulD.D3B3.aiff",
+          "sha256": "a42352e65954ae2b8ffe427a9044b8ad1f2b7c04b8623c30e205ece0a7485ce5"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.mf.sulG.B2A3.aiff",
+          "sha256": "4565c2165d0afe874cd6d39872160f242b153d987d94ef79dc562e04df09a7c2"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.mf.sulG.Bb3Eb4.aiff",
+          "sha256": "2c48c01cdd866a90c8d3f21890c728e6e006a89b2e92826098974a9388541cf5"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.mf.sulG.E4G4.aiff",
+          "sha256": "77080024dcad2790e9f160caa53b1b66e3c476ecec43ec979e0754edf5f7abf9"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.mf.sulG.G2Bb2.aiff",
+          "sha256": "549afb3c833c7f0ecbf8bf8898719c49c57437c2170baafed84e673ac122c59d"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.pp.sulA.A3B3.aiff",
+          "sha256": "d034f1279299c8273f954e2f38d42f21df649a554109d5b50c49d9832b03948a"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.pp.sulA.Ab5.aiff",
+          "sha256": "dc51fef017750989b91b45ac584c15f9eaf19c836ae6760baec94e867fe46c03"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.pp.sulA.B4Ab5.aiff",
+          "sha256": "08b6b3a3a5030f530f4c1093f8760cd506eea99b3791447e5663030e6f8d47bc"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.pp.sulA.C4Bb4.aiff",
+          "sha256": "8d444d8c7bc3f135dcae0fe58dd369f05781a2f61ac13fb6e2b670ed86668080"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.pp.sulC.B3Db4.aiff",
+          "sha256": "384fd9b5bf694266167ad5cb9fab90fca463946f0cd1982a732e06ae00740f3a"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.pp.sulC.C2Gb2.aiff",
+          "sha256": "2fbf30dfbe08428bd3ea46d1731055d46e1eaaa750839c43dea6b1b449a7a73a"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.pp.sulC.D3Bb3.aiff",
+          "sha256": "360ad4db331cc532ab07f6ef8e088788cc2e45f44b90bf1f14b8ccea12ecabc9"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.pp.sulC.Gb2D3.aiff",
+          "sha256": "d6c98e8359261e9f81eba103dbb185912ed0dabbffc91b5d4dc27a9ebbf548e5"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.pp.sulD.Bb4D5.aiff",
+          "sha256": "498bb2965f22226736a249f9a7bddb3eb70c07d854eac27b81b38e4b02cb7114"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.pp.sulD.C4A4.aiff",
+          "sha256": "377c2e8e635047d0067a00050d2f0951f25238f49079d15379f1be9d7f33cdd1"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.pp.sulD.D3B3.aiff",
+          "sha256": "5fd8cc2d35be7230afd5c5b96bc008bcdc9063ddbd8fdbb160c916e7c2c49e3a"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.pp.sulG.B2A3.aiff",
+          "sha256": "3cb5a5517861beb9c84436cbaea14ee1ddddb4602c74a6b864eca4f8e3a99834"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.pp.sulG.Bb3Gb4.aiff",
+          "sha256": "38ca264eacddfdaf83d1c81cf06b2da77eab2a5d7bd7aa6cbbc187c944a3e8c3"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.pp.sulG.G2Bb2.aiff",
+          "sha256": "8b82be1e53a68893159933287c775fc097804259a0f1d2dba06049232d00fc94"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/cello/Cello.arco.pp.sulG.Gb4G4.aiff",
+          "sha256": "330f66955f5a0642c33690b00c9f026fd14ea0d312cb9a07d8f894bf5d4a8159"
+        }
+      ]
+    },
+    {
+      "instrument": "bass",
+      "page": "https://theremin.music.uiowa.edu/MISdoublebass.html",
+      "recording": "Double bass (Wurlitzer), Alison Mann, 20 November 2001, anechoic chamber, Neumann KM 84 at 5 feet, 16-bit 44.1 kHz mono; arco by string, pp, mf, ff, E1-G4",
+      "files": [
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.ff.sulA.A1B1.aiff",
+          "sha256": "dc9c29d65e621981429e12b87ef660f4ca21b4208aef752364dbf72ab3636f45"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.ff.sulA.C2B2.aiff",
+          "sha256": "1a626fe2f64afcc1e6ba784745986b1e0b796feec5ae3ed1c662b6fcafca90d0"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.ff.sulA.C3A3.aiff",
+          "sha256": "b77435e4634cf80b6827e648bf9a4e0403c7ab504ce2ddbd0e9b7fc589147572"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.ff.sulD.C3B3.aiff",
+          "sha256": "0ed5245fa5598848f0eaafc53519af41c150a2d21be93d1b8aa90b9397cfa361"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.ff.sulD.C4D4.aiff",
+          "sha256": "7b5406a1742e4ec278317fc1d4bb1ce164701e777ec950bf2ee7a0b248c2cbb9"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.ff.sulD.D2B2.aiff",
+          "sha256": "036eb8dbeb0bfb9d79d1970efe3f814ae56f4fa4eada1acc4355d7412671315c"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.ff.sulE.C2B2.aiff",
+          "sha256": "1faa592610772a14c473e948023ffa14a78d85742457301578df2718c54dcd1d"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.ff.sulE.C3D3.aiff",
+          "sha256": "2c8dc40903c38e5e3ddb5fbcd1b91864ab7d9ce792eec61346125511e662576c"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.ff.sulE.E1B1.aiff",
+          "sha256": "ebe75b308a51ea7d90a374637e4ffd52f92c721f56feb4b02cd968c01fbe4f11"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.ff.sulG.C3B3.aiff",
+          "sha256": "387639bb08faedbac23baf8f89f426519917696c426517bda0968d8fa4b8084c"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.ff.sulG.C4G4.aiff",
+          "sha256": "4b856493c786234339c732de9c76284e327ad4864f842e16973b1cb60b35b17e"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.ff.sulG.G2B2.aiff",
+          "sha256": "721c46df8ad6564462af5aac9f2f9dcc08e5c9c962266eff85bd2224268d71b3"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.mf.sulA.A1B1.aiff",
+          "sha256": "4300fad3045d8490e85dd4b734cae766958a6e8ae359b6feefc1618975a0a263"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.mf.sulA.C2B2.aiff",
+          "sha256": "e1ae947a051268e52a51e74130c89b32b987fa0ebd26976f449f919df53e8f92"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.mf.sulA.C3A3.aiff",
+          "sha256": "0ba2324b7a02588a1bd12c856235b3911009597f97799a683c1530dd1217fb94"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.mf.sulD.C3B3.aiff",
+          "sha256": "ec81c6d27f9ccdedf33f50ccb960a28d397abf59e92e2ef3723d758f5ffe6944"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.mf.sulD.C4D4.aiff",
+          "sha256": "8bbd8c567b91b6d50edbb706371fe6cd411ae5fae30d55d599fe59ad536ade35"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.mf.sulD.D2B2.aiff",
+          "sha256": "392f2c1e14663b42ad2a238aff4a6b079d845dd6713fafe65fc63d6d7a5ae1f3"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.mf.sulE.C2B2.aiff",
+          "sha256": "b77c407360344334fffe418d63152f6377b66fe7afca47b7dd10b7b5263fffd8"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.mf.sulE.C3D3.aiff",
+          "sha256": "7d21b87de057aff7f66206524d052dccee97a7584f60df2157755a5ff2444ca4"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.mf.sulE.E1B1.aiff",
+          "sha256": "661b339e4c4aacc0c58712013bd8a473b21b52f3b6f1bb4d603bf2787d25a5a8"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.mf.sulG.C3B3.aiff",
+          "sha256": "9b062e95e5b647aa362ced0ae3d890404f1fba2d48fc1aec31a700b30336db43"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.mf.sulG.G2B2.aiff",
+          "sha256": "76285057cbe140e12c47326485371076244be810d349c85cab1db4817ca66811"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.pp.sulA.A1B1.aiff",
+          "sha256": "09c595431130712d17b3fa3653489bce608c8fc6d40745d19fe446de497fa80d"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.pp.sulA.C2B2.aiff",
+          "sha256": "10f4264e449d0d7d8c799d1516519007c37f363b9f0288c26d050ff785825c57"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.pp.sulA.C3A3.aiff",
+          "sha256": "195af55de8d1ce14742d77a673c18cc28f87271ae5471885c56d546a73a2d3e9"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.pp.sulD.C3B3.aiff",
+          "sha256": "7251faa3e0f7cdda481502d74dd28b28174c4960c569ea525ceb1b1c026cb61d"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.pp.sulD.C4D4.aiff",
+          "sha256": "7fd6d49419ccb646cdacccc9cbf023ff31e2f5388c527d53eebea909d27e98b6"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.pp.sulD.D2B2.aiff",
+          "sha256": "db912668463c87c25f4718109590dc452faf32dd5d80d28f0b27f4930af1c0bc"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.pp.sulE.C2B2.aiff",
+          "sha256": "51192bb37b5eb928bbebbe4f6ab19d53e85ed58b639aa2bcff2928deef29048f"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.pp.sulE.C3D3.aiff",
+          "sha256": "3a068edcd9216234228923e6f5c5192e920a32b5b99865a71b2f16d9a52399ad"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.pp.sulE.E1B1.aiff",
+          "sha256": "ad4f8ad2dfc153ae3de00e352ac05e873a4f1a94ce6a427cf11607fe9f055980"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.pp.sulG.C3B3.aiff",
+          "sha256": "021ff35a2da03d7ac036fad5d1c0d78b18059ae9decaa1d3c5c1c842b9c9f79b"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.pp.sulG.C4G4.aiff",
+          "sha256": "ee03ee90a358ddf49264bcbab6d92e43eecc2591aee725bde6079414e63880d6"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.pp.sulG.G2B2.aiff",
+          "sha256": "74b0be446b2ba1d223cf1005c1d8e7bc818d48b9e71109504422b21195a17cbe"
+        }
+      ]
+    }
+  ]
+}

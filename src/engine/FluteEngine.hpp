@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/Filters.hpp"
 #include "engine/MonoWind.hpp"
 
 #include <array>
@@ -33,6 +34,7 @@ private:
     double radiated_ = 0.0;     // the output high-pass's low band
     std::array<double, 4> formant_{}; // Fletcher's formant: high-pass then low-pass, two states each
     double boreLevel_ = 0.0;           // the bore wave's mean square, for the labium split
+    filters::VoicingStage voicing_;    // the fitted output stage
     double noiseLow_ = 0.0;
     double airLow_ = 0.0;
     double airHigh_ = 0.0;

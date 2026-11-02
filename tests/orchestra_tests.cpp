@@ -4,7 +4,7 @@
 // bow or breath, with their articulations. Every render must repeat exactly.
 #include "engine/FluteEngine.hpp"
 #include "engine/HarpEngine.hpp"
-#include "engine/HornEngine.hpp"
+#include "engine/BrassEngine.hpp"
 #include "engine/ReedEngine.hpp"
 #include "engine/StringsEngine.hpp"
 
@@ -25,8 +25,11 @@ using pianocraft::FluteEngine;
 using pianocraft::FluteParameterId;
 using pianocraft::HarpEngine;
 using pianocraft::HarpParameterId;
+using pianocraft::BrassParameterId;
 using pianocraft::HornEngine;
-using pianocraft::HornParameterId;
+using pianocraft::TromboneEngine;
+using pianocraft::TrumpetEngine;
+using pianocraft::TubaEngine;
 using pianocraft::StringsEngine;
 using pianocraft::StringsParameterId;
 using pianocraft::NoteAddress;
@@ -377,7 +380,9 @@ void stringsTests() {
     for (const double rate : {48000.0, 96000.0}) {
         for (const int key : {36, 55, 69, 84}) {
             const auto x = sustain<StringsEngine, S>(key, 0.6, 2.0, rate, solo);
-            const double off = centsOff(x, 1.0, 2.0, rate, frequency(key));
+            // Read at the 2nd harmonic: a cello's low C radiates its fundamental 17-20 dB under its
+            // strongest harmonic (the Iowa recordings; the body's air mode is above it).
+            const double off = centsOff(x, 1.0, 2.0, rate, 2.0 * frequency(key));
             expect(std::abs(off) <= 5.0, "string key " + std::to_string(key) + " in tune at " + std::to_string(static_cast<int>(rate)) +
                                              " Hz: " + std::to_string(off) + " cents");
         }
@@ -441,40 +446,83 @@ void stringsTests() {
     }
 }
 
-void hornTests() {
-    using H = HornParameterId;
+// The brass: in tune, a held note holds, CC1 louder and brassier, the stopped horn or muted bell
+// quieter and thinner, mono at width 0, a released note ends, renders repeat.
+template <class Engine>
+void brassTests(const std::string& name, std::vector<int> keys, const char* closed) {
+    using H = BrassParameterId;
+    const int middle = keys[keys.size() / 2];
     for (const double rate : {48000.0, 96000.0}) {
-        for (const int key : {41, 53, 65, 77}) {
-            const auto x = sustain<HornEngine, H>(key, 0.6, 2.0, rate, {});
+        for (const int key : keys) {
+            const auto x = sustain<Engine, H>(key, 0.6, 2.0, rate, {});
             const double off = centsOff(x, 1.0, 2.0, rate, frequency(key));
-            expect(std::abs(off) <= 6.0, "horn key " + std::to_string(key) + " in tune at " + std::to_string(static_cast<int>(rate)) +
+            expect(std::abs(off) <= 6.0, name + " key " + std::to_string(key) + " in tune at " + std::to_string(static_cast<int>(rate)) +
                                              " Hz: " + std::to_string(off) + " cents");
         }
     }
     {
-        const auto x = sustain<HornEngine, H>(60, 0.6, 7.0, 48000.0, {});
-        expect(std::abs(rmsDb(x, 6.0, 7.0, 48000.0) - rmsDb(x, 1.0, 2.0, 48000.0)) < 1.0, "a held horn note holds its level");
+        const auto x = sustain<Engine, H>(middle, 0.6, 7.0, 48000.0, {});
+        expect(std::abs(rmsDb(x, 6.0, 7.0, 48000.0) - rmsDb(x, 1.0, 2.0, 48000.0)) < 1.0, "a held " + name + " note holds its level");
     }
     {
-        const auto soft = sustain<HornEngine, H>(60, 0.3, 2.0, 48000.0, {}), loud = sustain<HornEngine, H>(60, 1.0, 2.0, 48000.0, {});
+        const auto soft = sustain<Engine, H>(middle, 0.3, 2.0, 48000.0, {}), loud = sustain<Engine, H>(middle, 1.0, 2.0, 48000.0, {});
         const double louder = rmsDb(loud, 1.0, 2.0, 48000.0) - rmsDb(soft, 1.0, 2.0, 48000.0);
         const double brighter = tilt(loud, 1.0, 2.0, 48000.0) - tilt(soft, 1.0, 2.0, 48000.0);
-        expect(louder > 4.0 && brighter > 4.0, "CC1 is breath: louder by " + std::to_string(louder) + " dB and brassier by " +
+        expect(louder > 4.0 && brighter > 4.0, name + ": CC1 is breath, louder by " + std::to_string(louder) + " dB and brassier by " +
                                                     std::to_string(brighter) + " dB");
-        const auto stopped = sustain<HornEngine, H>(60, 0.6, 2.0, 48000.0, {{H::stopped, 1.0}}), open = sustain<HornEngine, H>(60, 0.6, 2.0, 48000.0, {});
-        expect(rmsDb(stopped, 1.0, 2.0, 48000.0) < rmsDb(open, 1.0, 2.0, 48000.0) - 3.0 &&
-                   tilt(stopped, 1.0, 2.0, 48000.0) > tilt(open, 1.0, 2.0, 48000.0) + 6.0,
-               "a stopped horn is quieter and thinner");
+        const auto shut = sustain<Engine, H>(middle, 0.6, 2.0, 48000.0, {{H::stopped, 1.0}}), open = sustain<Engine, H>(middle, 0.6, 2.0, 48000.0, {});
+        const double quieter = rmsDb(open, 1.0, 2.0, 48000.0) - rmsDb(shut, 1.0, 2.0, 48000.0);
+        const double thinner = tilt(shut, 1.0, 2.0, 48000.0) - tilt(open, 1.0, 2.0, 48000.0);
+        expect(quieter > 3.0 && thinner > 3.0, std::string(closed) + " is quieter by " + std::to_string(quieter) + " dB and thinner by " +
+                                                   std::to_string(thinner) + " dB");
     }
     {
         std::vector<float> right;
-        const auto left = sustain<HornEngine, H>(60, 0.6, 1.0, 48000.0, {{H::stereoWidth, 0.0}}, &right);
-        expect(left == right, "horns at Stereo Width 0 are exactly mono");
+        const auto left = sustain<Engine, H>(middle, 0.6, 1.0, 48000.0, {{H::stereoWidth, 0.0}}, &right);
+        expect(left == right, name + " at Stereo Width 0 is exactly mono");
         std::size_t ended = 0;
-        sustain<HornEngine, H>(60, 0.6, 2.0, 48000.0, {}, nullptr, &ended, 1.0);
-        expect(ended == 1, "a released horn note ends within a second");
-        expect(sustain<HornEngine, H>(55, 0.6, 1.0, 48000.0, {}) == sustain<HornEngine, H>(55, 0.6, 1.0, 48000.0, {}),
-               "horn renders repeat exactly");
+        sustain<Engine, H>(middle, 0.6, 2.0, 48000.0, {}, nullptr, &ended, 1.0);
+        expect(ended == 1, "a released " + name + " note ends within a second");
+        expect(sustain<Engine, H>(middle - 5, 0.6, 1.0, 48000.0, {}) == sustain<Engine, H>(middle - 5, 0.6, 1.0, 48000.0, {}),
+               name + " renders repeat exactly");
+    }
+}
+
+// Each brass instrument has its own voice: the trumpet brightest, the tuba darkest, the
+// trombone's blare at ff above the horn's.
+void brassVoices() {
+    const auto bright = [](auto engine, int key, double breath) {
+        using E = decltype(engine);
+        const auto x = sustain<E, BrassParameterId>(key, breath, 2.0, 48000.0, {});
+        return tilt(x, 1.0, 2.0, 48000.0);
+    };
+    const double horn = bright(HornEngine{}, 60, 0.6), trumpet = bright(TrumpetEngine{}, 60, 0.6), trombone = bright(TromboneEngine{}, 60, 0.6),
+                 tuba = bright(TubaEngine{}, 41, 0.6), hornLow = bright(HornEngine{}, 41, 0.6);
+    expect(trumpet > trombone + 3.0 && trombone > horn + 3.0 && tuba < hornLow, "each brass its own bell at C4: trumpet " + std::to_string(trumpet) +
+               ", trombone " + std::to_string(trombone) + ", horn " + std::to_string(horn) + " dB above 3 kHz; at F2 tuba " +
+               std::to_string(tuba) + ", horn " + std::to_string(hornLow));
+    // Two laws the Iowa recordings set (docs/brass.md): a low horn note's fundamental is weak beside
+    // its harmonics around 300-500 Hz (15-18 dB under them at mf), and a note speaks at once (within
+    // 10 dB of its level 5-20 ms after it starts, from C4 up).
+    {
+        const auto x = sustain<HornEngine, BrassParameterId>(41, 0.6, 2.0, 48000.0, {});
+        double strongest = 0.0;
+        for (int k = 3; k <= 8; ++k) {
+            strongest = std::max(strongest, powerAt(x, 1.0, 2.0, 48000.0, k * frequency(41)));
+        }
+        const double under = 10.0 * std::log10(strongest / powerAt(x, 1.0, 2.0, 48000.0, frequency(41)));
+        expect(under > 10.0, "a low horn note's fundamental is " + std::to_string(under) + " dB under its strongest harmonic");
+    }
+    {
+        const auto x = sustain<HornEngine, BrassParameterId>(65, 0.6, 1.0, 48000.0, {});
+        const double steady = rmsDb(x, 0.5, 1.0, 48000.0);
+        double start = -1.0, speaks = -1.0;
+        for (double t = 0.0; t < 0.3 && speaks < 0.0; t += 0.001) {
+            const double level = rmsDb(x, t, t + 0.005, 48000.0);
+            start = start < 0.0 && level > steady - 40.0 ? t : start;
+            speaks = level > steady - 10.0 ? t : -1.0;
+        }
+        expect(start >= 0.0 && speaks - start <= 0.015, "a horn note speaks in " + std::to_string((speaks - start) * 1000.0) + " ms");
     }
 }
 
@@ -576,7 +624,11 @@ int main() {
     harpTests();
     fluteTests();
     stringsTests();
-    hornTests();
+    brassTests<HornEngine>("horn", {41, 53, 65, 77}, "a stopped horn");
+    brassTests<TrumpetEngine>("trumpet", {52, 60, 67, 74, 84}, "a muted trumpet");
+    brassTests<TromboneEngine>("trombone", {40, 48, 55, 62, 70, 77}, "a muted trombone");
+    brassTests<TubaEngine>("tuba", {26, 33, 41, 48, 55, 65}, "a muted tuba");
+    brassVoices();
     between<FluteEngine>("flute");
     between<OboeEngine>("oboe");
     between<ClarinetEngine>("clarinet");

@@ -1,7 +1,7 @@
 // Loads the built CLAP binary and checks state compatibility (states saved before the mic
 // parameters existed must still load, malformed state must be rejected), the advertised
-// extensions, and that a finished voice reaches the host as NOTE_END. The harp, flute, strings and
-// horn get the same round trip, presets and NOTE_END checks.
+// extensions, and that a finished voice reaches the host as NOTE_END. The other instruments get the
+// same round trip, presets and NOTE_END checks.
 #include <clap/clap.h>
 #include <dlfcn.h>
 #include <cmath>
@@ -116,12 +116,14 @@ int main(int argc, char** argv) {
                                                                 file.path().c_str(), &receiver);
     }
     const auto presetsFor = [&](const char* id) { return std::count(discovered.pluginIds.begin(), discovered.pluginIds.end(), id); };
-    check(everyFileRead && discovered.names.size() == 24 && discovered.pluginIds.size() == 24 && !discovered.keyed &&
+    check(everyFileRead && discovered.names.size() == 30 && discovered.pluginIds.size() == 30 && !discovered.keyed &&
           presetsFor("com.pianocraft.upright") == 4 && presetsFor("com.pianocraft.harp") == 4 &&
           presetsFor("com.pianocraft.flute") == 2 && presetsFor("com.pianocraft.strings") == 7 &&
-          presetsFor("com.pianocraft.horn") == 3 && presetsFor("com.pianocraft.oboe") == 2 &&
-          presetsFor("com.pianocraft.clarinet") == 2,
-          "24 preset files, one unkeyed preset each: 4 piano, 4 harp, 2 flute, 7 strings, 3 horn, 2 oboe, 2 clarinet");
+          presetsFor("com.pianocraft.horn") == 3 && presetsFor("com.pianocraft.trumpet") == 2 &&
+          presetsFor("com.pianocraft.trombone") == 2 && presetsFor("com.pianocraft.tuba") == 2 &&
+          presetsFor("com.pianocraft.oboe") == 2 && presetsFor("com.pianocraft.clarinet") == 2,
+          "30 preset files, one unkeyed preset each: 4 piano, 4 harp, 2 flute, 7 strings, 3 horn, 2 trumpet, 2 trombone, "
+          "2 tuba, 2 oboe, 2 clarinet");
     provider->destroy(provider);
     auto* presetLoad = static_cast<const clap_plugin_preset_load_t*>(plugin->get_extension(plugin, CLAP_EXT_PRESET_LOAD));
     auto loadPreset = [&](const char* file) {
@@ -171,12 +173,16 @@ int main(int argc, char** argv) {
     plugin->destroy(plugin);
 
     // The other voices: state round trip, a preset over defaults, choice text, and NOTE_END.
-    check(factory->get_plugin_count(factory) == 7, "the bundle holds piano, harp, flute, strings, horn, oboe and clarinet");
+    check(factory->get_plugin_count(factory) == 10,
+          "the bundle holds piano, harp, flute, strings, horn, trumpet, trombone, tuba, oboe and clarinet");
     struct Other { const char* id; const char* preset; clap_id changed; double expected; clap_id choice; const char* choiceText; };
     for (const Other& other : {Other{"com.pianocraft.harp", "/harp-harmonics-mono.pianocraft", 4, 1.0, 4, "On"},
                                Other{"com.pianocraft.flute", "/flute-veiled.pianocraft", 2, 1.8, CLAP_INVALID_ID, nullptr},
                                Other{"com.pianocraft.strings", "/strings-harmonics-mono.pianocraft", 6, 1.0, 6, "On"},
                                Other{"com.pianocraft.horn", "/horn-stopped-mono.pianocraft", 2, 1.0, 2, "On"},
+                               Other{"com.pianocraft.trumpet", "/trumpet-muted-mono.pianocraft", 2, 1.0, 2, "On"},
+                               Other{"com.pianocraft.trombone", "/trombone-muted-mono.pianocraft", 2, 1.0, 2, "On"},
+                               Other{"com.pianocraft.tuba", "/tuba-mono.pianocraft", 4, 0.0, 2, "On"},
                                Other{"com.pianocraft.oboe", "/oboe-dolce.pianocraft", 5, 0.75, CLAP_INVALID_ID, nullptr},
                                Other{"com.pianocraft.clarinet", "/clarinet-dolce.pianocraft", 5, 0.75, CLAP_INVALID_ID, nullptr}}) {
         auto* instance = factory->create_plugin(factory, &host, other.id);

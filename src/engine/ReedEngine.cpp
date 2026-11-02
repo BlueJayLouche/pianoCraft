@@ -10,17 +10,21 @@ namespace {
 
 using namespace filters;
 
-// The B-flat clarinet sounds D3 to B-flat 6; the oboe B-flat 3 to A6. Constants set by ear and by
-// tests/orchestra_tests.cpp (pitch, register, spectra by dynamic).
+// The B-flat clarinet sounds D3 to B-flat 6; the oboe B-flat 3 to A6. The bores' constants set by ear
+// and by tests/orchestra_tests.cpp (pitch, register, spectra by dynamic); the clarinet's even
+// harmonics, the output stages, the breath's turbulence and wander fitted to the University of Iowa
+// recordings (docs/oboe-and-clarinet.md, tools/iowa_calibration.py).
 constexpr ReedModel clarinet{50, 94, false, 0.0, 0.7, -0.3, 0.5, 700.0, {{{1500.0, 2.0, 0.0}, {3000.0, 2.0, 0.0}}}, 0.0,
-                             0.70, 0.78, 1.2, 6.0, 0.0, 3.5};
+                             0.70, 0.78, 1.2, 6.0, 0.0, 3.5, 0.3, {0, 1000.0, 428.0, 30.0, 0.7, 1.0}, 4.0};
 constexpr ReedModel oboe{58, 93, true, 0.3, 0.7, -0.3, 0.5, 1000.0, {{{1100.0, 2.5, 0.5}, {2800.0, 3.0, 0.3}}}, 0.6,
-                         0.70, 0.80, 2.0, 8.0, 4.0, 2.5};
+                         0.70, 0.80, 2.0, 8.0, 4.0, 2.5, 0.0, {1, 1129.0, 10463.0, 1.10, 0.0, 1.81}, 3.0};
 
 } // namespace
 
 ReedEngine::ReedEngine(const ReedModel& model) : MonoWind(model.lowestKey, model.highestKey), model_(model) {
     parameters_[static_cast<std::size_t>(ReedParameterId::vibratoDepth)] = model.vibrato;
+    wander_ = model.wander;
+    registerInterval_ = model.conical ? 12 : 19; // a cylinder closed at the reed overblows a twelfth
 }
 
 OboeEngine::OboeEngine() : ReedEngine(oboe) {}
@@ -39,6 +43,9 @@ void ReedEngine::reset() {
     radiated_ = noiseLow_ = 0.0;
     formant_ = {};
     dynamic_ = {};
+    voicing_.reset();
+    evenMean_ = 0.0;
+    evenState_ = {};
     noise_ = 0x2545F491u;
 }
 
@@ -79,6 +86,9 @@ void ReedEngine::render(float* left, float* right, std::uint32_t frameCount) {
     // pp, every partial at ff.
     const double dynamicBreath = std::clamp(breath_, 0.0, 1.0);
     const auto dynamic = butterworth(false, std::min(frequency * (model_.open + model_.bloom * dynamicBreath * dynamicBreath), 0.45 * fs), fs);
+    voicing_.block(model_.voicing, dynamicBreath, frequency, fs);
+    const double evenRate = 1.0 - std::exp(-2.0 * pi * 10.0 / fs);
+    const auto evenCutoff = butterworth(true, 1500.0, fs);
 
     for (std::uint32_t frame = 0; frame < frameCount; ++frame) {
         frame_ = frame;
@@ -89,10 +99,11 @@ void ReedEngine::render(float* left, float* right, std::uint32_t frameCount) {
         noise_ ^= noise_ >> 17;
         noise_ ^= noise_ << 5;
         noiseLow_ += 0.3 * (static_cast<double>(noise_) / 2147483648.0 - 1.0 - noiseLow_);
-        // CC1 is the mouth's pressure behind the reed; the breath is turbulent, more so as the
-        // tongue releases it and while a slur's new resonance takes over.
+        // The mouth's pressure behind the reed, steady per note; the breath is turbulent (20% of the
+        // noise, fitted to the recordings' noise between harmonics), more so as the tongue releases
+        // it and while a slur's new resonance takes over.
         const double mouth = player.envelope * pressure * (1.0 - 0.1 * player.slur) *
-                             (1.0 + 0.02 * noiseLow_ * (noiseLevel + 4.0 * std::exp(-noteSeconds_ / 0.02) + 2.0 * player.slur));
+                             (1.0 + noiseLow_ * (0.2 * noiseLevel + 0.02 * (4.0 * std::exp(-noteSeconds_ / 0.02) + 2.0 * player.slur)));
 
         // The bore. A cylinder's round trip is half the period (the bell inverts the wave); a cone,
         // open at both ends, takes the whole period over its two sides. Less the bell filter's phase
@@ -106,21 +117,18 @@ void ReedEngine::render(float* left, float* right, std::uint32_t frameCount) {
             return lagrange(bore_.data(), mask, write_, std::clamp(delay, 4.0, static_cast<double>(delaySize - 4)));
         };
         const auto tipAt = [&](double cycle) { return lagrange(apex_.data(), mask, write_, std::max(apex * cycle, 2.0)); };
-        // While a slur's keys move, the loop takes the new length half way (a pad seating,
-        // player.seat), and what radiates crossfades from the old length's reading to the new: the
-        // pitches between hardly sound.
-        const double k = player.keys;
-        const double fromOld = k < 1.0 ? boreAt(periodFrom_ * tuned) : 0.0;
+        // While a slur's keys move, the reed hears the bore at both lengths, in the shares the pads
+        // give them (player.seat), and the half-open holes lose more of the wave (player.leak).
+        const bool slurring = player.keys < 1.0;
         const double toNew = boreAt(period_ * tuned);
-        const double boreOut = k < 1.0 ? (1.0 - player.seat) * fromOld + player.seat * toNew : toNew;
-        const double heard = k < 1.0 ? (1.0 - k) * fromOld + k * toNew : toNew;
-        reflection_ = (1.0 - pole) * boreOut + pole * reflection_;
-        const double fromBell = -0.95 * reflection_;
+        const double heard = slurring ? (1.0 - player.seat) * boreAt(player.from * tuned) + player.seat * boreAt(player.to * tuned) : toNew;
+        reflection_ = (1.0 - pole) * heard + pole * reflection_;
+        const double fromBell = -0.95 * (1.0 - leakLoss * player.leak) * reflection_;
         // A cone (Scavone's form, as STK's Saxofony): the bell's wave also runs to the missing tip
         // and back, inverted there, and the reed hears both.
         const double fromTip = !model_.conical ? 0.0
-                               : -0.99 * (k < 1.0 ? (1.0 - player.seat) * tipAt(periodFrom_ * tuned) + player.seat * tipAt(period_ * tuned)
-                                                  : tipAt(period_ * tuned));
+                               : -0.99 * (slurring ? (1.0 - player.seat) * tipAt(player.from * tuned) + player.seat * tipAt(player.to * tuned)
+                                                   : tipAt(period_ * tuned));
 
         // The reed (J. O. Smith's reed table): the pressure across it closes it, so the bore's
         // returning wave is reflected by the closed reed and the mouth's pressure let in through the
@@ -140,10 +148,15 @@ void ReedEngine::render(float* left, float* right, std::uint32_t frameCount) {
         // The tone holes radiate the bore's pressure, rising 6 dB an octave up to their cutoff;
         // the bell and body add their resonances.
         radiated_ += toneHoles * (heard - radiated_);
-        const double holes = heard - radiated_;
+        double holes = heard - radiated_;
+        if (model_.evens > 0.0) {
+            const double square = holes * holes;
+            evenMean_ += evenRate * (square - evenMean_);
+            holes += model_.evens * biquad(evenCutoff, (square - evenMean_) / std::sqrt(evenMean_ + 1.0e-20), evenState_[0], evenState_[1]);
+        }
         const double sound = holes + model_.formants[0][2] * biquad(first, holes, formant_[0], formant_[1]) +
                              model_.formants[1][2] * biquad(second, holes, formant_[2], formant_[3]);
-        const double sample = biquad(dynamic, sound, dynamic_[0], dynamic_[1]) * std::pow(breath, 0.9) * volume_;
+        const double sample = voicing_.process(biquad(dynamic, sound, dynamic_[0], dynamic_[1])) * std::pow(breath, 0.9) * volume_;
         level_ = std::max(std::abs(sound), level_ * 0.9995); // the reed speaking, whatever the dynamic
         const double gain = output * expression_;
         left[frame] = static_cast<float>(gain * sample * gainLeft);

@@ -120,6 +120,8 @@ private:
         std::array<double, bodyModeCount> gain{};
         std::array<std::array<double, 2 * bodyModeCount>, 2> state{}; // left, right
         std::array<double, 2> mute{}; // the mute's low-pass, left and right
+        std::array<std::array<double, 2>, 2> poles{}; // the roll-off, two one-poles, left and right
+        double rolloff = 1.0;
     };
 
     void start(Voice& voice);

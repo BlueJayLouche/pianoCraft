@@ -21,15 +21,29 @@ std::size_t familyFor(int key) {
     return key < 36 ? 3 : key < 48 ? 2 : key < 55 ? 1 : 0;
 }
 
-// A violin's body (frequency, Q, signed gain): the signature modes A0 (air), CBR, B1- and B1+
-// (Bissinger), a few higher ones, and the bridge hill near 2.5 kHz (Jansson). Analytic, set by
-// ear. The larger instruments scale the frequencies by size, the bridge hill by its square root.
-constexpr std::array<std::array<double, 3>, 10> violinBody{{
-    {{275.0, 15.0, 0.8}}, {{405.0, 20.0, -0.4}}, {{470.0, 18.0, 1.0}}, {{545.0, 20.0, 0.9}},
-    {{700.0, 15.0, -0.5}}, {{900.0, 12.0, 0.5}}, {{1150.0, 12.0, -0.4}}, {{1500.0, 10.0, 0.4}},
-    {{2500.0, 2.5, 1.0}}, {{3600.0, 4.0, -0.3}},
+// The bodies' modes (frequency, Q): a violin's signature modes A0 (air), CBR, B1- and B1+
+// (Bissinger), a few higher ones, and the bridge hill near 2.5 kHz (Jansson). The larger
+// instruments scale the frequencies by size, the bridge hill by its square root.
+constexpr std::array<std::array<double, 2>, 10> bodyModes{{
+    {{275.0, 15.0}}, {{405.0, 20.0}}, {{470.0, 18.0}}, {{545.0, 20.0}}, {{700.0, 15.0}},
+    {{900.0, 12.0}}, {{1150.0, 12.0}}, {{1500.0, 10.0}}, {{2500.0, 2.5}}, {{3600.0, 4.0}},
 }};
-constexpr std::array<double, 4> familyScale{1.0, 0.82, 0.42, 0.26};
+// Each family's body, fitted to the University of Iowa recordings (model/iowa-provenance.json; every
+// recording of the instrument, the bowed string taken from whichever family's render): the modes'
+// signed gains, the share passed direct, the size, and a two-pole roll-off. docs/strings-and-horn.md.
+struct FamilyBody {
+    std::array<double, 10> gain;
+    double direct, scale, rolloff;
+};
+constexpr std::array<FamilyBody, 4> familyBody{{
+    {{{-0.755, 1.314, 2.813, -1.341, -1.1, 0.766, -0.824, -0.164, 0.45, 0.098}}, 0.202, 0.881, 5373.0},     // violin
+    {{{-1.569, -1.268, 1.177, 0.788, 0.246, 2.383, -1.932, -1.141, 4.043, 1.125}}, 0.028, 0.828, 953.0},    // viola
+    {{{1.766, -0.637, 1.698, -0.586, -0.925, -0.028, -0.309, -0.198, 0.417, -0.479}}, 0.269, 0.412, 1410.0}, // cello
+    {{{3.459, -1.43, 0.587, 0.096, -0.632, 0.066, -0.153, 0.101, 0.014, -0.023}}, 0.004, 0.285, 40000.0},   // bass
+}};
+// How noisy each family's friction is (rosin), fitted to the recordings' noise between harmonics. The
+// bass stays at 0.3: less or more both spoil its spectrum, and it is still a little noisy.
+constexpr std::array<double, 4> familyRosin{0.9, 0.9, 0.9, 0.3};
 // Seats, -1 left to 1 right: violins left, violas centre, cellos right, basses further right.
 constexpr std::array<double, 4> familySeat{-0.6, 0.15, 0.45, 0.75};
 
@@ -67,12 +81,12 @@ void StringsEngine::prepare(double sampleRate) {
     }
     pool_.assign(voiceCapacity * playerLimit * 2 * lineSize_, 0.0F);
     for (std::size_t f = 0; f < familyCount; ++f) {
+        const double size = familyBody[f].scale;
         for (std::size_t i = 0; i < bodyModeCount; ++i) {
-            const bool hill = i == 8;
-            const double scale = hill ? std::sqrt(familyScale[f]) : familyScale[f];
-            body_[f].coefficients[i] = bandpass(violinBody[i][0] * scale, violinBody[i][1], sampleRate);
-            body_[f].gain[i] = violinBody[i][2];
+            body_[f].coefficients[i] = bandpass(bodyModes[i][0] * (i == 8 ? std::sqrt(size) : size), bodyModes[i][1], sampleRate);
+            body_[f].gain[i] = familyBody[f].gain[i];
         }
+        body_[f].rolloff = 1.0 - std::exp(-2.0 * filters::pi * std::min(familyBody[f].rolloff, 0.45 * sampleRate) / sampleRate);
     }
     reset();
 }
@@ -84,6 +98,7 @@ void StringsEngine::reset() {
     for (auto& body : body_) {
         body.state = {};
         body.mute = {};
+        body.poles = {};
     }
     bend_ = {};
     sustain_ = {};
@@ -323,7 +338,7 @@ void StringsEngine::render(float* left, float* right, std::uint32_t frameCount) 
     std::array<std::array<double, bodyModeCount>, familyCount> bodyGain{};
     for (std::size_t f = 0; f < familyCount; ++f) {
         for (std::size_t i = 0; i < bodyModeCount; ++i) {
-            const double frequency = violinBody[i][0] * (i == 8 ? std::sqrt(familyScale[f]) : familyScale[f]);
+            const double frequency = bodyModes[i][0] * (i == 8 ? std::sqrt(familyBody[f].scale) : familyBody[f].scale);
             bodyGain[f][i] = body_[f].gain[i] * (muted && frequency > 1000.0 ? 0.25 : 1.0) * (muted ? 0.7 : 1.0);
         }
     }
@@ -412,7 +427,7 @@ void StringsEngine::render(float* left, float* right, std::uint32_t frameCount) 
                 player.rosin ^= player.rosin >> 17;
                 player.rosin ^= player.rosin << 5;
                 player.rosinLow += rosinRate * (static_cast<double>(player.rosin) / 2147483648.0 - 1.0 - player.rosinLow);
-                double bowSpeed = player.envelope * speed * player.bowScale * (1.0 + 0.05 * player.arm) *
+                double bowSpeed = player.envelope * speed * player.bowScale * (1.0 + 0.2 * player.arm) *
                                   (1.0 + 0.6 * voice.velocity * std::exp(-t / 0.08));
                 double grip = slope;
                 if (tremolo) {
@@ -450,7 +465,7 @@ void StringsEngine::render(float* left, float* right, std::uint32_t frameCount) 
                 // their velocities differ enough, then slips.
                 // The bow stays on the string as it stops, damping it, as players end a note.
                 const double difference = bowSpeed - (fromBridge + fromNut);
-                const double friction = std::abs(difference) * grip * (1.0 + 0.3 * player.rosinLow) + 0.75;
+                const double friction = std::abs(difference) * grip * (1.0 + familyRosin[voice.family] * player.rosinLow) + 0.75;
                 const double added = difference * std::min(1.0, 1.0 / (friction * friction * friction * friction));
                 neck[player.write] = static_cast<float>(fromBridge + added);
                 bridge[player.write] = static_cast<float>(fromNut + added);
@@ -473,10 +488,16 @@ void StringsEngine::render(float* left, float* right, std::uint32_t frameCount) 
             auto& body = body_[f];
             body.mute[0] += muteLowpass * (sumLeft[f] - body.mute[0]);
             body.mute[1] += muteLowpass * (sumRight[f] - body.mute[1]);
-            double l = 0.2 * body.mute[0], r = 0.2 * body.mute[1];
+            double l = familyBody[f].direct * body.mute[0], r = familyBody[f].direct * body.mute[1];
             for (std::size_t i = 0; i < bodyModeCount; ++i) {
                 l += bodyGain[f][i] * biquad(body.coefficients[i], body.mute[0], body.state[0][2 * i], body.state[0][2 * i + 1]);
                 r += bodyGain[f][i] * biquad(body.coefficients[i], body.mute[1], body.state[1][2 * i], body.state[1][2 * i + 1]);
+            }
+            for (auto& pole : body.poles) {
+                pole[0] += body.rolloff * (l - pole[0]);
+                pole[1] += body.rolloff * (r - pole[1]);
+                l = pole[0];
+                r = pole[1];
             }
             outLeft += l;
             outRight += r;

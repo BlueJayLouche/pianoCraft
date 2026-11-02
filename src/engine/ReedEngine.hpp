@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/Filters.hpp"
 #include "engine/MonoWind.hpp"
 
 #include <array>
@@ -34,6 +35,11 @@ struct ReedModel {
     double bloom;
     double stretch; // cents sharp per kHz^2, taking back the loop's flattening at the top
     double level;   // output scale
+    // Even harmonics beside the odd (the clarinet: its mouthpiece, tone holes and bell are not a
+    // perfect cylinder's), as a share of the radiated pressure's square, normalised to its level.
+    double evens;
+    filters::Voicing voicing; // the fitted output stage
+    double wander;            // the player's breath, never quite steady (MonoWind)
 };
 
 // A reed instrument, played by MonoWind: a reed valve (J. O. Smith's reed table) on a bore. See
@@ -51,6 +57,9 @@ private:
     void silence() override;
 
     ReedModel model_;
+    filters::VoicingStage voicing_;
+    double evenMean_ = 0.0; // the radiated pressure's mean square
+    std::array<double, 2> evenState_{}; // the even harmonics' high-pass
     std::array<double, delaySize> bore_{};
     std::array<double, delaySize> apex_{}; // a conical bore's short side, reed to tip and back
     std::size_t write_ = 0;

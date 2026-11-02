@@ -53,21 +53,20 @@ public:
 
 protected:
     static constexpr std::size_t parameterCount = 8;
+    // The share of the bore's wave a half-open hole loses each round trip, on top of the bell's.
+    static constexpr double leakLoss = 0.3;
 
     // A block's rates, from the parameters.
     struct Pace {
-        double smooth, glide, legato, attack, release, vibratoStep, vibratoDepth;
+        double smooth, glide, attack, release, vibratoStep, vibratoDepth, wander;
     };
-    // One sample of the player: breath (smoothed), the tongue's envelope, how recently it slurred
-    // (1 at the slur, decaying over ~12 ms), the vibrato (-1 to 1 times its depth), and how far a
-    // slur's keys have moved (0 to 1): the instrument hears its bore at periodFrom_ and period_ in
-    // those shares, so the old note gives way to the new one without sliding through the pitches
-    // between, as a tone hole closing does.
+    // One sample of the player: breath (smoothed), the tongue's envelope, how unsettled a slur leaves
+    // the bore (1 while its keys move, fading over 10 ms after), the vibrato (-1 to 1 times its
+    // depth), and a slur's keys: while they move (keys < 1) the bore is at two lengths, from and to
+    // (periods, in samples), in the shares 1 - seat and seat, and leak (0 to 1) is how open a
+    // half-open hole leaves it.
     struct Breath {
-        double breath, envelope, slur, vibrato, keys;
-        // The loop's own share of the new length: it takes it over the middle fifth of the keys'
-        // travel (~2.4 ms), a pad seating, too quick to hear as a slide but not a step, which clicks.
-        double seat;
+        double breath, envelope, slur, vibrato, keys, from, to, seat, leak;
     };
 
     Pace pace() const;
@@ -96,6 +95,11 @@ protected:
     double period_ = 100.0;
     double periodFrom_ = 100.0; // the slurred-from note's period, while the keys move
     double keys_ = 1.0;
+    double seat_ = 1.0;
+    double periodVia_ = 100.0;   // the fingering between, while a slur's fingers move
+    double fingerSeconds_ = 0.0; // how long the slur stays there
+    double tapFrom_ = 100.0;     // the bore's two lengths while a pad moves
+    double tapTo_ = 100.0;
     double breath_ = 0.8;
     double breathTarget_ = 0.8;
     double expression_ = 1.0;
@@ -109,6 +113,8 @@ protected:
     double timbre_ = 0.0;
     double brightnessModulation_ = 0.0;
     double level_ = 0.0; // the instrument sets it: its output's peak, decaying
+    int registerInterval_ = 12; // the instrument sets it: the clarinet overblows a twelfth
+    double wander_ = 0.0; // the instrument sets it: how unsteady the player's breath is (a share of it)
     std::uint32_t frame_ = 0;
 
 private:
@@ -118,6 +124,8 @@ private:
     int lowestKey_;
     int highestKey_;
     std::array<EndedNote, 16> ended_{};
+    std::uint32_t wanderNoise_ = 0x6C8E9CF5u;
+    std::array<double, 2> wanderState_{};
     std::size_t endedCount_ = 0;
 };
 

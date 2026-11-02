@@ -28,7 +28,7 @@ void MonoWind::resetPlayer() {
     sounding_ = keyDown_ = false;
     releasedAt_ = -1.0;
     slurSeconds_ = 1.0e9;
-    keys_ = 1.0;
+    keys_ = seat_ = 1.0;
     envelope_ = level_ = 0.0;
     breath_ = breathTarget_ = 0.8;
     expression_ = expressionTarget_ = 1.0;
@@ -36,6 +36,8 @@ void MonoWind::resetPlayer() {
     vibratoPhase_ = 0.0;
     bend_ = 0.0;
     endedCount_ = 0;
+    wanderNoise_ = 0x6C8E9CF5u;
+    wanderState_ = {};
 }
 
 double MonoWind::period(int key) const {
@@ -52,6 +54,7 @@ void MonoWind::startNote(const NoteAddress& address, double velocity, bool legat
     if (sounding_) {
         endNote(note_); // the slur or re-attack takes over the sounding note's voice
     }
+    const int fromKey = note_.key;
     note_ = address;
     sounding_ = keyDown_ = true;
     releasedAt_ = -1.0;
@@ -65,14 +68,37 @@ void MonoWind::startNote(const NoteAddress& address, double velocity, bool legat
         velocity_ = velocity;
         attackSeconds_ = 0.09 - 0.06 * velocity;
         noteSeconds_ = 0.0;
-        period_ = periodFrom_ = periodTarget_;
-        keys_ = 1.0;
+        period_ = periodFrom_ = tapFrom_ = tapTo_ = periodTarget_;
+        keys_ = seat_ = 1.0;
         envelope_ = 0.0; // the tongue stops the air before it releases it again
     } else {
         // The keys move: from the note sounding now (the nearer, if a slur is still under way).
-        periodFrom_ = keys_ < 0.5 ? periodFrom_ : period_;
+        periodFrom_ = seat_ < 0.5 ? tapFrom_ : tapTo_;
+        // When several fingers move they don't land together: professionals spend 13 +- 9 ms in the
+        // fingering between (21 +- 11 ms with four fingers; Almeida, Chow, Smith and Wolfe, JASA
+        // 2009, flute). Mostly that fingering sounds close to one of the two notes (a "safe" order);
+        // otherwise some other note, too briefly to hear as a pitch. Each pair of notes has its own
+        // fingering, so the same detour each time: none for about a third of steps (one finger) and
+        // for octaves (the octave key); otherwise 0.5 to 2 Legato Times.
+        std::uint32_t hash = static_cast<std::uint32_t>(address.key) * 0x9E3779B1u ^ static_cast<std::uint32_t>(fromKey) * 0x85EBCA77u ^
+                             static_cast<std::uint32_t>(lowestKey_) * 0xC2B2AE3Du;
+        hash ^= hash >> 15;
+        hash *= 0x2C1B3C6Du;
+        hash ^= hash >> 12;
+        const auto share = [&](int bits) { return static_cast<double>((hash >> bits) & 0xFF) / 256.0; };
+        const int interval = std::abs(address.key - fromKey);
+        const bool oneFinger = interval == registerInterval_ || (interval <= 2 && share(0) < 0.35);
+        fingerSeconds_ = oneFinger ? 0.0 : parameters_[index(WindParameterId::legatoTime)] * (0.5 + 1.5 * share(8));
+        fingerSeconds_ = fingerSeconds_ < 0.0045 ? 0.0 : fingerSeconds_; // shorter than a pad: no detour
+        if (share(16) < 0.7) {
+            periodVia_ = (share(24) < 0.5 ? periodFrom_ : periodTarget_) * std::pow(2.0, (share(4) < 0.5 ? 0.35 : -0.35) / 12.0);
+        } else {
+            int step = (share(24) < 0.5 ? 1 : -1) * (share(4) < 0.5 ? 1 : 2);
+            step = address.key + step == fromKey ? -step : step;
+            periodVia_ = period(address.key + step);
+        }
         period_ = periodTarget_;
-        keys_ = 0.0;
+        keys_ = seat_ = 0.0;
         slurSeconds_ = 0.0;
     }
 }
@@ -130,7 +156,8 @@ void MonoWind::setParameter(WindParameterId id, double value) {
     if (i != 0 && i < parameterCount && std::isfinite(value)) {
         parameters_[i] = value;
         if (id == WindParameterId::masterTune && sounding_) {
-            periodTarget_ = period_ = periodFrom_ = period(note_.key);
+            periodTarget_ = period_ = periodFrom_ = tapFrom_ = tapTo_ = period(note_.key);
+            keys_ = seat_ = 1.0;
         }
     }
 }
@@ -187,16 +214,24 @@ MonoWind::Pace MonoWind::pace() const {
     const auto& p = parameters_;
     return {1.0 - std::exp(-1.0 / (0.015 * fs)),
             1.0 - std::exp(-1.0 / (0.01 * fs)),
-            1.0 / (std::max(p[index(WindParameterId::legatoTime)], 0.001) * fs),
             1.0 - std::exp(-1.0 / (attackSeconds_ * fs)),
             1.0 - std::exp(-1.0 / (0.06 * fs)),
             2.0 * filters::pi * std::clamp(p[index(WindParameterId::vibratoRate)], 0.5, 12.0) / fs,
-            std::max(p[index(WindParameterId::vibratoDepth)], 0.0) * vibratoAmount_};
+            std::max(p[index(WindParameterId::vibratoDepth)], 0.0) * vibratoAmount_,
+            1.0 - std::exp(-2.0 * filters::pi * 6.0 / fs)};
 }
 
 MonoWind::Breath MonoWind::advance(const Pace& pace) {
     const double fs = sampleRate_;
     breath_ += pace.smooth * (breathTarget_ - breath_);
+    // The player's breath is never quite steady: a slow wander under 6 Hz (measured beside the
+    // recordings, as the level's unsteadiness). Seeded, so renders repeat.
+    wanderNoise_ ^= wanderNoise_ << 13;
+    wanderNoise_ ^= wanderNoise_ >> 17;
+    wanderNoise_ ^= wanderNoise_ << 5;
+    wanderState_[0] += pace.wander * (static_cast<double>(wanderNoise_) / 2147483648.0 - 1.0 - wanderState_[0]);
+    wanderState_[1] += pace.wander * (wanderState_[0] - wanderState_[1]);
+    const double breath = breath_ * (1.0 + wander_ * wanderState_[1]);
     expression_ += pace.glide * (expressionTarget_ - expression_);
     volume_ += pace.glide * (volumeTarget_ - volume_);
     if (keyDown_) {
@@ -208,17 +243,35 @@ MonoWind::Breath MonoWind::advance(const Pace& pace) {
     }
     noteSeconds_ += 1.0 / fs;
     slurSeconds_ += 1.0 / fs;
-    // A slur is the keys moving, about 10 ms (Almeida, Chow, Smith and Wolfe, JASA 2009), not a
-    // glide: the bore's length changes that fast, and while the new resonance takes over from the
-    // old the air is disturbed for ~15 ms.
-    const double slur = std::exp(-slurSeconds_ / 0.012);
-    keys_ = std::min(keys_ + pace.legato, 1.0);
-    const double keys = keys_ * keys_ * (3.0 - 2.0 * keys_);
-    const double pad = std::clamp((keys_ - 0.4) / 0.2, 0.0, 1.0);
+    // A slur changes the bore's length outright, no glide: each pad seats in 1.4 ms or lifts in
+    // 4.1 ms, acoustically (ibid.), the half-open hole losing more of the wave meanwhile. With several
+    // fingers the bore goes by the fingering between (periodVia_). Then the oscillation settles.
+    double leak = 0.0;
+    const double unsettled = std::exp(-std::max(slurSeconds_ - fingerSeconds_ - 0.004, 0.0) / 0.01);
+    if (keys_ < 1.0) {
+        const auto ease = [](double x) { x = std::clamp(x, 0.0, 1.0); return x * x * (3.0 - 2.0 * x); };
+        // One pad moves the pitch a step or so, and half open it sounds a pitch between (half way
+        // between two lengths the bore acts as one of their mean length). A bigger change is many
+        // pads at once, or a register change (overblowing, or a register vent), the oscillation
+        // jumping to the bore's next mode: switched in 1 ms, so no pitch between is heard.
+        const auto pad = [](double from, double to) {
+            return std::abs(12.0 * std::log2(to / from)) > 2.5 ? 0.001 : to > from ? 0.0014 : 0.0041;
+        };
+        const bool between = slurSeconds_ < fingerSeconds_;
+        tapFrom_ = between || fingerSeconds_ <= 0.0 ? periodFrom_ : periodVia_;
+        tapTo_ = between ? periodVia_ : period_;
+        const double moving = between ? slurSeconds_ : slurSeconds_ - fingerSeconds_;
+        seat_ = ease(moving / pad(tapFrom_, tapTo_));
+        leak = 4.0 * seat_ * (1.0 - seat_);
+        if (!between && seat_ >= 1.0) {
+            keys_ = 1.0;
+            tapFrom_ = tapTo_ = period_;
+        }
+    }
     // Players let vibrato in after the note has spoken.
     const double vibrato = std::sin(vibratoPhase_) * pace.vibratoDepth * std::clamp((noteSeconds_ - 0.25) / 0.6, 0.0, 1.0);
     vibratoPhase_ = std::fmod(vibratoPhase_ + pace.vibratoStep, 2.0 * filters::pi);
-    return {breath_, envelope_, slur, vibrato, keys, pad * pad * (3.0 - 2.0 * pad)};
+    return {breath, envelope_, unsettled, vibrato, keys_, tapFrom_, tapTo_, seat_, leak};
 }
 
 bool MonoWind::silent(float* left, float* right, std::uint32_t frameCount) const {

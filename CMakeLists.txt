@@ -20,7 +20,7 @@ FetchContent_MakeAvailable(clap)
 set(PIANOCRAFT_ENGINE_SOURCES
     src/engine/FluteEngine.cpp
     src/engine/HarpEngine.cpp
-    src/engine/HornEngine.cpp
+    src/engine/BrassEngine.cpp
     src/engine/MonoWind.cpp
     src/engine/StringsEngine.cpp
     src/engine/PianoEngine.cpp

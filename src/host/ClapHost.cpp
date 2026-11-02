@@ -1,6 +1,6 @@
 #include "../engine/FluteEngine.hpp"
 #include "../engine/HarpEngine.hpp"
-#include "../engine/HornEngine.hpp"
+#include "../engine/BrassEngine.hpp"
 #include "../engine/PianoEngine.hpp"
 #include "../engine/ReedEngine.hpp"
 #include "../engine/StringsEngine.hpp"
@@ -29,8 +29,8 @@ using pianocraft::FluteEngine;
 using pianocraft::FluteParameterId;
 using pianocraft::HarpEngine;
 using pianocraft::HarpParameterId;
+using pianocraft::BrassParameterId;
 using pianocraft::HornEngine;
-using pianocraft::HornParameterId;
 using pianocraft::NoteAddress;
 using pianocraft::ParameterId;
 using pianocraft::PianoEngine;
@@ -311,31 +311,79 @@ struct Strings {
     }};
 };
 
-struct Horn {
-    using Engine = HornEngine;
-    using Id = HornParameterId;
+// The brass share one engine and one set of controls; what closes the bell is the horn player's
+// hand or a straight mute (docs/brass.md).
+template <class E>
+struct Brass {
+    using Engine = E;
+    using Id = BrassParameterId;
+    static constexpr std::array<ParameterSpec, 5> parametersWith(const char* closed) {
+        return {{
+            {pid(BrassParameterId::stopped), closed, "Articulation", 0.0, 1.0, 0.0, choiceFlags, offOnNames.data()},
+            {pid(BrassParameterId::brightness), "Brightness", "Bell", 0.25, 2.0, 1.0, perNoteFlags},
+            {pid(BrassParameterId::masterTune), "Master Tune", "Tuning", 415.0, 466.0, 440.0, continuousFlags},
+            {pid(BrassParameterId::stereoWidth), "Stereo Width", "Mix", 0.0, 1.0, 1.0, continuousFlags},
+            {pid(BrassParameterId::outputGain), "Output Gain", "Mix", 0.0, 2.0, 0.7, continuousFlags},
+        }};
+    }
+    static constexpr std::array<RemotePage, 1> pages{{
+        {"Main", {pid(BrassParameterId::stopped), pid(BrassParameterId::brightness), pid(BrassParameterId::masterTune),
+                  pid(BrassParameterId::stereoWidth), pid(BrassParameterId::outputGain), CLAP_INVALID_ID,
+                  CLAP_INVALID_ID, CLAP_INVALID_ID}},
+    }};
+};
+
+struct Horn : Brass<HornEngine> {
     static constexpr const char* id = "com.pianocraft.horn";
     static constexpr const char* name = "PianoCraft Horn";
     static constexpr const char* description = "Original French horn section: CC1 is breath";
     static constexpr const char* section = "Horn";
-    static constexpr std::array<ParameterSpec, 5> parameters{{
-        {pid(HornParameterId::stopped), "Stopped", "Articulation", 0.0, 1.0, 0.0, choiceFlags, offOnNames.data()},
-        {pid(HornParameterId::brightness), "Brightness", "Bell", 0.25, 2.0, 1.0, perNoteFlags},
-        {pid(HornParameterId::masterTune), "Master Tune", "Tuning", 415.0, 466.0, 440.0, continuousFlags},
-        {pid(HornParameterId::stereoWidth), "Stereo Width", "Mix", 0.0, 1.0, 1.0, continuousFlags},
-        {pid(HornParameterId::outputGain), "Output Gain", "Mix", 0.0, 2.0, 0.7, continuousFlags},
-    }};
-    static constexpr std::array<RemotePage, 1> pages{{
-        {"Main", {pid(HornParameterId::stopped), pid(HornParameterId::brightness), pid(HornParameterId::masterTune),
-                  pid(HornParameterId::stereoWidth), pid(HornParameterId::outputGain), CLAP_INVALID_ID,
-                  CLAP_INVALID_ID, CLAP_INVALID_ID}},
-    }};
+    static constexpr auto parameters = parametersWith("Stopped");
     static constexpr std::array<Preset, 3> presets{{
         {"Horns", "horn", "Open horns, a player per note, stereo", {}},
         {"Distant Horn (Mono)", "horn-distant-mono", "Darker, the bell turned away: for soft, far-off calls, mono",
-         {{{pid(HornParameterId::stereoWidth), 0.0}, {pid(HornParameterId::brightness), 0.6}}}},
+         {{{pid(BrassParameterId::stereoWidth), 0.0}, {pid(BrassParameterId::brightness), 0.6}}}},
         {"Stopped Horn (Mono)", "horn-stopped-mono", "The hand closing the bell: thin, nasal and metallic, mono",
-         {{{pid(HornParameterId::stereoWidth), 0.0}, {pid(HornParameterId::stopped), 1.0}}}},
+         {{{pid(BrassParameterId::stereoWidth), 0.0}, {pid(BrassParameterId::stopped), 1.0}}}},
+    }};
+};
+
+struct Trumpet : Brass<pianocraft::TrumpetEngine> {
+    static constexpr const char* id = "com.pianocraft.trumpet";
+    static constexpr const char* name = "PianoCraft Trumpet";
+    static constexpr const char* description = "Original B-flat trumpet section: CC1 is breath";
+    static constexpr const char* section = "Trumpet";
+    static constexpr auto parameters = parametersWith("Straight Mute");
+    static constexpr std::array<Preset, 2> presets{{
+        {"Trumpets", "trumpet", "Open trumpets, a player per note, stereo: brassy at ff", {}},
+        {"Muted Trumpet (Mono)", "trumpet-muted-mono", "A straight mute: quieter, thin and nasal, mono",
+         {{{pid(BrassParameterId::stereoWidth), 0.0}, {pid(BrassParameterId::stopped), 1.0}}}},
+    }};
+};
+
+struct Trombone : Brass<pianocraft::TromboneEngine> {
+    static constexpr const char* id = "com.pianocraft.trombone";
+    static constexpr const char* name = "PianoCraft Trombone";
+    static constexpr const char* description = "Original tenor trombone section: CC1 is breath";
+    static constexpr const char* section = "Trombone";
+    static constexpr auto parameters = parametersWith("Straight Mute");
+    static constexpr std::array<Preset, 2> presets{{
+        {"Trombones", "trombone", "Open trombones, a player per note, stereo: brassy at ff", {}},
+        {"Muted Trombone (Mono)", "trombone-muted-mono", "A straight mute: quieter, thin and nasal, mono",
+         {{{pid(BrassParameterId::stereoWidth), 0.0}, {pid(BrassParameterId::stopped), 1.0}}}},
+    }};
+};
+
+struct Tuba : Brass<pianocraft::TubaEngine> {
+    static constexpr const char* id = "com.pianocraft.tuba";
+    static constexpr const char* name = "PianoCraft Tuba";
+    static constexpr const char* description = "Original tuba: CC1 is breath";
+    static constexpr const char* section = "Tuba";
+    static constexpr auto parameters = parametersWith("Straight Mute");
+    static constexpr std::array<Preset, 2> presets{{
+        {"Tuba", "tuba", "Open tuba, stereo", {}},
+        {"Tuba (Mono)", "tuba-mono", "Open tuba, mono-safe for a single emitter",
+         {{{pid(BrassParameterId::stereoWidth), 0.0}}}},
     }};
 };
 
@@ -1200,9 +1248,10 @@ const clap_plugin_preset_load_t Adapter<I>::presetLoad_ = {
     &Adapter<I>::presetLoad,
 };
 
-const std::array<const clap_plugin_descriptor_t*, 7> descriptors{
+const std::array<const clap_plugin_descriptor_t*, 10> descriptors{
     Adapter<Piano>::descriptor(), Adapter<Harp>::descriptor(), Adapter<Flute>::descriptor(),
-    Adapter<Strings>::descriptor(), Adapter<Horn>::descriptor(), Adapter<Oboe>::descriptor(),
+    Adapter<Strings>::descriptor(), Adapter<Horn>::descriptor(), Adapter<Trumpet>::descriptor(),
+    Adapter<Trombone>::descriptor(), Adapter<Tuba>::descriptor(), Adapter<Oboe>::descriptor(),
     Adapter<Clarinet>::descriptor()};
 
 std::uint32_t pluginCount(const clap_plugin_factory_t*) noexcept
@@ -1246,6 +1295,15 @@ const clap_plugin_t* createPlugin(const clap_plugin_factory_t*, const clap_host_
     }
     if (std::strcmp(pluginId, Horn::id) == 0) {
         return create<Horn>(host);
+    }
+    if (std::strcmp(pluginId, Trumpet::id) == 0) {
+        return create<Trumpet>(host);
+    }
+    if (std::strcmp(pluginId, Trombone::id) == 0) {
+        return create<Trombone>(host);
+    }
+    if (std::strcmp(pluginId, Tuba::id) == 0) {
+        return create<Tuba>(host);
     }
     if (std::strcmp(pluginId, Oboe::id) == 0) {
         return create<Oboe>(host);
@@ -1309,6 +1367,9 @@ bool presetProviderGetMetadata(const clap_preset_discovery_provider_t*, std::uin
                                    describePreset<Flute>(locationKind, location, receiver) ||
                                    describePreset<Strings>(locationKind, location, receiver) ||
                                    describePreset<Horn>(locationKind, location, receiver) ||
+                                   describePreset<Trumpet>(locationKind, location, receiver) ||
+                                   describePreset<Trombone>(locationKind, location, receiver) ||
+                                   describePreset<Tuba>(locationKind, location, receiver) ||
                                    describePreset<Oboe>(locationKind, location, receiver) ||
                                    describePreset<Clarinet>(locationKind, location, receiver));
 }
