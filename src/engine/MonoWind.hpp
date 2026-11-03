@@ -16,6 +16,7 @@ enum class WindParameterId : std::uint32_t {
     brightness = 5,
     legatoTime = 6,
     masterTune = 7,
+    reed = 8, // the reeds only
 };
 
 // The player of a monophonic wind: notes, slurs, the tongue, breath (CC1, or the sounding note's
@@ -52,7 +53,7 @@ public:
     std::size_t activeVoiceCount() const;
 
 protected:
-    static constexpr std::size_t parameterCount = 8;
+    static constexpr std::size_t parameterCount = 9;
     // The share of the bore's wave a half-open hole loses each round trip, on top of the bell's.
     static constexpr double leakLoss = 0.3;
 
@@ -114,6 +115,8 @@ protected:
     double brightnessModulation_ = 0.0;
     double level_ = 0.0; // the instrument sets it: its output's peak, decaying
     int registerInterval_ = 12; // the instrument sets it: the clarinet overblows a twelfth
+    double attackScale_ = 1.0; // the instrument sets it: how fast the breath arrives
+    double puff_ = 0.35;       // and how far the tongue's puff overshoots the held breath
     double wander_ = 0.0; // the instrument sets it: how unsteady the player's breath is (a share of it)
     std::uint32_t frame_ = 0;
 

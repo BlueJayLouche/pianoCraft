@@ -705,6 +705,51 @@ int main() {
         expect(even < -20.0 && second > -6.0, "the clarinet's 2nd harmonic is " + std::to_string(even) +
                                                   " dB under its 3rd; the oboe's 2nd is " + std::to_string(second) + " dB re its 1st");
     }
+    {
+        // The oboe's formant: the recordings' strongest partials lie near 1.3 kHz, where A4 has its 3rd
+        // harmonic (which the model's tip cancelled, 12 dB under the fundamental, until it was put back).
+        using R = ReedParameterId;
+        const auto at = [](const std::vector<float>& x, double f) { return 10.0 * std::log10(powerAt(x, 1.0, 2.0, 48000.0, f)); };
+        const auto a4 = sustain<OboeEngine, R>(69, 0.6, 2.0, 48000.0, {{R::vibratoDepth, 0.0}});
+        const double third = at(a4, 3.0 * frequency(69)) - at(a4, frequency(69));
+        expect(third > 0.0, "the oboe's A4 sounds its 3rd harmonic " + std::to_string(third) + " dB re its 1st");
+        // Reed, from none to 2: the oboe's formant rises against its fundamental, the clarinet's even
+        // harmonics against its odd ones, and the loudness stays.
+        const auto oboeSoft = sustain<OboeEngine, R>(69, 0.6, 2.0, 48000.0, {{R::vibratoDepth, 0.0}, {R::reed, 0.0}});
+        const auto oboeHard = sustain<OboeEngine, R>(69, 0.6, 2.0, 48000.0, {{R::vibratoDepth, 0.0}, {R::reed, 2.0}});
+        const double nasal = (at(oboeHard, 3.0 * frequency(69)) - at(oboeHard, frequency(69))) -
+                             (at(oboeSoft, 3.0 * frequency(69)) - at(oboeSoft, frequency(69)));
+        const double oboeLevel = rmsDb(oboeHard, 1.0, 2.0, 48000.0) - rmsDb(oboeSoft, 1.0, 2.0, 48000.0);
+        const auto evens = [&](const std::vector<float>& x) {
+            const double f = frequency(62);
+            return 10.0 * std::log10((powerAt(x, 1.0, 2.0, 48000.0, 6.0 * f) + powerAt(x, 1.0, 2.0, 48000.0, 8.0 * f)) /
+                                     (powerAt(x, 1.0, 2.0, 48000.0, 5.0 * f) + powerAt(x, 1.0, 2.0, 48000.0, 7.0 * f)));
+        };
+        const auto clarinetSoft = sustain<ClarinetEngine, R>(62, 0.6, 2.0, 48000.0, {{R::reed, 0.0}});
+        const auto clarinetHard = sustain<ClarinetEngine, R>(62, 0.6, 2.0, 48000.0, {{R::reed, 2.0}});
+        const double buzz = evens(clarinetHard) - evens(clarinetSoft);
+        const double clarinetLevel = rmsDb(clarinetHard, 1.0, 2.0, 48000.0) - rmsDb(clarinetSoft, 1.0, 2.0, 48000.0);
+        expect(nasal > 10.0 && buzz > 10.0 && std::abs(oboeLevel) < 3.0 && std::abs(clarinetLevel) < 3.0,
+               "Reed 0 to 2: the oboe's formant +" + std::to_string(nasal) + " dB (level " + std::to_string(oboeLevel) +
+                   "), the clarinet's evens +" + std::to_string(buzz) + " dB (level " + std::to_string(clarinetLevel) + ")");
+        // The peaks shape the reed's steady regime only: as the breath falls away the bore's transient
+        // would squawk with them (up to 10 dB over the note).
+        double squawk = -1.0e9;
+        int worst = 0;
+        for (const int key : {61, 64, 67, 70, 73, 76, 79, 82, 85}) {
+            const auto x = sustain<OboeEngine, R>(key, 0.6, 2.0, 48000.0, {}, nullptr, nullptr, 1.5);
+            const auto peak = [&](double from, double to) {
+                float p = 0.0f;
+                for (auto i = static_cast<std::size_t>(from * 48000.0); i < static_cast<std::size_t>(to * 48000.0); ++i) p = std::max(p, std::abs(x[i]));
+                return 20.0 * std::log10(p);
+            };
+            const double over = peak(1.5, 2.0) - peak(1.0, 1.5);
+            worst = over > squawk ? key : worst;
+            squawk = std::max(squawk, over);
+        }
+        expect(squawk < 1.5, "an oboe note ends without a squawk (at worst " + std::to_string(squawk) + " dB over the note, key " +
+                                 std::to_string(worst) + ")");
+    }
     pressureTests();
     struckTests<CelestaEngine>("celesta", 72, true);
     struckTests<CrotalesEngine>("crotales", 96, false);

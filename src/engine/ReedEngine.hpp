@@ -24,7 +24,11 @@ struct ReedModel {
     double reedSlope;
     double loss;       // the bell's reflection low-pass, pole at 48 kHz
     double toneHoles;  // the tone-hole lattice's cutoff (Hz): above it the bore radiates freely
-    std::array<std::array<double, 3>, 2> formants; // radiated resonances: Hz, Q, gain
+    std::array<std::array<double, 3>, 2> formants; // radiated resonances: Hz, Q, dB at Reed 1
+    // A cone's correction: the cylinder standing in for its missing tip resonates at f0 / apex and
+    // cancels what the reed sounds there, which a real cone's tip (a mass of air) does not. A peak at
+    // tip[0] x f0 / apex, Q tip[1], tip[2] dB puts it back.
+    std::array<double, 3> tip;
     double vibrato;    // Vibrato Depth by default
     // The mouth's pressure, as a share of what shuts the reed, at the lowest and highest notes: a
     // steady regime safely above the reed's threshold.
@@ -40,6 +44,9 @@ struct ReedModel {
     double evens;
     filters::Voicing voicing; // the fitted output stage
     double wander;            // the player's breath, never quite steady (MonoWind)
+    double attack;            // how fast the breath arrives, against the flute's (MonoWind), and how
+    double puff;              // far the tongue's puff overshoots the held breath
+    double reedLevel;         // dB a unit of Reed, keeping the loudness where it was
 };
 
 // A reed instrument, played by MonoWind: a reed valve (J. O. Smith's reed table) on a bore. See
@@ -65,9 +72,10 @@ private:
     std::size_t write_ = 0;
     double reflection_ = 0.0; // the bell's low-pass state
     double radiated_ = 0.0;   // the tone holes' high-pass low band
-    std::array<double, 4> formant_{};
+    std::array<double, 6> formant_{}; // the formants' and the tip's peaks
     std::array<double, 2> dynamic_{}; // the dynamic's low-pass state
     double noiseLow_ = 0.0;
+    double steady_ = 0.0; // how far the peaks apply: the reed's regime settled (smoothed)
     std::uint32_t noise_ = 0x2545F491u;
 };
 

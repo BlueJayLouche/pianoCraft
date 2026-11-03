@@ -37,6 +37,13 @@ inline std::array<double, 5> bandpass(double centre, double q, double fs) {
     return {alpha / a0, 0.0, -alpha / a0, -2.0 * std::cos(w) / a0, (1.0 - alpha) / a0};
 }
 
+// RBJ peaking equaliser: gain (dB) at centre, unity far from it.
+inline std::array<double, 5> peaking(double centre, double q, double gainDb, double fs) {
+    const double a = std::pow(10.0, gainDb / 40.0), w = 2.0 * pi * std::min(centre, 0.45 * fs) / fs, alpha = std::sin(w) / (2.0 * q);
+    const double a0 = 1.0 + alpha / a;
+    return {(1.0 + alpha * a) / a0, -2.0 * std::cos(w) / a0, (1.0 - alpha * a) / a0, -2.0 * std::cos(w) / a0, (1.0 - alpha / a) / a0};
+}
+
 inline double magnitude(const std::array<double, 5>& q, double omega) {
     const double c1 = std::cos(omega), s1 = std::sin(omega), c2 = std::cos(2.0 * omega), s2 = std::sin(2.0 * omega);
     return std::hypot(q[0] + q[1] * c1 + q[2] * c2, q[1] * s1 + q[2] * s2) / std::hypot(1.0 + q[3] * c1 + q[4] * c2, q[3] * s1 + q[4] * s2);

@@ -221,10 +221,11 @@ template <class E>
 struct Reed {
     using Engine = E;
     using Id = ReedParameterId;
-    static constexpr std::array<ParameterSpec, 7> parametersWith(double vibrato) {
+    static constexpr std::array<ParameterSpec, 8> parametersWith(double vibrato) {
         return {{
             {pid(ReedParameterId::breathNoise), "Breath Noise", "Breath", 0.0, 2.0, 1.0, continuousFlags},
             {pid(ReedParameterId::brightness), "Brightness", "Breath", 0.25, 2.0, 1.0, perNoteFlags},
+            {pid(ReedParameterId::reed), "Reed", "Breath", 0.0, 2.0, 1.0, continuousFlags},
             {pid(ReedParameterId::vibratoDepth), "Vibrato Depth", "Vibrato", 0.0, 2.0, vibrato, continuousFlags},
             {pid(ReedParameterId::vibratoRate), "Vibrato Rate", "Vibrato", 3.0, 8.0, 5.0, continuousFlags},
             {pid(ReedParameterId::legatoTime), "Legato Time", "Phrasing", 0.0, 0.2, 0.012, continuousFlags},
@@ -233,10 +234,10 @@ struct Reed {
         }};
     }
     static constexpr std::array<RemotePage, 1> pages{{
-        {"Main", {pid(ReedParameterId::breathNoise), pid(ReedParameterId::brightness),
+        {"Main", {pid(ReedParameterId::breathNoise), pid(ReedParameterId::brightness), pid(ReedParameterId::reed),
                   pid(ReedParameterId::vibratoDepth), pid(ReedParameterId::vibratoRate),
                   pid(ReedParameterId::legatoTime), pid(ReedParameterId::masterTune),
-                  pid(ReedParameterId::outputGain), CLAP_INVALID_ID}},
+                  pid(ReedParameterId::outputGain)}},
     }};
 };
 
@@ -248,8 +249,8 @@ struct Oboe : Reed<pianocraft::OboeEngine> {
     static constexpr auto parameters = parametersWith(0.6);
     static constexpr std::array<Preset, 2> presets{{
         {"Oboe", "oboe", "Breath on CC1, a gentle vibrato after the note speaks", {}},
-        {"Oboe Dolce", "oboe-dolce", "Darker and sweeter, less vibrato",
-         {{{pid(ReedParameterId::brightness), 0.75}, {pid(ReedParameterId::vibratoDepth), 0.4}}}},
+        {"Oboe Dolce", "oboe-dolce", "Darker and sweeter, a softer reed, less vibrato",
+         {{{pid(ReedParameterId::brightness), 0.75}, {pid(ReedParameterId::reed), 0.6}, {pid(ReedParameterId::vibratoDepth), 0.4}}}},
     }};
 };
 
@@ -262,7 +263,7 @@ struct Clarinet : Reed<pianocraft::ClarinetEngine> {
     static constexpr std::array<Preset, 2> presets{{
         {"Clarinet", "clarinet", "Breath on CC1, straight tone", {}},
         {"Clarinet Dolce", "clarinet-dolce", "Darker and softer-edged",
-         {{{pid(ReedParameterId::brightness), 0.75}}}},
+         {{{pid(ReedParameterId::brightness), 0.75}, {pid(ReedParameterId::reed), 0.6}}}},
     }};
 };
 

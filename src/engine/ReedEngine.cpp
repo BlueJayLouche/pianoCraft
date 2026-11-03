@@ -14,16 +14,21 @@ using namespace filters;
 // and by tests/orchestra_tests.cpp (pitch, register, spectra by dynamic); the clarinet's even
 // harmonics, the output stages, the breath's turbulence and wander fitted to the University of Iowa
 // recordings (docs/oboe-and-clarinet.md, tools/iowa_calibration.py).
-constexpr ReedModel clarinet{50, 94, false, 0.0, 0.7, -0.3, 0.5, 700.0, {{{1500.0, 2.0, 0.0}, {3000.0, 2.0, 0.0}}}, 0.0,
-                             0.70, 0.78, 1.2, 6.0, 0.0, 3.5, 0.3, {0, 1000.0, 428.0, 30.0, 0.7, 1.0}, 4.0};
-constexpr ReedModel oboe{58, 93, true, 0.3, 0.7, -0.3, 0.5, 1000.0, {{{1100.0, 2.5, 0.5}, {2800.0, 3.0, 0.3}}}, 0.6,
-                         0.70, 0.80, 2.0, 8.0, 4.0, 2.5, 0.0, {1, 1129.0, 10463.0, 1.10, 0.0, 1.81}, 3.0};
+constexpr ReedModel clarinet{50, 94, false, 0.0, 0.7, -0.3, 0.5, 700.0, {{{1500.0, 2.0, 0.0}, {3000.0, 2.0, 0.0}}}, {}, 0.0,
+                             0.70, 0.78, 1.2, 6.0, 0.0, 3.5, 0.3, {0, 1000.0, 428.0, 30.0, 0.7, 1.0}, 4.0, 1.0, 0.35, 0.0};
+// The oboe's formants and tip peak fitted to the recordings' harmonics (with the formants off, the
+// model's spectrum, then the filters that best turn it into theirs); its 2.9 kHz formant to their
+// share above 3 kHz.
+constexpr ReedModel oboe{58, 93, true, 0.3, 0.7, -0.3, 0.5, 1000.0, {{{1305.0, 5.0, 16.0}, {2900.0, 2.0, 6.0}}}, {0.99, 3.2, 12.5}, 0.6,
+                         0.70, 0.80, 2.0, 8.0, 4.0, 1.57, 0.0, {1, 1129.0, 10463.0, 1.10, 0.0, 1.81}, 3.0, 0.2, 0.1, -3.0};
 
 } // namespace
 
 ReedEngine::ReedEngine(const ReedModel& model) : MonoWind(model.lowestKey, model.highestKey), model_(model) {
     parameters_[static_cast<std::size_t>(ReedParameterId::vibratoDepth)] = model.vibrato;
     wander_ = model.wander;
+    attackScale_ = model.attack; // the oboe's tongue releases pressure already built behind it,
+    puff_ = model.puff;          // without the flute's puff, which a breath this quick would follow
     registerInterval_ = model.conical ? 12 : 19; // a cylinder closed at the reed overblows a twelfth
 }
 
@@ -46,6 +51,7 @@ void ReedEngine::reset() {
     voicing_.reset();
     evenMean_ = 0.0;
     evenState_ = {};
+    steady_ = 0.0;
     noise_ = 0x2545F491u;
 }
 
@@ -53,6 +59,7 @@ void ReedEngine::silence() {
     bore_ = {};
     apex_ = {};
     reflection_ = 0.0;
+    steady_ = 0.0;
 }
 
 void ReedEngine::render(float* left, float* right, std::uint32_t frameCount) {
@@ -68,8 +75,14 @@ void ReedEngine::render(float* left, float* right, std::uint32_t frameCount) {
     const double pole = std::pow(std::clamp(model_.loss - 0.15 * (brightness - 1.0), 0.05, 0.9), rateScale);
     const double noiseLevel = std::max(parameter(ReedParameterId::breathNoise), 0.0);
     const double toneHoles = 1.0 - std::exp(-2.0 * pi * model_.toneHoles / fs);
-    const auto first = bandpass(model_.formants[0][0], model_.formants[0][1], fs);
-    const auto second = bandpass(model_.formants[1][0], model_.formants[1][1], fs);
+    // Reed: how much the reed buzzes. Up to 1 it raises the oboe's formants (in dB) and the clarinet's
+    // even harmonics from none; above 1 the formants also widen, so the buzz spreads across them
+    // rather than picking out whichever harmonic lands on a peak.
+    const double reedAmount = std::clamp(parameter(ReedParameterId::reed), 0.0, 2.0);
+    const double raise = std::min(reedAmount, 1.0) + 0.25 * std::max(reedAmount - 1.0, 0.0);
+    const double widen = std::pow(std::max(reedAmount, 1.0), 1.5);
+    const auto first = peaking(model_.formants[0][0], model_.formants[0][1] / widen, raise * model_.formants[0][2], fs);
+    const auto second = peaking(model_.formants[1][0], model_.formants[1][1] / widen, raise * model_.formants[1][2], fs);
     const double gainLeft = std::min(1.0, 2.0 * (1.0 - pan_));
     const double gainRight = std::min(1.0, 2.0 * pan_);
     const double output = 0.3 * model_.level * parameter(ReedParameterId::outputGain);
@@ -81,12 +94,24 @@ void ReedEngine::render(float* left, float* right, std::uint32_t frameCount) {
     // A cone's reed and staple are a fixed length, so the higher the note, the larger their share of
     // the vibrating column: the reed sits further along it, and the fundamental speaks more.
     const double apex = std::min(model_.apex * std::pow(frequency / (440.0 * std::pow(2.0, (model_.lowestKey - 69) / 12.0)), 0.75), 0.35);
+    // A cone's tip peak (the clarinet's bore needs none).
+    const auto tip = model_.conical ? peaking(model_.tip[0] * frequency / apex, model_.tip[1], model_.tip[2], fs) : std::array<double, 5>{1.0};
+    // The peaks lift a note whose first two harmonics they reach; fitted to the recordings' levels,
+    // note by note, three quarters of that power is taken back.
+    const auto lift = [&](double f) {
+        const double omega = 2.0 * pi * std::min(f, 0.45 * fs) / fs;
+        const double m = magnitude(first, omega) * magnitude(second, omega) * magnitude(tip, omega);
+        return m * m;
+    };
+    // And Reed keeps the loudness about where it was (measured across the range).
+    const double levelling = std::pow(0.5 * (lift(frequency) + lift(2.0 * frequency)), -0.375) * std::pow(10.0, model_.reedLevel * (reedAmount - 1.0) / 20.0);
     // The dynamic: how far the player lets the reed open sets the level (Dalmont and Kergomard's
     // elementary model), and at soft dynamics the upper partials fall away (Benade): nearly pure at
     // pp, every partial at ff.
     const double dynamicBreath = std::clamp(breath_, 0.0, 1.0);
     const auto dynamic = butterworth(false, std::min(frequency * (model_.open + model_.bloom * dynamicBreath * dynamicBreath), 0.45 * fs), fs);
     voicing_.block(model_.voicing, dynamicBreath, frequency, fs);
+    const double gateRate = 1.0 - std::exp(-1.0 / (0.001 * fs)); // the gate moves over 1 ms, so it never clicks
     const double evenRate = 1.0 - std::exp(-2.0 * pi * 10.0 / fs);
     const auto evenCutoff = butterworth(true, 1500.0, fs);
 
@@ -146,16 +171,26 @@ void ReedEngine::render(float* left, float* right, std::uint32_t frameCount) {
         write_ = (write_ + 1) & mask;
 
         // The tone holes radiate the bore's pressure, rising 6 dB an octave up to their cutoff;
-        // the bell and body add their resonances.
+        // the bell and body add their resonances, and a cone's tip peak puts back what the model's tip
+        // cancelled.
         radiated_ += toneHoles * (heard - radiated_);
         double holes = heard - radiated_;
         if (model_.evens > 0.0) {
             const double square = holes * holes;
             evenMean_ += evenRate * (square - evenMean_);
-            holes += model_.evens * biquad(evenCutoff, (square - evenMean_) / std::sqrt(evenMean_ + 1.0e-20), evenState_[0], evenState_[1]);
+            holes += reedAmount * model_.evens * biquad(evenCutoff, (square - evenMean_) / std::sqrt(evenMean_ + 1.0e-20), evenState_[0], evenState_[1]);
         }
-        const double sound = holes + model_.formants[0][2] * biquad(first, holes, formant_[0], formant_[1]) +
-                             model_.formants[1][2] * biquad(second, holes, formant_[2], formant_[3]);
+        // The peaks shape the reed's steady regime, where the model's tip cancels: the bore's
+        // transients (the note settling, a slur's keys moving, the breath falling away) carry
+        // that partial already, and would squawk with it lifted again. So they come in as the
+        // note settles and leave as the breath falls away; a slur takes half of them (all, and the
+        // pitches between its notes smear).
+        const double shaped = biquad(second, biquad(first, biquad(tip, holes, formant_[4], formant_[5]), formant_[0], formant_[1]),
+                                     formant_[2], formant_[3]) * levelling;
+        const double held = player.envelope * player.envelope;
+        const double steady = (1.0 - std::exp(-noteSeconds_ / 0.15)) * std::min(held * held, 1.0) * (1.0 - 0.5 * player.slur);
+        steady_ += gateRate * (steady - steady_);
+        const double sound = holes + steady_ * (shaped - holes);
         const double sample = voicing_.process(biquad(dynamic, sound, dynamic_[0], dynamic_[1])) * std::pow(breath, 0.9) * volume_;
         level_ = std::max(std::abs(sound), level_ * 0.9995); // the reed speaking, whatever the dynamic
         const double gain = output * expression_;

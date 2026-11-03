@@ -114,8 +114,10 @@ orchestra bells; the harp has no reference corpus yet.
   darker, little vibrato) for the low *Faune* register.
 - **Oboe and clarinet:** reed waveguides played as the flute is (slurs, tonguing, CC1 or Pressure as
   breath, CC21 vibrato). The clarinet (D3-B-flat 6) sounds odd harmonics, straight-toned; the oboe
-  (B-flat 3-A6) every harmonic, with a gentle vibrato. Both are nearly pure at pp and full at ff.
-  Controls as the flute's. Presets: Oboe, Oboe Dolce, Clarinet, Clarinet Dolce.
+  (B-flat 3-A6) every harmonic, nasal with its formant near 1.3 kHz, with a gentle vibrato. Both are
+  nearly pure at pp and full at ff. Controls as the flute's, and Reed: how much the reed buzzes (0 the
+  bore alone, sweet and covered; 1 calibrated; 2 nasal and edgy), at the same loudness. Presets: Oboe,
+  Oboe Dolce (a softer reed), Clarinet, Clarinet Dolce.
 - **Strings:** a section (E1-E7) by register: basses, cellos, violas, violins. CC1 is the bow
   (loudness and tone); velocity shapes only the attack; CC21 scales the vibrato. Con Sordino is on by default. Controls: Con Sordino, Sul Tasto, Tremolo (bow reversals),
   Harmonics, Section Size (1 is a soloist), Section Spread, Brightness (Timbre moves it), Vibrato

@@ -22,6 +22,7 @@ MonoWind::MonoWind(int lowestKey, int highestKey) : lowestKey_(lowestKey), highe
     parameters_[index(WindParameterId::brightness)] = 1.0;
     parameters_[index(WindParameterId::legatoTime)] = 0.012;
     parameters_[index(WindParameterId::masterTune)] = 440.0;
+    parameters_[index(WindParameterId::reed)] = 1.0;
 }
 
 void MonoWind::resetPlayer() {
@@ -66,7 +67,7 @@ void MonoWind::startNote(const NoteAddress& address, double velocity, bool legat
         // Velocity shapes only the attack: how fast the breath arrives and how hard the tongue
         // releases it.
         velocity_ = velocity;
-        attackSeconds_ = 0.09 - 0.06 * velocity;
+        attackSeconds_ = attackScale_ * (0.09 - 0.06 * velocity);
         noteSeconds_ = 0.0;
         period_ = periodFrom_ = tapFrom_ = tapTo_ = periodTarget_;
         keys_ = seat_ = 1.0;
@@ -236,7 +237,7 @@ MonoWind::Breath MonoWind::advance(const Pace& pace) {
     volume_ += pace.glide * (volumeTarget_ - volume_);
     if (keyDown_) {
         // The tongue releases a puff that settles to the held breath within ~50 ms.
-        const double target = 1.0 + 0.35 * velocity_ * std::exp(-noteSeconds_ / 0.05);
+        const double target = 1.0 + puff_ * velocity_ * std::exp(-noteSeconds_ / 0.05);
         envelope_ += pace.attack * (target - envelope_);
     } else {
         envelope_ -= pace.release * envelope_;
