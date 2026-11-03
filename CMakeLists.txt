@@ -23,6 +23,7 @@ set(PIANOCRAFT_ENGINE_SOURCES
     src/engine/BrassEngine.cpp
     src/engine/MonoWind.cpp
     src/engine/StringsEngine.cpp
+    src/engine/StruckEngine.cpp
     src/engine/PianoEngine.cpp
     src/engine/ReedEngine.cpp
     src/engine/Soundboard.cpp

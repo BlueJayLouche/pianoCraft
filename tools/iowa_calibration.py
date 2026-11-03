@@ -5,8 +5,11 @@
     tools/iowa_calibration.py reference <instrument>   analyse the recordings: calibration/iowa-mis/<instrument>/reference.json
     tools/iowa_calibration.py score <instrument>       render the model at the same notes and dynamics, and compare
     tools/iowa_calibration.py fit <brass>              fit a brass bell's high-pass and tone low-pass to the recordings
+    tools/iowa_calibration.py modes <crotales|bells>   struck metal: fit each mode's ratio, level and decay; crotales also
+                                                       scores the model
 
-<instrument> is horn, trumpet, trombone, tuba, flute, oboe, clarinet, violin, viola, cello or bass. The recordings are analysis inputs only:
+<instrument> is horn, trumpet, trombone, tuba, flute, oboe, clarinet, violin, viola, cello or bass; the bells stand in
+for the celesta's bars, which the collection lacks. The recordings are analysis inputs only:
 they stay in calibration/ (git-ignored) and nothing of them reaches the plugin but fitted constants.
 Each note is compared by its harmonics' levels (shape, weighted to the strong ones), its level, its brightness (the
 share above 3 kHz), its attack (to within 10 dB of its steady level), the noise between its harmonics and how steady
@@ -228,6 +231,9 @@ def fetch_files(source, folder):
         digest = hashlib.sha256(aiff.read_bytes()).hexdigest()
         if digest != entry["sha256"]:
             sys.exit(f"{aiff}: sha256 {digest}, the provenance record says {entry['sha256']}")
+        if source["instrument"] in STRUCK:  # 24-bit, decays to the noise: kept at 32 bits
+            subprocess.run(["afconvert", "-f", "WAVE", "-d", "LEI32", str(aiff), str(folder / "wav" / f"{aiff.stem}.wav")], check=True)
+            continue
         dyn = re.search(r"\.(pp|mf|ff)\.", aiff.name).group(1)
         string = re.search(r"sul([A-G])", aiff.name).group(1)
         span = re.search(r"\.([A-G]b?\d(?:[A-G]b?\d)?)\.aif", aiff.name).group(1)
@@ -365,10 +371,196 @@ def fit(brass):
                   summary(filt_of(p)))
 
 
+# Struck metal has no harmonics: each stroke is read as modes, each with its frequency ratio to the fundamental, its
+# level at the strike (dB re the fundamental, extrapolated to the onset) and its T60. The crotales' five mode families
+# close in up the range (the trend below); the bells' partials vary from bar to bar, so their strongest are binned.
+STRUCK = {"crotales": {"keys": (84, 108), "velocity": {"pp": 0.35, "ff": 0.9},
+                       "trend": lambda k: [1.0, 2.14 - 0.0098 * (k - 84), 3.74 - 0.0233 * (k - 84), 5.70 - 0.0425 * (k - 84),
+                                           7.98 - 0.067 * (k - 84), 10.7 - 0.107 * (k - 84), 13.8 - 0.15 * (k - 84)]},
+          "bells": {"keys": (72, 112), "bins": [(2.9, 3.4), (6.0, 7.9), (9.0, 11.5), (13.0, 17.0)]}}
+
+
+def peak(f, db, lo, hi):
+    sel = np.nonzero((f > lo) & (f < hi))[0]
+    if sel.size == 0:
+        return None
+    i = sel[np.argmax(db[sel])]
+    a, b, c = db[i - 1], db[i], db[i + 1]
+    d = 0.5 * (a - c) / (a - 2 * b + c)
+    return f[i] + d * (f[1] - f[0]), b - 0.25 * (a - c) * d
+
+
+def decay(seg, rate, f):
+    """A mode's level at the strike and its T60: its 80 ms level every 20 ms, fitted while 12 dB over the noise and
+    within 45 dB of its start."""
+    hop, m = int(0.02 * rate), int(0.08 * rate)
+    frames = min((len(seg) - m) // hop, 1500)
+    k = np.exp(-2j * np.pi * f * np.arange(m) / rate) * np.hanning(m)
+    track = 20 * np.log10(np.abs(np.array([np.dot(seg[j * hop:j * hop + m], k) for j in range(frames)])) * 2 / np.hanning(m).sum() + 1e-20)
+    above = track > max(np.percentile(track, 3) + 12, track[:5].max() - 45)
+    stop = int(np.argmax(~above[2:]) + 2) if (~above[2:]).any() else frames
+    if stop < 6:
+        return track[:5].max(), np.nan
+    slope, start = np.polyfit(np.arange(2, stop) * hop / rate, track[2:stop], 1)
+    return start, (-60 / slope if slope < 0 else np.nan)
+
+
+def stroke(seg, rate, key, ratios=None):
+    seg = seg[int(np.argmax(np.abs(seg[:rate]) > np.abs(seg[:rate]).max() * 0.1)):]
+    n = rate
+    window = np.pad(seg[int(0.005 * rate):int(0.005 * rate) + n], (0, max(0, n - len(seg))))[:n]
+    db = 20 * np.log10(np.abs(np.fft.rfft(window * np.hanning(n), 4 * n)) + 1e-20)
+    f = np.fft.rfftfreq(4 * n, 1 / rate)
+    f1, _ = peak(f, db, 440 * 2 ** ((key - 69) / 12) * 0.96, 440 * 2 ** ((key - 69) / 12) * 1.04)
+    level, t60 = decay(seg, rate, f1)
+    if ratios is None:  # the strongest peaks above 1.2 f1, within 50 dB of it
+        from scipy.signal import find_peaks
+        top = db[(f > f1 * 0.98) & (f < f1 * 1.02)].max()
+        found, _ = find_peaks(db, height=top - 50, distance=int(f1 * 0.15 / (f[1] - f[0])))
+        found = found[(f[found] > 1.2 * f1) & (f[found] < 0.45 * rate)]
+        ratios = sorted(f[found[np.argsort(db[found])[::-1][:6]]] / f1)
+        width = 0.01
+    else:
+        ratios, width = ratios[1:], 0.07
+    modes = []
+    for r in ratios:
+        found = peak(f, db, f1 * r * (1 - width), f1 * r * (1 + width))
+        if found is not None and found[0] < 0.45 * rate:
+            start, t = decay(seg, rate, found[0])
+            modes.append({"ratio": found[0] / f1, "level": start - level, "t60": t})
+    return {"key": key, "f1": f1, "level": level, "t60": t60, "modes": modes}
+
+
+def strokes(x, rate):
+    """Strokes in a run: a rise of 20 dB within 30 ms in the high-passed level, at least 2 s apart."""
+    from scipy.signal import butter, sosfilt
+    y = sosfilt(butter(4, 400, "highpass", fs=rate, output="sos"), x)
+    hop = int(0.005 * rate)
+    db = frames_db(y, rate, 0.005)
+    top = np.percentile(db, 99.5)
+    found = []
+    for i in range(6, len(db)):
+        if db[i] > top - 40 and db[i] - db[i - 6:i].min() > 20 and (not found or i - found[-1] > 400):
+            found.append(i)
+    return [i * hop for i in found]
+
+
+def struck_reference(name):
+    rows = []
+    for path in sorted((CORPUS / name / "wav").glob("*.wav")):
+        rate, x = read(path)
+        if name == "crotales":
+            note, dyn = re.search(r"\.([A-G]b?\d)\.(pp|ff)", path.name).groups()
+            rows.append({**stroke(x, rate, midi(note), STRUCK[name]["trend"](midi(note))), "dyn": dyn})
+            continue
+        dyn, span = re.search(r"\.(pp|mf|ff)\.(\w+)\.wav", path.name).groups()
+        names = re.findall(r"[A-G]b?\d", span)
+        keys = list(range(midi(names[0]), midi(names[1]) + 1))
+        starts = strokes(x, rate)
+        if len(starts) != len(keys):
+            continue  # a stray knock: this run's strokes can't be told apart
+        for key, a, b in zip(keys, starts, starts[1:] + [len(x)]):
+            rows.append({**stroke(x[max(a - int(0.05 * rate), 0):b], rate, key), "dyn": dyn})
+    return [r for r in rows if np.isfinite(r["t60"])]
+
+
+def struck_laws(name, rows):
+    ff = [r for r in rows if r["dyn"] == ("ff" if name == "crotales" else "mf")]
+    x = np.array([(r["key"] - 84) / 12 for r in ff])
+    t = np.log([r["t60"] for r in ff])
+    fit = np.polyfit(x, t, 1 if name == "crotales" else 2)
+    print(f"{name}: fundamental T60 = exp({' + '.join(f'{c:.3f} x^{len(fit) - 1 - i}' for i, c in enumerate(fit))}), x octaves from C6, "
+          f"scatter x{np.exp(np.std(t - np.polyval(fit, x))):.2f}")
+    by = {(r["key"], r["dyn"]): r for r in rows}
+    for loud, soft in (("ff", "pp"), ("ff", "mf"), ("mf", "pp")):
+        d = [by[k, loud]["level"] - by[k, soft]["level"] for k, dd in by if dd == loud and (k, soft) in by]
+        if d:
+            print(f"  fundamental {loud} over {soft}: median {np.median(d):.1f} dB ({len(d)} notes)")
+    if name == "crotales":
+        for n in range(6):
+            sel = [(xi, r["modes"][n]) for xi, r in zip(x, ff) if len(r["modes"]) > n]
+            xs = np.array([a for a, _ in sel])
+            ratio = np.polyfit(xs, [m["ratio"] for _, m in sel], 1)
+            level = np.polyfit(xs, [m["level"] for _, m in sel], 1)
+            ok = [(a, m["t60"]) for a, m in sel if np.isfinite(m["t60"])]
+            life = np.polyfit([a for a, _ in ok], np.log([v for _, v in ok]), 1)
+            print(f"  mode {n + 2}: ratio {ratio[1]:.3f} {ratio[0]:+.3f} x, ff level {level[1]:+.1f} {level[0]:+.1f} x dB, "
+                  f"T60 exp({life[1]:.3f} {life[0]:+.3f} x), in {len(sel)} discs")
+        print(f"  fundamental ff level {np.polyfit(x, [r['level'] for r in ff], 1)[0]:+.1f} dB an octave")
+        drops = []
+        for r in rows:
+            if r["dyn"] == "ff" and (r["key"], "pp") in by:
+                q = by[r["key"], "pp"]
+                drops.append((r["f1"], r["level"] - q["level"]))
+                drops += [(r["f1"] * a["ratio"], r["level"] - q["level"] + a["level"] - b["level"]) for a, b in zip(r["modes"], q["modes"])]
+        drops = np.array(drops)
+        law = np.polyfit(np.log2(drops[:, 0] / 1000), drops[:, 1], 1)
+        print(f"  pp to ff: {law[1]:.1f} + {law[0]:.2f} log2(f / 1 kHz) dB, over {len(drops)} modes")
+    else:
+        for lo, hi in STRUCK[name]["bins"]:
+            found = [m for r in ff for m in r["modes"] if lo <= m["ratio"] < hi]
+            t60 = [m["t60"] for m in found if np.isfinite(m["t60"])]
+            print(f"  partials {lo}-{hi}: in {len(found)} of {len(ff)} bars, median ratio {np.median([m['ratio'] for m in found]):.2f}, "
+                  f"level {np.median([m['level'] for m in found]):+.0f} dB, T60 {np.median(t60):.1f} s")
+
+
+def whole(x, rate):
+    """A stroke's level over its first 0.3 s and its share above 3 kHz, dB."""
+    from scipy.signal import butter, sosfilt
+    x = x[int(np.argmax(np.abs(x) > np.abs(x).max() * 0.1)):][:int(0.3 * rate)]
+    high = sosfilt(butter(4, 3000, "highpass", fs=rate, output="sos"), x)
+    total = 10 * np.log10(np.mean(x ** 2) + 1e-30)
+    return total, 10 * np.log10(np.mean(high ** 2) + 1e-30) - total
+
+
+def modes(name):
+    rows = struck_reference(name)
+    struck_laws(name, rows)
+    if name != "crotales":
+        return
+    def render(job):
+        key, dyn = job
+        out = Path(folder) / f"{key}-{dyn}.wav"
+        subprocess.run([str(RENDERER), "crotales", str(out), str(key), str(STRUCK[name]["velocity"][dyn]), "8", "8", "5=0"],
+                       check=True, capture_output=True)
+        rate, x = read(out)
+        return {**stroke(x, rate, key, STRUCK[name]["trend"](key)), "dyn": dyn, "whole": whole(x, rate)}
+    with tempfile.TemporaryDirectory() as folder, ThreadPoolExecutor(8) as pool:
+        model = {(m["key"], m["dyn"]): m for m in pool.map(render, [(r["key"], r["dyn"]) for r in rows])}
+    for dyn in ("pp", "ff"):
+        pairs_ = [(r, model[r["key"], dyn]) for r in rows if r["dyn"] == dyn]
+        line = []
+        for n in range(6):
+            sel = [(r["modes"][n], m["modes"][n]) for r, m in pairs_ if len(r["modes"]) > n and len(m["modes"]) > n]
+            if not sel:
+                continue
+            level = np.mean([abs(b["level"] - a["level"]) for a, b in sel])
+            life = [np.log(b["t60"] / a["t60"]) for a, b in sel if np.isfinite(a["t60"]) and np.isfinite(b["t60"])]
+            line.append(f"mode {n + 2} level {level:.1f} dB, T60 x{np.exp(np.mean(life)):.2f}")
+        life = np.exp(np.mean([np.log(m["t60"] / r["t60"]) for r, m in pairs_ if np.isfinite(m["t60"])]))
+        print(f"model {dyn} ({len(pairs_)} notes): fundamental T60 x{life:.2f}; " + "; ".join(line))
+    recorded = {}
+    for path in (CORPUS / name / "wav").glob("*.wav"):
+        note, dyn = re.search(r"\.([A-G]b?\d)\.(pp|ff)", path.name).groups()
+        rate, x = read(path)
+        recorded[midi(note), dyn] = whole(x, rate)
+    keys = [k for k in range(84, 109) if (k, "pp") in model and (k, "ff") in model and (k, "pp") in recorded]
+    louder = lambda w: [w[k, "ff"][0] - w[k, "pp"][0] for k in keys]
+    brighter = lambda w: [w[k, "ff"][1] - w[k, "pp"][1] for k in keys]
+    mw = {k: m["whole"] for k, m in model.items()}
+    print(f"ff over pp ({len(keys)} notes): recordings {np.median(louder(recorded)):.1f} dB louder, {np.median(brighter(recorded)):+.1f} dB "
+          f"brighter; model {np.median(louder(mw)):.1f}, {np.median(brighter(mw)):+.1f}")
+    for dyn in ("pp", "ff"):
+        share = lambda w: np.median([w[k, dyn][1] for k in keys])
+        print(f"  {dyn} above 3 kHz: recordings {share(recorded):+.1f} dB, model {share(mw):+.1f} dB")
+
+
 if __name__ == "__main__":
     command, *args = sys.argv[1:] or ["help"]
     if command == "fetch" and not args:
         fetch()
+    elif command == "modes" and len(args) == 1 and args[0] in STRUCK:
+        modes(args[0])
     elif command in ("reference", "score") and len(args) == 1 and args[0] in INSTRUMENTS or command == "fit" and args and args[0] in BRASS:
         {"reference": reference, "score": score, "fit": fit}[command](args[0])
     else:

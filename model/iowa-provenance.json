@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "instrument": "PianoCraft horn, trumpet, trombone, tuba, flute, oboe, clarinet and strings",
+  "instrument": "PianoCraft horn, trumpet, trombone, tuba, flute, oboe, clarinet, strings, celesta and crotales",
   "corpus": "University of Iowa Electronic Music Studios, Musical Instrument Samples (MIS)",
   "license": "Public: \"may be downloaded and used for any projects, without restrictions\" (https://theremin.music.uiowa.edu/MIS.html, read 2026-11-02)",
   "usage": "Analysis and fitted synthesis constants only (src/engine); raw audio stays in calibration/ (git-ignored) and is never bundled or played",
@@ -659,6 +659,268 @@
         {
           "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.arco.pp.sulG.G2B2.aiff",
           "sha256": "74b0be446b2ba1d223cf1005c1d8e7bc818d48b9e71109504422b21195a17cbe"
+        }
+      ]
+    },
+    {
+      "instrument": "crotales",
+      "page": "https://theremin.music.uiowa.edu/MIScrotales.html",
+      "recording": "Crotales, Andrew Thierauf, 29 March 2013, anechoic chamber, Earthworks QTC40 at 5 feet, 24-bit 44.1 kHz stereo; one stroke per disc, pp and ff, C6-C8. The set is tuned about 17 cents above A = 440",
+      "files": [
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.A6.ff.aif",
+          "sha256": "4a76edde2a95b79a332f8896f16bfdbd609e073d1acd0b380edd1a5f67bf7daa"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.A6.pp.aif",
+          "sha256": "0016cf1a76f7869a39e9a8c048d410123a8d51c43e97dbeef270729d825ac28b"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.A7.ff.aif",
+          "sha256": "a18bd2ad143656f2cec6818cd542e2f01869fa24622f7efb60e3b35d1b69d2eb"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.A7.pp.aif",
+          "sha256": "533f902b6bf57a977223d509c36b0b099370c4b75b30bbb5022830f3e9e55ec3"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.Ab6.ff.aif",
+          "sha256": "ee50353eb654b610e51844a88334956cf678b7e9ab5846191f390e0cb88c3387"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.Ab6.pp.aif",
+          "sha256": "08fd0d022f7625b2ef7bb0b795b35d0fcde9462b78e15d966645620dc8e4e2fa"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.Ab7.ff.aif",
+          "sha256": "247787077d4ec915f42fdec80d4c90366dc0a69f207c81227b2d709a749d78f9"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.Ab7.pp.aif",
+          "sha256": "193bc1635c73c9233d32780d687d135c7200e4e8222781e64ed4a1b43780ff4c"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.B6.ff.aif",
+          "sha256": "374362cf956e2934d66f7557643914f318cc2bfcc9ebf02194d10b009efcee77"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.B6.pp.aif",
+          "sha256": "ddaf4e859718c2413165ba9a50438b30b9516003d410ae380d24f045473af59e"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.B7.ff.aif",
+          "sha256": "4dfb22e08af8e817ea1dc627a5a10d67af87d1ac6cf03d4e57dda6a1b7ae32f3"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.B7.pp.aif",
+          "sha256": "10e3353aae508b6aae3b225ef45b1c61596e27b65a10aa109c76c86a7ef1d309"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.Bb6.ff.aif",
+          "sha256": "744f1a2278e2c6e425d762cd6753bba8cb95e1f92bd3d633e08336e38c9d411a"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.Bb6.pp.aif",
+          "sha256": "11c3a3315b36c25547853d482754e31b100a7fa1bf5a5d040a278d4fd5f48171"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.Bb7.ff.aif",
+          "sha256": "6b81afdabd3e96c1d7b0125094913251c71ce359a305be7ba232851cb258acb8"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.Bb7.pp.aif",
+          "sha256": "74e45a662e74353df165b74464ab92ddc6b168d3d070ec8bcd3255068c3ab1b3"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.C6.ff.aif",
+          "sha256": "5491f0afcbb8edc6d4ba8233b6024908d3f80fb4747aa5bcc1cf13b8e5179681"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.C6.pp.aif",
+          "sha256": "506cd3d7693b63e88174967386a3d496ca6bc3a18f9da98f3fbcd4bcfbfcdabf"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.C7.ff.aif",
+          "sha256": "e37a917375a3b2db0e1abbbd971b8f20149fa60e8a01a032d312778f202a478a"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.C7.pp.aif",
+          "sha256": "ef044adb9594a03e26f382329268d941c282a993fd23b6da9f8334128290eb33"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.C8.ff.aif",
+          "sha256": "736ab9cb38f29640cad738b8a7c603cdb8f96e52fc78842c2eaa8f2cee06d8a3"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.C8.pp.aif",
+          "sha256": "9256b850e8d60b9ba88de128e093123a599ba043a46b5a061a8ebd3fe23c1696"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.D6.ff.aif",
+          "sha256": "4deb8f63c3c275789cb2c88958bd693f62875871c63672bc95a1dfe73afbc363"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.D6.pp.aif",
+          "sha256": "d835d1dffa494bd8438ee18a41158b8fc7276ec5d982279b032cec9fbfce46f4"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.D7.ff.aif",
+          "sha256": "aad4cf6f7fc78649bf9675ae5bb0e7aa35785dcaa26b5e2a255f998eda0f932f"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.D7.pp.aif",
+          "sha256": "9be058b0a740a288128efe962bdd38c5d9e08f6ceed6398958e26e1a2d1f537d"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.Db6.ff.aif",
+          "sha256": "9b6c1dedf7570b392d37ae32f171859e38e66ae325f411e9609869fd3ba6d18b"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.Db6.pp.aif",
+          "sha256": "6b1f5ce72265c59f85e265558b3dff55fe3818555b6bb3604936f389b8608c00"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.Db7.ff.aif",
+          "sha256": "5bc8bcefed1b03656a8a64a04932b8eef9a7ae32a7fa8bb9a51ebd4d61e6df36"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.Db7.pp.aif",
+          "sha256": "0c8e8e15324abebf545b9c681107c5b300fe69f10fca91b3a0d0234781b41dc0"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.E6.ff.aif",
+          "sha256": "568b8811aba01703bf71f5b1e622366f5a216da46689d4542b923e2f2f6b81ef"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.E6.pp.aif",
+          "sha256": "8410bb930cedf5f43c39f02c60d556786cf302bb5053e912612fec5fab9cc4b9"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.E7.ff.aif",
+          "sha256": "e5bc1318a6964791062339035ae21af5ad82c1a51cd11cf3e9d99fe377e8bdd2"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.E7.pp.aif",
+          "sha256": "fe533cfc901f12684f8ab417f65c06edb3b3527f739739bd71b1d07257261801"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.Eb6.ff.aif",
+          "sha256": "f9441697326ce3c269338e4e388c5d6b86f01cbe671b7e4fab10dcfdc606c7d7"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.Eb6.pp.aif",
+          "sha256": "feb4fd4ff6ebc3f19a5350fa2a9a2546ae2f8406155ba429882ab97d557cb2ca"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.Eb7.ff.aif",
+          "sha256": "9a395d2223017736769d3352fbc443e897f697faa8834b950b93b984b107cf89"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.Eb7.pp.aif",
+          "sha256": "9e94b12a7b9242593132a89334f1bec8807509e94b75e2e82591f70a492406f9"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.F6.ff.aif",
+          "sha256": "933ba1bea8545c257fdb38c4feb0d8b685faffdf85007c7162f05f6f0142a6bd"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.F6.pp.aif",
+          "sha256": "8c275e774d625869a2cca446d07cc84d62654953b27379a97650202d33f2ccdf"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.F7.ff.aif",
+          "sha256": "dec8b9b797fffdab84f12a8777706ef0a4e4cdcd75b9bb2006ff9733ef76ddcb"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.F7.pp.aif",
+          "sha256": "40dd038034932faecb5d2b66225692a38842b5cbaf196a494108a09fb01e7733"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.G6.ff.aif",
+          "sha256": "d79e4b481b80d1906962753ec695fcd34c7f28dc84ce6795f1ec1bbb2f55600d"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.G6.pp.aif",
+          "sha256": "24973d6222c78964cca37f1357ef4a862b0110a0b9754d1afc76335cff857f11"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.G7.ff.aif",
+          "sha256": "38ce08765415b572116028bd3c15f12152a791f83ec4acb3326ef9fe3461ec05"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.G7.pp.aif",
+          "sha256": "6eb244c904a17a2482f7a0465a2ecdd74d33fd7801a3419463623bb46ffe448b"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.Gb6.ff.aif",
+          "sha256": "e9c1cc6b38fc916bb0617951a5b226e886f0909f6fd97edd9058b8de4eb3446a"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.Gb6.pp.aif",
+          "sha256": "aaef313e3fd2a40714afe3cbeacc6d4f462a32510a759afb85fa819ee9af5ab6"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.Gb7.ff.aif",
+          "sha256": "81f940f017d103bc4ad4e6fa44f49a47e59321664fb1545a97ba6fe4c2e8f8e2"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/crotales/crotale.Gb7.pp.aif",
+          "sha256": "f5baab29b9a8c8d01ab8a52035dca581435e95e4878213f3bbc1a928bb1dcf1b"
+        }
+      ]
+    },
+    {
+      "instrument": "bells",
+      "page": "https://theremin.music.uiowa.edu/MISbells.html",
+      "recording": "Orchestra bells (steel bars), plastic mallets, Andrew Thierauf, 10 June 2013, anechoic chamber, Earthworks QTC40 at 5 feet, 24-bit 44.1 kHz stereo; one stroke per bar, pp, mf, ff, C5-E8. For the celesta's bars: there is no celesta in the collection",
+      "files": [
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Bells/bells.plastic.ff.C5B5.aif",
+          "sha256": "2a61eec29e0bc6bbaa96b8bd6d13d0899d35f82f6a683f7e6503f306ed1d5451"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Bells/bells.plastic.ff.C6B6.aif",
+          "sha256": "b1f1d701e3151f7c03620041cadfdcfbcdf830aad1b25f52e1f7225819091d79"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Bells/bells.plastic.ff.C7B7.aif",
+          "sha256": "2abacdfb19216c3fd2439a88b2178533c84252689d93084ede44158b03d22be3"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Bells/bells.plastic.ff.C8E8.aif",
+          "sha256": "8aca220132e9025decaa21943ffdd56fff69b1480c8d0cc7cc8bc7f0db13d677"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Bells/bells.plastic.mf.C5B5.aif",
+          "sha256": "3b10291445f639fadcb6f4bb0eedbc69f92152557996538977d056c46dddeeff"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Bells/bells.plastic.mf.C6B6.aif",
+          "sha256": "d14f1a0e0e4178d32338b44404ba0b99700523eaecee00cded7feef10a4722c2"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Bells/bells.plastic.mf.C7B7.aif",
+          "sha256": "c8e8c5f61648ffe3e4f674a4ded5e346c7568fc0fc3836f7f75dcca2fefa6dbd"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Bells/bells.plastic.mf.C8E8.aif",
+          "sha256": "c20118db0808db58a69d695ea1284e0f2d35c9fe4d84e683112b75b04e5ca85d"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Bells/bells.plastic.pp.C5B5.aif",
+          "sha256": "ac09e4c28c16c87b33aa79956f3ca6f2000f241107ac7158e399fb56d197cfdc"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Bells/bells.plastic.pp.C6B6.aif",
+          "sha256": "8d92ca4f581b47404103e1510bb4b23ae732f65793773f851ac413acf43835b7"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Bells/bells.plastic.pp.C7B7.aif",
+          "sha256": "b9df47b0f9ae3ad845233ef8637d2267d331ae870023a793d8f4995646711015"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Bells/bells.plastic.pp.C8E8.aif",
+          "sha256": "020841c7e2d01c1fe899c72db737fb8e0b439c72979d672c11ab2c27395fdf0b"
         }
       ]
     }

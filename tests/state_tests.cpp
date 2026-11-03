@@ -29,9 +29,9 @@ static bool eventsPush(const clap_output_events_t* list, const clap_event_header
     if (event->type == CLAP_EVENT_NOTE_END) static_cast<Events*>(list->ctx)->notes.push_back(*reinterpret_cast<const clap_event_note_t*>(event));
     return true;
 }
-static clap_event_note_t noteEvent(uint16_t type, uint32_t time, int32_t id) {
+static clap_event_note_t noteEvent(uint16_t type, uint32_t time, int32_t id, int16_t key = 60) {
     clap_event_note_t e{}; e.header = {sizeof(e), time, CLAP_CORE_EVENT_SPACE_ID, type, 0};
-    e.note_id = id; e.port_index = 0; e.channel = 0; e.key = 60; e.velocity = 0.6; return e;
+    e.note_id = id; e.port_index = 0; e.channel = 0; e.key = key; e.velocity = 0.6; return e;
 }
 static void noop(const clap_host_t*) {}
 static void put32(std::vector<uint8_t>& v, uint32_t x) { for (int i = 0; i < 4; ++i) v.push_back((x >> (8 * i)) & 0xff); }
@@ -116,14 +116,15 @@ int main(int argc, char** argv) {
                                                                 file.path().c_str(), &receiver);
     }
     const auto presetsFor = [&](const char* id) { return std::count(discovered.pluginIds.begin(), discovered.pluginIds.end(), id); };
-    check(everyFileRead && discovered.names.size() == 30 && discovered.pluginIds.size() == 30 && !discovered.keyed &&
+    check(everyFileRead && discovered.names.size() == 34 && discovered.pluginIds.size() == 34 && !discovered.keyed &&
           presetsFor("com.pianocraft.upright") == 4 && presetsFor("com.pianocraft.harp") == 4 &&
           presetsFor("com.pianocraft.flute") == 2 && presetsFor("com.pianocraft.strings") == 7 &&
           presetsFor("com.pianocraft.horn") == 3 && presetsFor("com.pianocraft.trumpet") == 2 &&
           presetsFor("com.pianocraft.trombone") == 2 && presetsFor("com.pianocraft.tuba") == 2 &&
-          presetsFor("com.pianocraft.oboe") == 2 && presetsFor("com.pianocraft.clarinet") == 2,
-          "30 preset files, one unkeyed preset each: 4 piano, 4 harp, 2 flute, 7 strings, 3 horn, 2 trumpet, 2 trombone, "
-          "2 tuba, 2 oboe, 2 clarinet");
+          presetsFor("com.pianocraft.oboe") == 2 && presetsFor("com.pianocraft.clarinet") == 2 &&
+          presetsFor("com.pianocraft.celesta") == 2 && presetsFor("com.pianocraft.crotales") == 2,
+          "34 preset files, one unkeyed preset each: 4 piano, 4 harp, 2 flute, 7 strings, 3 horn, 2 trumpet, 2 trombone, "
+          "2 tuba, 2 oboe, 2 clarinet, 2 celesta, 2 crotales");
     provider->destroy(provider);
     auto* presetLoad = static_cast<const clap_plugin_preset_load_t*>(plugin->get_extension(plugin, CLAP_EXT_PRESET_LOAD));
     auto loadPreset = [&](const char* file) {
@@ -173,9 +174,9 @@ int main(int argc, char** argv) {
     plugin->destroy(plugin);
 
     // The other voices: state round trip, a preset over defaults, choice text, and NOTE_END.
-    check(factory->get_plugin_count(factory) == 10,
-          "the bundle holds piano, harp, flute, strings, horn, trumpet, trombone, tuba, oboe and clarinet");
-    struct Other { const char* id; const char* preset; clap_id changed; double expected; clap_id choice; const char* choiceText; };
+    check(factory->get_plugin_count(factory) == 12,
+          "the bundle holds piano, harp, flute, strings, horn, trumpet, trombone, tuba, oboe, clarinet, celesta and crotales");
+    struct Other { const char* id; const char* preset; clap_id changed; double expected; clap_id choice; const char* choiceText; int16_t key = 60; };
     for (const Other& other : {Other{"com.pianocraft.harp", "/harp-harmonics-mono.pianocraft", 4, 1.0, 4, "On"},
                                Other{"com.pianocraft.flute", "/flute-veiled.pianocraft", 2, 1.8, CLAP_INVALID_ID, nullptr},
                                Other{"com.pianocraft.strings", "/strings-harmonics-mono.pianocraft", 6, 1.0, 6, "On"},
@@ -184,7 +185,9 @@ int main(int argc, char** argv) {
                                Other{"com.pianocraft.trombone", "/trombone-muted-mono.pianocraft", 2, 1.0, 2, "On"},
                                Other{"com.pianocraft.tuba", "/tuba-mono.pianocraft", 4, 0.0, 2, "On"},
                                Other{"com.pianocraft.oboe", "/oboe-dolce.pianocraft", 5, 0.75, CLAP_INVALID_ID, nullptr},
-                               Other{"com.pianocraft.clarinet", "/clarinet-dolce.pianocraft", 5, 0.75, CLAP_INVALID_ID, nullptr}}) {
+                               Other{"com.pianocraft.clarinet", "/clarinet-dolce.pianocraft", 5, 0.75, CLAP_INVALID_ID, nullptr},
+                               Other{"com.pianocraft.celesta", "/celesta-mono.pianocraft", 5, 0.0, CLAP_INVALID_ID, nullptr},
+                               Other{"com.pianocraft.crotales", "/crotales-mono.pianocraft", 5, 0.0, CLAP_INVALID_ID, nullptr, 96}}) {
         auto* instance = factory->create_plugin(factory, &host, other.id);
         instance->init(instance);
         auto* otherState = static_cast<const clap_plugin_state_t*>(instance->get_extension(instance, CLAP_EXT_STATE));
@@ -212,7 +215,7 @@ int main(int argc, char** argv) {
         instance->activate(instance, 48000.0, 512, 512);
         instance->start_processing(instance);
         Events otherInput, otherOutput;
-        otherInput.notes = {noteEvent(CLAP_EVENT_NOTE_ON, 0, 7), noteEvent(CLAP_EVENT_NOTE_CHOKE, 4000 % 512, 7)};
+        otherInput.notes = {noteEvent(CLAP_EVENT_NOTE_ON, 0, 7, other.key), noteEvent(CLAP_EVENT_NOTE_CHOKE, 4000 % 512, 7, other.key)};
         clap_input_events_t otherIn{&otherInput, eventsSize, eventsGet};
         clap_output_events_t otherOut{&otherOutput, eventsPush};
         float peak = 0.0F;
@@ -225,7 +228,7 @@ int main(int argc, char** argv) {
                 otherInput.notes.pop_back(); // sound first (a horn takes ~30 ms to speak), choke later
             }
             if (block == 3) {
-                otherInput.notes = {noteEvent(CLAP_EVENT_NOTE_CHOKE, 0, 7)};
+                otherInput.notes = {noteEvent(CLAP_EVENT_NOTE_CHOKE, 0, 7, other.key)};
             }
             instance->process(instance, &process);
             for (float sample : left) peak = std::max(peak, std::abs(sample));

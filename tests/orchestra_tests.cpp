@@ -7,6 +7,7 @@
 #include "engine/BrassEngine.hpp"
 #include "engine/ReedEngine.hpp"
 #include "engine/StringsEngine.hpp"
+#include "engine/StruckEngine.hpp"
 
 #include <algorithm>
 #include <array>
@@ -36,6 +37,9 @@ using pianocraft::NoteAddress;
 using pianocraft::ClarinetEngine;
 using pianocraft::OboeEngine;
 using pianocraft::ReedParameterId;
+using pianocraft::CelestaEngine;
+using pianocraft::CrotalesEngine;
+using pianocraft::StruckParameterId;
 
 constexpr double pi = 3.141592653589793;
 int failures = 0;
@@ -620,6 +624,60 @@ void pressureTests() {
 
 } // namespace
 
+// Struck metal: in tune, velocity the dynamic (louder and brighter), exact mono at width 0, renders that
+// repeat; the celesta's dampers fall at note-off unless CC64 holds them, the crotales ring on.
+template <class Engine>
+std::vector<float> strike(int key, double velocity, double seconds, double rate, double releaseAt,
+                          std::vector<std::pair<StruckParameterId, double>> settings = {}, bool pedal = false,
+                          std::vector<float>* right = nullptr) {
+    Engine engine;
+    engine.prepare(rate);
+    for (const auto& [id, value] : settings) {
+        engine.setParameter(id, value);
+    }
+    if (pedal) {
+        engine.controlChange(0, 64, 1.0);
+    }
+    const auto release = static_cast<std::size_t>(releaseAt * rate) / 64 * 64;
+    return render(engine, seconds, rate, [&](std::size_t f) {
+        if (f == 0) engine.noteOn(note(key), velocity);
+        if (f == release) engine.noteOff(note(key), 0.0);
+    }, right);
+}
+
+template <class Engine>
+void struckTests(const std::string& name, int key, bool dampers) {
+    for (double rate : {48000.0, 96000.0}) {
+        const auto x = strike<Engine>(key, 0.7, 2.0, rate, 2.0);
+        const double off = centsOff(x, 0.5, 2.0, rate, frequency(key));
+        expect(std::abs(off) <= 1.0, name + " in tune at " + std::to_string(static_cast<int>(rate)) + " Hz: " + std::to_string(off) + " cents");
+    }
+    const double rate = 48000.0;
+    const auto released = strike<Engine>(key, 0.7, 1.0, rate, 0.1);
+    const auto pedalled = strike<Engine>(key, 0.7, 1.0, rate, 0.1, {}, true);
+    const double drop = rmsDb(released, 0.7, 1.0, rate) - rmsDb(released, 0.0, 0.1, rate);
+    const double held = rmsDb(pedalled, 0.7, 1.0, rate) - rmsDb(pedalled, 0.0, 0.1, rate);
+    if (dampers) {
+        expect(drop < -50.0 && held > -25.0, name + " damped at note-off (" + std::to_string(drop) + " dB), held by CC64 (" +
+                                                 std::to_string(held) + " dB)");
+    } else {
+        const auto damped = strike<Engine>(key, 0.7, 1.0, rate, 0.1, {{StruckParameterId::damping, 1.0}});
+        const double hand = rmsDb(damped, 0.7, 1.0, rate) - rmsDb(damped, 0.0, 0.1, rate);
+        expect(drop > -25.0 && hand < -50.0, name + " ring on after note-off (" + std::to_string(drop) +
+                                                 " dB); Note-Off Damping stops them (" + std::to_string(hand) + " dB)");
+    }
+    const auto soft = strike<Engine>(key, 0.35, 0.5, rate, 0.5);
+    const auto loud = strike<Engine>(key, 0.9, 0.5, rate, 0.5);
+    const double louder = rmsDb(loud, 0.0, 0.3, rate) - rmsDb(soft, 0.0, 0.3, rate);
+    const double brighter = tilt(loud, 0.0, 0.1, rate) - tilt(soft, 0.0, 0.1, rate);
+    expect(louder > 15.0 && brighter > 3.0, name + " ff over pp: " + std::to_string(louder) + " dB louder, " +
+                                                std::to_string(brighter) + " dB brighter");
+    std::vector<float> right;
+    const auto left = strike<Engine>(key, 0.7, 0.3, rate, 0.3, {{StruckParameterId::stereoWidth, 0.0}}, false, &right);
+    const auto again = strike<Engine>(key, 0.7, 0.3, rate, 0.3, {{StruckParameterId::stereoWidth, 0.0}});
+    expect(left == right && left == again, name + ": Stereo Width 0 is exact mono, and renders repeat");
+}
+
 int main() {
     harpTests();
     fluteTests();
@@ -648,6 +706,8 @@ int main() {
                                                   " dB under its 3rd; the oboe's 2nd is " + std::to_string(second) + " dB re its 1st");
     }
     pressureTests();
+    struckTests<CelestaEngine>("celesta", 72, true);
+    struckTests<CrotalesEngine>("crotales", 96, false);
     std::printf("%s\n", failures ? "FAILED" : "all orchestra checks passed");
     return failures != 0;
 }

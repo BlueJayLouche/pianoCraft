@@ -4,6 +4,7 @@
 #include "../engine/PianoEngine.hpp"
 #include "../engine/ReedEngine.hpp"
 #include "../engine/StringsEngine.hpp"
+#include "../engine/StruckEngine.hpp"
 
 #include <clap/clap.h>
 
@@ -37,6 +38,7 @@ using pianocraft::PianoEngine;
 using pianocraft::ReedParameterId;
 using pianocraft::StringsEngine;
 using pianocraft::StringsParameterId;
+using pianocraft::StruckParameterId;
 
 struct ParameterSpec {
     clap_id id;
@@ -384,6 +386,55 @@ struct Tuba : Brass<pianocraft::TubaEngine> {
         {"Tuba", "tuba", "Open tuba, stereo", {}},
         {"Tuba (Mono)", "tuba-mono", "Open tuba, mono-safe for a single emitter",
          {{{pid(BrassParameterId::stereoWidth), 0.0}}}},
+    }};
+};
+
+// Celesta and crotales: struck metal, one engine; the celesta's dampers fall at note-off, the crotales ring
+// until they die away (docs/celesta-and-crotales.md).
+template <class E>
+struct Struck {
+    using Engine = E;
+    using Id = StruckParameterId;
+    static constexpr std::array<ParameterSpec, 6> parametersWith(const char* striker, double damping) {
+        return {{
+            {pid(StruckParameterId::brightness), "Brightness", striker, 0.25, 2.0, 1.0, perNoteFlags},
+            {pid(StruckParameterId::damping), "Note-Off Damping", striker, 0.0, 1.0, damping, continuousFlags},
+            {pid(StruckParameterId::sustainLength), "Sustain Length", striker, 0.25, 4.0, 1.0, continuousFlags},
+            {pid(StruckParameterId::masterTune), "Master Tune", "Tuning", 415.0, 466.0, 440.0, continuousFlags},
+            {pid(StruckParameterId::stereoWidth), "Stereo Width", "Mix", 0.0, 1.0, 1.0, continuousFlags},
+            {pid(StruckParameterId::outputGain), "Output Gain", "Mix", 0.0, 2.0, 0.7, continuousFlags},
+        }};
+    }
+    static constexpr std::array<RemotePage, 1> pages{{
+        {"Main", {pid(StruckParameterId::brightness), pid(StruckParameterId::damping), pid(StruckParameterId::sustainLength),
+                  pid(StruckParameterId::masterTune), pid(StruckParameterId::stereoWidth), pid(StruckParameterId::outputGain),
+                  CLAP_INVALID_ID, CLAP_INVALID_ID}},
+    }};
+};
+
+struct Celesta : Struck<pianocraft::CelestaEngine> {
+    static constexpr const char* id = "com.pianocraft.celesta";
+    static constexpr const char* name = "PianoCraft Celesta";
+    static constexpr const char* description = "Original celesta instrument";
+    static constexpr const char* section = "Celesta";
+    static constexpr auto parameters = parametersWith("Hammers", 1.0);
+    static constexpr std::array<Preset, 2> presets{{
+        {"Celesta", "celesta", "Felt hammers on steel bars, dampers at note-off (CC64 lifts them), stereo", {}},
+        {"Celesta (Mono)", "celesta-mono", "Mono-safe for a single emitter",
+         {{{pid(StruckParameterId::stereoWidth), 0.0}}}},
+    }};
+};
+
+struct Crotales : Struck<pianocraft::CrotalesEngine> {
+    static constexpr const char* id = "com.pianocraft.crotales";
+    static constexpr const char* name = "PianoCraft Crotales";
+    static constexpr const char* description = "Original crotales (antique cymbals) instrument";
+    static constexpr const char* section = "Crotales";
+    static constexpr auto parameters = parametersWith("Mallets", 0.0);
+    static constexpr std::array<Preset, 2> presets{{
+        {"Crotales", "crotales", "Bronze discs let ring, stereo", {}},
+        {"Crotales (Mono)", "crotales-mono", "Mono-safe for a single emitter",
+         {{{pid(StruckParameterId::stereoWidth), 0.0}}}},
     }};
 };
 
@@ -1248,11 +1299,11 @@ const clap_plugin_preset_load_t Adapter<I>::presetLoad_ = {
     &Adapter<I>::presetLoad,
 };
 
-const std::array<const clap_plugin_descriptor_t*, 10> descriptors{
+const std::array<const clap_plugin_descriptor_t*, 12> descriptors{
     Adapter<Piano>::descriptor(), Adapter<Harp>::descriptor(), Adapter<Flute>::descriptor(),
     Adapter<Strings>::descriptor(), Adapter<Horn>::descriptor(), Adapter<Trumpet>::descriptor(),
     Adapter<Trombone>::descriptor(), Adapter<Tuba>::descriptor(), Adapter<Oboe>::descriptor(),
-    Adapter<Clarinet>::descriptor()};
+    Adapter<Clarinet>::descriptor(), Adapter<Celesta>::descriptor(), Adapter<Crotales>::descriptor()};
 
 std::uint32_t pluginCount(const clap_plugin_factory_t*) noexcept
 {
@@ -1286,6 +1337,12 @@ const clap_plugin_t* createPlugin(const clap_plugin_factory_t*, const clap_host_
     }
     if (std::strcmp(pluginId, Harp::id) == 0) {
         return create<Harp>(host);
+    }
+    if (std::strcmp(pluginId, Celesta::id) == 0) {
+        return create<Celesta>(host);
+    }
+    if (std::strcmp(pluginId, Crotales::id) == 0) {
+        return create<Crotales>(host);
     }
     if (std::strcmp(pluginId, Flute::id) == 0) {
         return create<Flute>(host);
@@ -1371,7 +1428,9 @@ bool presetProviderGetMetadata(const clap_preset_discovery_provider_t*, std::uin
                                    describePreset<Trombone>(locationKind, location, receiver) ||
                                    describePreset<Tuba>(locationKind, location, receiver) ||
                                    describePreset<Oboe>(locationKind, location, receiver) ||
-                                   describePreset<Clarinet>(locationKind, location, receiver));
+                                   describePreset<Clarinet>(locationKind, location, receiver) ||
+                                   describePreset<Celesta>(locationKind, location, receiver) ||
+                                   describePreset<Crotales>(locationKind, location, receiver));
 }
 
 const void* presetProviderGetExtension(const clap_preset_discovery_provider_t*, const char*) noexcept

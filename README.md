@@ -28,6 +28,8 @@ ctest --test-dir build --output-on-failure
 ./build/pianocraft-render-voice horn renders/horn-c4.wav 60 0.7 4 3.5 cc1=0.6
 ./build/pianocraft-render-voice trumpet renders/trumpet-g4.wav 67 0.7 4 3.5 cc1=0.6
 ./build/pianocraft-render-voice oboe renders/oboe-a4.wav 69 0.7 4 3.5 cc1=0.6
+./build/pianocraft-render-voice celesta renders/celesta-c5.wav 72 0.7 4 1
+./build/pianocraft-render-voice crotales renders/crotale-e6.wav 88 0.7 8
 ./build/pianocraft-benchmark
 ```
 
@@ -87,16 +89,17 @@ Bitwig's preset browser lists four built-in voicings: Calibrated Upright
 because Bitwig lists preset files, not presets held inside a plugin; the values
 live in `src/host/ClapHost.cpp`. Save your own as Bitwig presets.
 
-## Harp, flute, oboe, clarinet, strings and brass
+## Harp, flute, oboe, clarinet, strings, brass, celesta and crotales
 
-The bundle also holds PianoCraft Harp, Flute, Oboe, Clarinet, Strings and Horn, for the final act of
-*The Old House on the Corner*, and Trumpet, Trombone and Tuba. They follow the orchestral-library conventions: CC11 is an expression trim,
+The bundle also holds PianoCraft Harp, Flute, Oboe, Clarinet, Strings, Horn, Celesta and Crotales, for the final
+act of *The Old House on the Corner*, and Trumpet, Trombone and Tuba. They follow the orchestral-library conventions: CC11 is an expression trim,
 pitch bend ±2 semitones, no keyswitches. On the winds, strings and brass a note's Pressure is its
 dynamic too, as CC1 is: `piano.py` writes each CC1 curve again as Pressure, which Bitwig imports
 from a `.dawproject`. Their physics and what is still set by ear are in
 `docs/harp-and-flute.md`, `docs/oboe-and-clarinet.md`, `docs/strings-and-horn.md` and
-`docs/brass.md`. The brass, woodwinds and strings are calibrated against the University of Iowa's
-recordings (`tools/iowa_calibration.py`); the harp has no reference corpus yet.
+`docs/brass.md` and `docs/celesta-and-crotales.md`. The brass, woodwinds, strings and crotales are calibrated
+against the University of Iowa's recordings (`tools/iowa_calibration.py`), and the celesta's bars against its
+orchestra bells; the harp has no reference corpus yet.
 
 - **Harp:** one string per key (B0-G#7). Strings ring after note-off, so glissandi keep sounding.
   The strings the pedals sound (set by what you play) ring in sympathy. Controls: Pluck Position,
@@ -127,6 +130,11 @@ recordings (`tools/iowa_calibration.py`); the harp has no reference corpus yet.
   Muted Trumpet (mono), Trombones and Muted Trombone (mono), Tuba in stereo and mono. Each is
   levelled by its loudest ff note; within an instrument the levels follow the recordings, so low
   trombone notes at mf are far quieter than high ones.
+- **Celesta and crotales:** struck metal, a bar or disc per key; velocity is the dynamic. The celesta (C4-C9,
+  sounding) has felt hammers and dampers that fall at note-off unless CC64 holds them. The crotales (C6-C8,
+  sounding) ring until they die away: the low discs strike bright and settle to their fundamental, and some
+  beat. Controls: Brightness (Timbre moves it), Note-Off Damping, Sustain Length, Master Tune, Stereo Width
+  (0 is exact mono). Presets: Celesta and Crotales, each in stereo and mono.
 
 The recorded piano sat at A4 = 439.02 Hz; Master Tune puts A4 exactly where it
 says, so the default plays 3.9 cents above the recordings.
