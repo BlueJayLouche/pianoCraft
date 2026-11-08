@@ -13,6 +13,20 @@
 #include <string>
 #include <vector>
 
+#include "../src/host/GuiEdits.hpp"
+
+// Records every event a plugin reports (the GUI edit check reads gestures and values).
+struct Recorded { std::vector<uint16_t> types; std::vector<clap_id> ids; std::vector<double> values; };
+static bool recordPush(const clap_output_events_t* list, const clap_event_header_t* event) {
+    auto* r = static_cast<Recorded*>(list->ctx); r->types.push_back(event->type);
+    if (event->type == CLAP_EVENT_PARAM_VALUE) {
+        auto* v = reinterpret_cast<const clap_event_param_value_t*>(event); r->ids.push_back(v->param_id); r->values.push_back(v->value);
+    } else if (event->type == CLAP_EVENT_PARAM_GESTURE_BEGIN || event->type == CLAP_EVENT_PARAM_GESTURE_END) {
+        r->ids.push_back(reinterpret_cast<const clap_event_param_gesture_t*>(event)->param_id);
+    }
+    return true;
+}
+
 struct Buffer { std::vector<uint8_t> data; size_t pos = 0; };
 static int64_t readFn(const clap_istream_t* s, void* out, uint64_t size) {
     auto* b = static_cast<Buffer*>(s->ctx); size_t n = std::min<size_t>(size, b->data.size() - b->pos);
@@ -170,6 +184,38 @@ int main(int argc, char** argv) {
     }
     check(output.notes.size() == 1 && output.notes[0].note_id == 5 && output.notes[0].key == 60 &&
           output.notes[0].header.time < 512, "choked note reported as NOTE_END");
+    // Editor: a slider gesture reaches the host as begin, value, end, and the value is applied.
+    {
+        pianocraft::GuiEdits edits;
+        edits.push({3, 0.0, pianocraft::EditPhase::begin});
+        edits.push({3, 0.5, pianocraft::EditPhase::value});
+        edits.push({3, 0.0, pianocraft::EditPhase::end});
+        Recorded recorded; clap_output_events_t out{&recorded, recordPush};
+        std::vector<std::pair<uint32_t, double>> applied;
+        edits.drain(&out, [](uint32_t index) { return clap_id(100 + index); }, [&](uint32_t index, double v) { applied.emplace_back(index, v); });
+        check(recorded.types == std::vector<uint16_t>{CLAP_EVENT_PARAM_GESTURE_BEGIN, CLAP_EVENT_PARAM_VALUE, CLAP_EVENT_PARAM_GESTURE_END}
+                  && recorded.ids == std::vector<clap_id>{103, 103, 103} && recorded.values == std::vector<double>{0.5}
+                  && applied == std::vector<std::pair<uint32_t, double>>{{3, 0.5}},
+              "an editor gesture is applied once and reported as begin, value, end");
+        Recorded again; clap_output_events_t out2{&again, recordPush};
+        edits.drain(&out2, [](uint32_t index) { return clap_id(index); }, [](uint32_t, double) {});
+        check(again.types.empty(), "drained edits are not reported twice");
+        int accepted = 0;
+        for (int i = 0; i < 300; ++i) accepted += edits.push({0, 1.0, pianocraft::EditPhase::value});
+        check(accepted == 255, "a full edit queue refuses edits instead of overwriting");
+    }
+    // Editor through the ABI: Cocoa only, embedded and floating; an embedded editor has a size.
+    {
+        auto* gui = static_cast<const clap_plugin_gui_t*>(plugin->get_extension(plugin, CLAP_EXT_GUI));
+        bool apis = gui != nullptr && gui->is_api_supported(plugin, CLAP_WINDOW_API_COCOA, false)
+                    && gui->is_api_supported(plugin, CLAP_WINDOW_API_COCOA, true) && !gui->is_api_supported(plugin, CLAP_WINDOW_API_X11, false);
+        check(apis, "gui: cocoa embedded and floating, nothing else");
+        uint32_t w = 0, h = 0;
+        bool sized = gui != nullptr && gui->create(plugin, CLAP_WINDOW_API_COCOA, false) && gui->get_size(plugin, &w, &h) && w > 0 && h > 0
+                     && !gui->create(plugin, CLAP_WINDOW_API_COCOA, false);
+        if (gui != nullptr) gui->destroy(plugin);
+        check(sized, "gui: an embedded editor is created once, has a size and is destroyed");
+    }
     plugin->stop_processing(plugin); plugin->deactivate(plugin);
     plugin->destroy(plugin);
 

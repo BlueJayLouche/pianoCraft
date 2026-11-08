@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(PianoCraft VERSION 0.1.0 LANGUAGES CXX)
+project(PianoCraft VERSION 0.1.0 LANGUAGES CXX OBJCXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -33,12 +33,14 @@ set(PIANOCRAFT_ENGINE_SOURCES
 
 add_library(pianocraft MODULE
     src/host/ClapHost.cpp
+    src/host/ClapGui.mm
     ${PIANOCRAFT_ENGINE_SOURCES}
 )
 file(GLOB PIANOCRAFT_PRESETS CONFIGURE_DEPENDS resources/presets/*.pianocraft)
 target_sources(pianocraft PRIVATE ${PIANOCRAFT_PRESETS})
 set_source_files_properties(${PIANOCRAFT_PRESETS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/Presets)
-target_link_libraries(pianocraft PRIVATE clap)
+target_link_libraries(pianocraft PRIVATE clap "-framework Cocoa")
+set_source_files_properties(src/host/ClapGui.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 target_include_directories(pianocraft PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 set_target_properties(pianocraft PROPERTIES
     PREFIX ""

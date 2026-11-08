@@ -5,6 +5,8 @@
 #include "../engine/ReedEngine.hpp"
 #include "../engine/StringsEngine.hpp"
 #include "../engine/StruckEngine.hpp"
+#include "ClapGui.hpp"
+#include "GuiEdits.hpp"
 
 #include <clap/clap.h>
 
@@ -610,7 +612,9 @@ private:
 
     static void destroy(const clap_plugin_t* plugin) noexcept
     {
-        delete &self(plugin);
+        auto& adapter = self(plugin);
+        pianocraft::gui::destroy(adapter.editor_); // a host that skipped gui.destroy
+        delete &adapter;
     }
 
     static bool activate(const clap_plugin_t* plugin, double sampleRate,
@@ -695,6 +699,14 @@ private:
         if (updateEngine) {
             engine_.setParameter(static_cast<typename I::Id>(I::parameters[index].id), clamped);
         }
+    }
+
+    // The editor's edits: applied, and reported to the host as gesture and value events.
+    void applyEdits(const clap_output_events_t* out) noexcept
+    {
+        edits_.drain(
+            out, [](std::uint32_t index) { return I::parameters[index].id; },
+            [this](std::uint32_t index, double value) { setParameter(index, value, true); });
     }
 
     void clearOutputs(const clap_process_t* process) noexcept
@@ -869,6 +881,7 @@ private:
         float* right = nullptr;
         adapter.renderTargets(process, left, right);
         adapter.synchronizeParameters();
+        adapter.applyEdits(process->out_events);
 
         std::uint32_t offset = 0;
         const auto eventCount = (process->in_events != nullptr && process->in_events->size != nullptr &&
@@ -1017,10 +1030,11 @@ private:
     }
 
     static void paramsFlush(const clap_plugin_t* plugin, const clap_input_events_t* input,
-                            const clap_output_events_t*) noexcept
+                            const clap_output_events_t* output) noexcept
     {
         auto& adapter = self(plugin);
         adapter.synchronizeParameters();
+        adapter.applyEdits(output);
         if (input == nullptr || input->size == nullptr || input->get == nullptr) {
             return;
         }
@@ -1226,11 +1240,142 @@ private:
         if (std::strcmp(id, CLAP_EXT_VOICE_INFO) == 0) {
             return &voiceInfo_;
         }
+        if (std::strcmp(id, CLAP_EXT_GUI) == 0) {
+            return &gui_;
+        }
         (void)plugin;
         return nullptr;
     }
 
     static void onMainThread(const clap_plugin_t*) noexcept {}
+
+    // ---- gui: the generic AppKit editor (ClapGui.mm), embedded or floating, Cocoa only --------
+
+    static bool guiIsApiSupported(const clap_plugin_t*, const char* api, bool) noexcept
+    {
+        return api != nullptr && std::strcmp(api, CLAP_WINDOW_API_COCOA) == 0;
+    }
+
+    static bool guiGetPreferredApi(const clap_plugin_t*, const char** api, bool* isFloating) noexcept
+    {
+        if (api == nullptr || isFloating == nullptr) {
+            return false;
+        }
+        *api = CLAP_WINDOW_API_COCOA;
+        *isFloating = false;
+        return true;
+    }
+
+    static bool guiCreate(const clap_plugin_t* plugin, const char* api, bool isFloating) noexcept
+    {
+        auto& adapter = self(plugin);
+        if (adapter.editor_ != nullptr || !guiIsApiSupported(plugin, api, isFloating)) {
+            return false;
+        }
+        std::array<pianocraft::gui::Param, I::parameters.size()> params{};
+        for (std::size_t i = 0; i < params.size(); ++i) {
+            const auto& spec = I::parameters[i];
+            params[i] = {spec.name, spec.module, spec.minimum, spec.maximum, (spec.flags & CLAP_PARAM_IS_STEPPED) != 0,
+                         spec.choices};
+        }
+        const pianocraft::gui::Client client{&adapter, &guiValue, &guiEdit, &guiText, &guiClosed};
+        adapter.editor_ = pianocraft::gui::create(params.data(), params.size(), client, isFloating, I::name);
+        return adapter.editor_ != nullptr;
+    }
+
+    static void guiDestroy(const clap_plugin_t* plugin) noexcept
+    {
+        auto& adapter = self(plugin);
+        pianocraft::gui::destroy(adapter.editor_);
+        adapter.editor_ = nullptr;
+    }
+
+    // Cocoa sizes are logical: gui.h says not to call set_scale for it.
+    static bool guiSetScale(const clap_plugin_t*, double) noexcept { return false; }
+
+    static bool guiGetSize(const clap_plugin_t* plugin, std::uint32_t* width, std::uint32_t* height) noexcept
+    {
+        const auto& adapter = self(plugin);
+        if (adapter.editor_ == nullptr || width == nullptr || height == nullptr) {
+            return false;
+        }
+        pianocraft::gui::size(adapter.editor_, width, height);
+        return true;
+    }
+
+    static bool guiCanResize(const clap_plugin_t*) noexcept { return false; }
+    static bool guiGetResizeHints(const clap_plugin_t*, clap_gui_resize_hints_t*) noexcept { return false; }
+    static bool guiAdjustSize(const clap_plugin_t*, std::uint32_t*, std::uint32_t*) noexcept { return false; }
+    static bool guiSetSize(const clap_plugin_t*, std::uint32_t, std::uint32_t) noexcept { return false; }
+
+    static bool guiSetParent(const clap_plugin_t* plugin, const clap_window_t* window) noexcept
+    {
+        auto& adapter = self(plugin);
+        if (adapter.editor_ == nullptr || window == nullptr || window->api == nullptr ||
+            std::strcmp(window->api, CLAP_WINDOW_API_COCOA) != 0) {
+            return false;
+        }
+        return pianocraft::gui::setParent(adapter.editor_, window->cocoa);
+    }
+
+    static bool guiSetTransient(const clap_plugin_t*, const clap_window_t*) noexcept { return false; }
+
+    static void guiSuggestTitle(const clap_plugin_t* plugin, const char* title) noexcept
+    {
+        if (auto* editor = self(plugin).editor_; editor != nullptr) {
+            pianocraft::gui::setTitle(editor, title);
+        }
+    }
+
+    static bool guiShow(const clap_plugin_t* plugin) noexcept
+    {
+        auto* editor = self(plugin).editor_;
+        return editor != nullptr && pianocraft::gui::show(editor);
+    }
+
+    static bool guiHide(const clap_plugin_t* plugin) noexcept
+    {
+        auto* editor = self(plugin).editor_;
+        return editor != nullptr && pianocraft::gui::hide(editor);
+    }
+
+    // The editor's callbacks (main thread).
+    static double guiValue(void* context, std::size_t index) noexcept
+    {
+        return static_cast<Adapter*>(context)->parameterValues_[index].load(std::memory_order_acquire);
+    }
+
+    static void guiEdit(void* context, std::size_t index, double value, pianocraft::EditPhase phase) noexcept
+    {
+        auto& adapter = *static_cast<Adapter*>(context);
+        if (!adapter.edits_.push({static_cast<std::uint32_t>(index), value, phase})) {
+            return;
+        }
+        // While the plugin is not processing, the host flushes; while it is, this is harmless.
+        if (adapter.host_ != nullptr && adapter.host_->get_extension != nullptr) {
+            const auto* hostParams = static_cast<const clap_host_params_t*>(adapter.host_->get_extension(adapter.host_, CLAP_EXT_PARAMS));
+            if (hostParams != nullptr && hostParams->request_flush != nullptr) {
+                hostParams->request_flush(adapter.host_);
+            }
+        }
+    }
+
+    static bool guiText(void* context, std::size_t index, double value, char* out, std::uint32_t capacity) noexcept
+    {
+        auto& adapter = *static_cast<Adapter*>(context);
+        return paramsValueToText(&adapter.plugin_, I::parameters[index].id, value, out, capacity);
+    }
+
+    static void guiClosed(void* context) noexcept
+    {
+        auto& adapter = *static_cast<Adapter*>(context);
+        if (adapter.host_ != nullptr && adapter.host_->get_extension != nullptr) {
+            const auto* hostGui = static_cast<const clap_host_gui_t*>(adapter.host_->get_extension(adapter.host_, CLAP_EXT_GUI));
+            if (hostGui != nullptr && hostGui->closed != nullptr) {
+                hostGui->closed(adapter.host_, false);
+            }
+        }
+    }
 
     const clap_host_t* host_;
     typename I::Engine engine_;
@@ -1240,6 +1385,8 @@ private:
     std::uint32_t appliedParameterRevision_ = 0;
     bool active_ = false;
     bool processing_ = false;
+    pianocraft::GuiEdits edits_;
+    pianocraft::gui::Editor* editor_ = nullptr;
 
     static const clap_plugin_descriptor_t descriptor_;
     static const clap_plugin_audio_ports_t audioPorts_;
@@ -1249,11 +1396,21 @@ private:
     static const clap_plugin_remote_controls_t remoteControls_;
     static const clap_plugin_voice_info_t voiceInfo_;
     static const clap_plugin_preset_load_t presetLoad_;
+    static const clap_plugin_gui_t gui_;
 };
 
 template <class I>
 const clap_plugin_descriptor_t Adapter<I>::descriptor_ = {
     CLAP_VERSION_INIT, I::id, I::name, "PianoCraft", "", "", "", "0.1.0", I::description, pluginFeatures,
+};
+
+template <class I>
+const clap_plugin_gui_t Adapter<I>::gui_ = {
+    &Adapter<I>::guiIsApiSupported, &Adapter<I>::guiGetPreferredApi, &Adapter<I>::guiCreate,
+    &Adapter<I>::guiDestroy,        &Adapter<I>::guiSetScale,        &Adapter<I>::guiGetSize,
+    &Adapter<I>::guiCanResize,      &Adapter<I>::guiGetResizeHints,  &Adapter<I>::guiAdjustSize,
+    &Adapter<I>::guiSetSize,        &Adapter<I>::guiSetParent,       &Adapter<I>::guiSetTransient,
+    &Adapter<I>::guiSuggestTitle,   &Adapter<I>::guiShow,            &Adapter<I>::guiHide,
 };
 
 template <class I>
