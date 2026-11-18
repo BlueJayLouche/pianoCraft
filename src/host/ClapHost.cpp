@@ -1412,7 +1412,7 @@ private:
 
 template <class I>
 const clap_plugin_descriptor_t Adapter<I>::descriptor_ = {
-    CLAP_VERSION_INIT, I::id, I::name, "PianoCraft", "", "", "", "0.1.0", I::description, pluginFeatures,
+    CLAP_VERSION_INIT, I::id, I::name, "PianoCraft", "", "", "", "0.1.1", I::description, pluginFeatures,
 };
 
 template <class I>
