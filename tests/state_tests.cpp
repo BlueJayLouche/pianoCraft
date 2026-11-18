@@ -3,7 +3,15 @@
 // extensions, and that a finished voice reaches the host as NOTE_END. The other instruments get the
 // same round trip, presets and NOTE_END checks.
 #include <clap/clap.h>
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#define dlopen(path, flags) LoadLibraryA(path)
+#define dlsym(lib, name) reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(lib), name))
+#define dlerror() "LoadLibrary failed"
+#else
 #include <dlfcn.h>
+#endif
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -127,7 +135,7 @@ int main(int argc, char** argv) {
     bool everyFileRead = true;
     for (const auto& file : std::filesystem::directory_iterator(discovered.path)) {
         everyFileRead = everyFileRead && provider->get_metadata(provider, CLAP_PRESET_DISCOVERY_LOCATION_FILE,
-                                                                file.path().c_str(), &receiver);
+                                                                file.path().string().c_str(), &receiver);
     }
     const auto presetsFor = [&](const char* id) { return std::count(discovered.pluginIds.begin(), discovered.pluginIds.end(), id); };
     check(everyFileRead && discovered.names.size() == 34 && discovered.pluginIds.size() == 34 && !discovered.keyed &&

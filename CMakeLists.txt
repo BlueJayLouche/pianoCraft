@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(PianoCraft VERSION 0.1.0 LANGUAGES CXX OBJCXX)
+project(PianoCraft VERSION 0.1.0 LANGUAGES CXX)
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
+# Static CRT, so the Windows plugin loads without the Visual C++ redistributable.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -33,34 +38,45 @@ set(PIANOCRAFT_ENGINE_SOURCES
 
 add_library(pianocraft MODULE
     src/host/ClapHost.cpp
-    src/host/ClapGui.mm
     ${PIANOCRAFT_ENGINE_SOURCES}
 )
-file(GLOB PIANOCRAFT_PRESETS CONFIGURE_DEPENDS resources/presets/*.pianocraft)
-target_sources(pianocraft PRIVATE ${PIANOCRAFT_PRESETS})
-set_source_files_properties(${PIANOCRAFT_PRESETS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/Presets)
-target_link_libraries(pianocraft PRIVATE clap "-framework Cocoa")
-set_source_files_properties(src/host/ClapGui.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+target_link_libraries(pianocraft PRIVATE clap)
 target_include_directories(pianocraft PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 set_target_properties(pianocraft PROPERTIES
     PREFIX ""
     OUTPUT_NAME "PianoCraft"
-    BUNDLE TRUE
-    BUNDLE_EXTENSION "clap"
-    MACOSX_BUNDLE TRUE
-    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/resources/Info.plist"
-    MACOSX_BUNDLE_BUNDLE_NAME "PianoCraft"
-    MACOSX_BUNDLE_GUI_IDENTIFIER "com.pianocraft.upright"
-    MACOSX_BUNDLE_BUNDLE_VERSION "0.1.0"
-    MACOSX_BUNDLE_SHORT_VERSION_STRING "0.1.0"
     CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN YES
 )
+file(GLOB PIANOCRAFT_PRESETS CONFIGURE_DEPENDS resources/presets/*.pianocraft)
 
 if(APPLE)
+    target_sources(pianocraft PRIVATE src/host/ClapGui.mm ${PIANOCRAFT_PRESETS})
+    set_source_files_properties(${PIANOCRAFT_PRESETS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/Presets)
+    set_source_files_properties(src/host/ClapGui.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(pianocraft PRIVATE "-framework Cocoa")
     target_link_options(pianocraft PRIVATE "LINKER:-exported_symbol,_clap_entry")
+    set_target_properties(pianocraft PROPERTIES
+        BUNDLE TRUE
+        BUNDLE_EXTENSION "clap"
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/resources/Info.plist"
+        MACOSX_BUNDLE_BUNDLE_NAME "PianoCraft"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.pianocraft.upright"
+        MACOSX_BUNDLE_BUNDLE_VERSION "0.1.0"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "0.1.0"
+    )
+    set(PIANOCRAFT_PLUGIN_PATH $<TARGET_BUNDLE_DIR:pianocraft>)
 else()
-    message(FATAL_ERROR "PianoCraft currently supports only macOS CLAP bundles")
+    # No bundles off macOS: PianoCraft.clap is the library, its presets a PianoCraft folder beside it.
+    set_target_properties(pianocraft PROPERTIES SUFFIX ".clap")
+    if(NOT MSVC)
+        target_link_options(pianocraft PRIVATE -static-libstdc++ -static-libgcc)
+    endif()
+    add_custom_command(TARGET pianocraft POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/resources/presets"
+                "$<TARGET_FILE_DIR:pianocraft>/PianoCraft/Presets")
+    set(PIANOCRAFT_PLUGIN_PATH $<TARGET_FILE:pianocraft>)
 endif()
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/render.cpp")
@@ -98,14 +114,16 @@ add_test(NAME pianocraft-orchestra-tests COMMAND pianocraft-orchestra-tests)
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/state_tests.cpp")
     add_executable(pianocraft-state-tests tests/state_tests.cpp)
-    target_link_libraries(pianocraft-state-tests PRIVATE clap)
+    target_link_libraries(pianocraft-state-tests PRIVATE clap ${CMAKE_DL_LIBS})
     add_dependencies(pianocraft-state-tests pianocraft)
-    add_test(NAME pianocraft-state-tests COMMAND pianocraft-state-tests $<TARGET_FILE:pianocraft> $<TARGET_BUNDLE_DIR:pianocraft>)
+    add_test(NAME pianocraft-state-tests COMMAND pianocraft-state-tests $<TARGET_FILE:pianocraft> ${PIANOCRAFT_PLUGIN_PATH})
 endif()
 
-install(TARGETS pianocraft
-    DESTINATION "$ENV{HOME}/Library/Audio/Plug-Ins/CLAP"
-)
-# Bitwig rescans a bundle's plugins and presets only when Contents/Info.plist's date changes, and
-# install skips that file while its contents are unchanged.
-install(CODE "execute_process(COMMAND touch \"$ENV{HOME}/Library/Audio/Plug-Ins/CLAP/PianoCraft.clap/Contents/Info.plist\")")
+if(APPLE)
+    install(TARGETS pianocraft
+        DESTINATION "$ENV{HOME}/Library/Audio/Plug-Ins/CLAP"
+    )
+    # Bitwig rescans a bundle's plugins and presets only when Contents/Info.plist's date changes, and
+    # install skips that file while its contents are unchanged.
+    install(CODE "execute_process(COMMAND touch \"$ENV{HOME}/Library/Audio/Plug-Ins/CLAP/PianoCraft.clap/Contents/Info.plist\")")
+endif()

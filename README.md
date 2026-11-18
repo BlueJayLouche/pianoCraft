@@ -1,6 +1,6 @@
 # PianoCraft
 
-PianoCraft is an original, clean-room CLAP piano instrument for macOS. It uses
+PianoCraft is an original, clean-room CLAP piano instrument for macOS, Windows and Linux. It uses
 a hysteretic felt hammer (Stulov's published hammer set) striking physically
 scaled modal strings, coupled unison strings (Weinreich), phantom partials from
 longitudinal string motion (Bank & Sujbert), damper and sustain behavior,
@@ -9,8 +9,10 @@ reference samples or use Pianoteq data.
 
 ## Build
 
-Requirements: macOS, Apple Clang, CMake 3.28+, Ninja, and network access for the
-pinned CLAP 1.2.10 SDK.
+Requirements: CMake 3.28+, a C++17 compiler (Apple Clang, MSVC or GCC), and
+network access for the pinned CLAP 1.2.10 SDK. The commands below are for macOS
+with Ninja; on Windows, drop `-G Ninja` and pass `--config Release` to the build
+and `-C Release` to ctest. Releases are built by CI for all three platforms.
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -54,8 +56,12 @@ build/tools/clap-validator-0.4.1/clap-validator fuzz -j2 -d30s build/PianoCraft.
 
 ## Install for Bitwig
 
-Check that `~/Library/Audio/Plug-Ins/CLAP/PianoCraft.clap` is not an unrelated
-existing bundle, then run:
+On Windows and Linux, copy `PianoCraft.clap` and the `PianoCraft` folder beside
+it (its presets) from the build folder into `C:\Program Files\Common Files\CLAP` or
+`~/.clap`. The editor is macOS-only; there the host shows its own parameter view.
+
+On macOS, check that `~/Library/Audio/Plug-Ins/CLAP/PianoCraft.clap` is not an
+unrelated existing bundle, then run:
 
 ```sh
 cmake --install build --config Release

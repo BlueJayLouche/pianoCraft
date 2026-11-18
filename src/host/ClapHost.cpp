@@ -616,7 +616,9 @@ private:
     static void destroy(const clap_plugin_t* plugin) noexcept
     {
         auto& adapter = self(plugin);
+#ifdef __APPLE__
         pianocraft::gui::destroy(adapter.editor_); // a host that skipped gui.destroy
+#endif
         delete &adapter;
     }
 
@@ -1243,9 +1245,11 @@ private:
         if (std::strcmp(id, CLAP_EXT_VOICE_INFO) == 0) {
             return &voiceInfo_;
         }
+#ifdef __APPLE__ // the editor is AppKit; elsewhere hosts show their own parameter view
         if (std::strcmp(id, CLAP_EXT_GUI) == 0) {
             return &gui_;
         }
+#endif
         (void)plugin;
         return nullptr;
     }
@@ -1631,7 +1635,13 @@ const clap_preset_discovery_factory_t presetDiscoveryFactory = {
 bool entryInit(const char* pluginPath) noexcept
 {
     try {
-        presetDirectory = std::string(pluginPath != nullptr ? pluginPath : "") + "/Contents/Resources/Presets";
+        const std::string path = pluginPath != nullptr ? pluginPath : "";
+#ifdef __APPLE__
+        presetDirectory = path + "/Contents/Resources/Presets";
+#else
+        // No bundles off macOS: PianoCraft.clap's presets ship beside it in PianoCraft/Presets.
+        presetDirectory = path.substr(0, path.size() - std::min<std::size_t>(path.size(), 5)) + "/Presets";
+#endif
     } catch (...) {
         return false;
     }

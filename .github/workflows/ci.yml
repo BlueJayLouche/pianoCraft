@@ -10,9 +10,23 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-15 # arm64; the pinned clap-validator is an aarch64 build
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # arm64; the pinned clap-validator is an aarch64 build. Universal bundle, macOS 11+.
+          - os: macos-15
+            configure: -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+          # The oldest supported runner, so the plugin loads on glibc 2.35 and newer.
+          - os: ubuntu-22.04
+          - os: windows-latest
+    defaults:
+      run:
+        shell: bash
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Tag matches plugin version
         if: startsWith(github.ref, 'refs/tags/')
@@ -23,31 +37,63 @@ jobs:
 
       - name: Build
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
-          cmake --build build --parallel
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.configure }}
+          cmake --build build --config Release --parallel
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build -C Release --output-on-failure
 
+      # ponytail: validator on macOS only — the host code is shared; add the Linux/Windows validator builds if a platform bug slips through
       - name: Validate CLAP
+        if: runner.os == 'macOS'
         run: |
           python3 tools/fetch_validator.py
           build/tools/clap-validator-0.4.1/clap-validator validate build/PianoCraft.clap --only-failed
 
+      - name: Package
+        run: |
+          mkdir dist
+          NAME="PianoCraft-${GITHUB_REF_NAME//\//-}"
+          case "$RUNNER_OS" in
+            macOS)
+              # ponytail: ad-hoc signature, not notarized — add Developer ID secrets to drop the xattr step
+              codesign --force --deep -s - build/PianoCraft.clap
+              ditto -c -k --keepParent build/PianoCraft.clap "dist/$NAME-macos.zip" ;;
+            Linux)
+              tar -C build -czf "dist/$NAME-linux-x86_64.tar.gz" PianoCraft.clap PianoCraft ;;
+            Windows)
+              cd build/Release && 7z a "$GITHUB_WORKSPACE/dist/$NAME-windows-x64.zip" PianoCraft.clap PianoCraft ;;
+          esac
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.os }}
+          path: dist/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
       - name: Release
-        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # ponytail: ad-hoc signature, not notarized — add Developer ID secrets to drop the xattr step
-          codesign --force --deep -s - build/PianoCraft.clap
-          ZIP="PianoCraft-$GITHUB_REF_NAME-macos.zip"
-          ditto -c -k --keepParent build/PianoCraft.clap "$ZIP"
-          gh release create "$GITHUB_REF_NAME" "$ZIP" --title "PianoCraft $GITHUB_REF_NAME" --notes "Universal (Apple Silicon + Intel) CLAP bundle, macOS 11+.
+          gh release create "$GITHUB_REF_NAME" dist/* -R "$GITHUB_REPOSITORY" --title "PianoCraft $GITHUB_REF_NAME" --notes "CLAP plugins for macOS (universal, 11+), Windows (x64) and Linux (x86_64, glibc 2.35+).
 
-          Unzip into ~/Library/Audio/Plug-Ins/CLAP, then clear the download quarantine (the bundle is not notarized):
+          **macOS:** unzip into ~/Library/Audio/Plug-Ins/CLAP, then clear the download quarantine (the bundle is not notarized):
 
               xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/CLAP/PianoCraft.clap
+
+          **Windows:** copy PianoCraft.clap and the PianoCraft folder into C:\Program Files\Common Files\CLAP.
+
+          **Linux:** copy PianoCraft.clap and the PianoCraft folder into ~/.clap.
+
+          The editor is macOS-only for now; on Windows and Linux the host shows its own parameter view.
 
           Rescan plug-ins in your host."
