@@ -453,8 +453,12 @@ const Preset* findPreset(std::uint32_t locationKind, const char* location) noexc
     if (locationKind != CLAP_PRESET_DISCOVERY_LOCATION_FILE || location == nullptr) {
         return nullptr;
     }
-    const char* slash = std::strrchr(location, '/');
-    const char* file = slash != nullptr ? slash + 1 : location;
+    const char* file = location; // after the last separator, '/' or Windows' '\'
+    for (const char* c = location; *c != '\0'; ++c) {
+        if (*c == '/' || *c == '\\') {
+            file = c + 1;
+        }
+    }
     for (const auto& preset : I::presets) {
         const std::size_t length = std::strlen(preset.loadKey);
         if (std::strncmp(file, preset.loadKey, length) == 0 && std::strcmp(file + length, ".pianocraft") == 0) {

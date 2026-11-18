@@ -213,6 +213,9 @@ int main(int argc, char** argv) {
         check(accepted == 255, "a full edit queue refuses edits instead of overwriting");
     }
     // Editor through the ABI: Cocoa only, embedded and floating; an embedded editor has a size.
+#ifndef __APPLE__
+    check(plugin->get_extension(plugin, CLAP_EXT_GUI) == nullptr, "gui: none off macOS");
+#else
     {
         auto* gui = static_cast<const clap_plugin_gui_t*>(plugin->get_extension(plugin, CLAP_EXT_GUI));
         bool apis = gui != nullptr && gui->is_api_supported(plugin, CLAP_WINDOW_API_COCOA, false)
@@ -224,6 +227,7 @@ int main(int argc, char** argv) {
         if (gui != nullptr) gui->destroy(plugin);
         check(sized, "gui: an embedded editor is created once, has a size and is destroyed");
     }
+#endif
     plugin->stop_processing(plugin); plugin->deactivate(plugin);
     plugin->destroy(plugin);
 

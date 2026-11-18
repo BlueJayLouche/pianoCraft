@@ -6,6 +6,10 @@ if(APPLE)
 endif()
 # Static CRT, so the Windows plugin loads without the Visual C++ redistributable.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+if(MSVC)
+    # The tests and tools hold engines on the stack, as macOS and Linux's 8 MB allow; Windows gives 1 MB.
+    string(APPEND CMAKE_EXE_LINKER_FLAGS " /STACK:8388608")
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
