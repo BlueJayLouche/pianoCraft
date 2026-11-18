@@ -38,6 +38,7 @@ private:
     double noiseLow_ = 0.0;
     double airLow_ = 0.0;
     double airHigh_ = 0.0;
+    double pitchGain_ = 0.0; // the level's rise with pitch, gliding to each note's so a slur doesn't click
     std::uint32_t noise_ = 0x9E3779B9u;
 };
 

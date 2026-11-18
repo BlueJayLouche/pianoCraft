@@ -34,6 +34,7 @@ clean-room policy applies unchanged.
 | Output stage, fitted: the oboe rises 6 dB an octave below 1.13 kHz to a low-pass at 10.5 kHz x (1 + 1.1 b^3); the clarinet darkens at pp, three one-poles at 428 Hz x (1 + 30 b^3) x (f0 / C3)^0.7 | Fitted | The oboe's fundamentals are 8-18 dB under its formant at 1-1.7 kHz in the recordings. |
 | Breath wander: the breath is never quite steady, a 6 Hz wander of about 2.5% (oboe) or 3% (clarinet) | Fitted | The model's level was 3-10x steadier than the recordings'; now matched. Seeded: renders repeat. |
 | The oboe's tongue releases pressure already built behind it: the breath arrives 5 times as fast as the flute's, with a puff of 0.1 (the flute's 0.35, which a breath this quick would follow into an overshoot). The clarinet keeps the flute's | Fitted | The oboe's recordings speak in 0-35 ms, the model took 50-175 ms: now 20-30 ms behind them at every dynamic, 30-40 before. The clarinet's player tongues softly (50-115 ms), and the flute's attack is within 10 ms of it. |
+| The top register, from A5 (oboe) and G5 (clarinet): the oboe's bore losses shrink with its length (the bell's pole scaled by the period's share of A5's), with less of the stretch taken back above A5 (4.4 cents x (f^2 - f_A5^2) / kHz^2); the clarinet's even harmonics grow, 1 + 2 x (octaves above G5)^2 | Fitted | The model's top octave was nearly pure, a flute's: the recordings' 4th-10th harmonics there were 7-12 dB (oboe) and 7-19 dB (clarinet) over the model's, and the clarinet's 2nd often level with its fundamental (the model's 15-26 dB under). Now the oboe's are within 3 dB at every dynamic, the clarinet's within 2 at mf (14 under at pp, where its soft reed keeps it pure). Scaling the losses everywhere overblew the clarinet's top notes to the 3rd harmonic, and made the middle register too rich. The oboe within 2.5 cents across its range. |
 | Reed: up to 1 it raises the oboe's formants in dB from none (and the clarinet's even harmonics from none); above 1 they rise a quarter as fast and widen (Q / Reed^1.5), so the buzz spreads rather than picking out the harmonic that lands on a peak. The oboe loses 3 dB a unit of Reed | By ear and measured | Across the range, the oboe's median loudness moves under 1 dB from Reed 0 to 2; at 2 a sharper formant made single notes 15 dB louder. The reed's own constants are no control: its stiffness, opening or the mouth's pressure moved a few percent throw notes into another register or silence them. |
 
 The clarinet sounds D3 to B-flat 6 (the B-flat clarinet's written E3 to C7), straight-toned by
@@ -46,10 +47,14 @@ clarinet, Christine Bellomy, 1998; anechoic, pp, mf and ff): sources and checksu
 `model/iowa-provenance.json`, the analysis in `tools/iowa_calibration.py` (as for the brass,
 `docs/brass.md`). Spectral error, mean dB per note, pp / mf / ff:
 
-| | First | Fitted (Oct) | With the formants (Nov) |
-|---|---|---|---|
-| Oboe | 6.8 / 8.5 / 7.9 | 6.4 / 7.3 / 7.7 | 6.7 / 5.7 / 6.4 |
-| Clarinet | 9.7 / 11.6 / 11.5 | 4.3 / 5.4 / 6.1 | 4.3 / 5.4 / 6.1 |
+| | First | Fitted (Oct) | The oboe's formants | The top register |
+|---|---|---|---|---|
+| Oboe | 6.8 / 8.5 / 7.9 | 6.4 / 7.3 / 7.7 | 6.7 / 5.7 / 6.4 | 6.4 / 5.4 / 6.3 |
+| Clarinet | 9.7 / 11.6 / 11.5 | 4.3 / 5.4 / 6.1 | 4.3 / 5.4 / 6.1 | 3.7 / 5.2 / 5.8 |
+
+That score weights each note's strong harmonics, so it hardly saw the top octave's missing upper
+harmonics, 35-55 dB down in the recordings but what makes a reed's buzz; the top register's laws were
+fitted to those (harmonics 4-10, unweighted).
 
 The oboe's cone takes the reed 0.3-0.35 of the way along the bore, so its tip, a cylinder, cancels
 what the reed sounds near the 3rd harmonic, where the real oboe's formant peaks. Its spectrum was a

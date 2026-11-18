@@ -96,11 +96,11 @@ int main(int argc, char** argv) {
     check(load(blob({{1, 1.3}, {2, 0.8}, {3, 0.6}, {4, 1.5}})), "old 4-parameter state loads");
     check(value(1) == 1.3 && value(2) == 0.8 && value(3) == 0.6 && value(4) == 1.5, "old values restored");
     check(value(5) == 0.0 && value(6) == 1.0, "new parameters default (Spaced Pair, width 1)");
-    check(value(7) == 1.0 && value(9) == 1.0 && value(13) == 1.0, "voicing parameters default to 1");
+    check(value(7) == 1.0 && value(9) == 1.0 && value(13) == 1.0 && value(17) == 1.0, "voicing parameters default to 1");
     auto* remote = static_cast<const clap_plugin_remote_controls_t*>(plugin->get_extension(plugin, CLAP_EXT_REMOTE_CONTROLS));
     clap_remote_controls_page_t page{};
-    bool pagesValid = remote != nullptr && remote->count(plugin) == 2;
-    for (uint32_t p = 0; pagesValid && p < 2; ++p) {
+    bool pagesValid = remote != nullptr && remote->count(plugin) == 3;
+    for (uint32_t p = 0; pagesValid && p < 3; ++p) {
         pagesValid = remote->get(plugin, p, &page);
         for (clap_id id : page.param_ids) {
             double v; pagesValid = pagesValid && (id == CLAP_INVALID_ID || params->get_value(plugin, id, &v));

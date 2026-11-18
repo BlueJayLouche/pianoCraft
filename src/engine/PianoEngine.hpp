@@ -29,6 +29,7 @@ enum class ParameterId : std::uint32_t {
     masterTune = 14,
     stretch = 15,
     age = 16,
+    pedalNoise = 17,
 };
 
 class PianoEngine {

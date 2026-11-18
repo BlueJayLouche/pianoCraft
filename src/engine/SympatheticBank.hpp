@@ -31,6 +31,8 @@ private:
 
     static constexpr std::size_t modesPerKey = 8;
     std::array<std::array<Mode, modesPerKey>, instrumentKeyCount> keys_{};
+    std::array<double, instrumentKeyCount> open_{}; // undamped, ramped as the dampers move
+    double damperStep_ = 1.0;
 };
 
 } // namespace pianocraft

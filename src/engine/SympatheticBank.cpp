@@ -7,6 +7,11 @@ namespace pianocraft {
 
 void SympatheticBank::prepare(double sampleRate, const InstrumentModel& model) {
     keys_ = {};
+    open_ = {};
+    // The pedal's dampers ride its rail (PianoEngine::movePedals); a string a note-on takes over
+    // still stops being driven over 5 ms, not in a sample. Slower, it held the strings shut while a
+    // stamped pedal's felt brushed them.
+    damperStep_ = 200.0 / sampleRate;
     update(sampleRate, model);
 }
 
@@ -50,6 +55,7 @@ void SympatheticBank::reset() {
             mode.y2 = 0.0;
         }
     }
+    open_ = {};
 }
 
 std::array<double, 3> SympatheticBank::process(
@@ -60,7 +66,8 @@ std::array<double, 3> SympatheticBank::process(
     std::array<double, 3> output{};
     for (std::size_t index = 0; index < instrumentKeyCount; ++index) {
         const std::size_t region = index + 21 < 48 ? 0 : (index + 21 < 72 ? 1 : 2);
-        const double open = undamped[index];
+        open_[index] += std::clamp(undamped[index] - open_[index], -damperStep_, damperStep_);
+        const double open = open_[index];
         for (auto& mode : keys_[index]) {
             // Dampers block the drive in proportion to their contact; a fully damped string only
             // rings out what it already holds.

@@ -79,7 +79,7 @@ void FluteEngine::reset() {
     reflection_ = dcInput_ = dcOutput_ = radiated_ = noiseLow_ = airLow_ = airHigh_ = 0.0;
     formant_ = {};
     voicing_.reset();
-    boreLevel_ = 0.0;
+    boreLevel_ = pitchGain_ = 0.0;
     noise_ = 0x9E3779B9u;
 }
 
@@ -131,6 +131,11 @@ void FluteEngine::render(float* left, float* right, std::uint32_t frameCount) {
     const double registerTuning = std::pow(2.0, 5.0 * height / 1200.0);
     // The fundamental follows breath as breath^fundamentalLaw: 0.4 at C4, 1.2 from C7.
     const double fundamentalLaw = 0.4 + 0.8 * std::min(height, 1.0);
+    // Players blow high notes harder (Fletcher: pressure ~ frequency) and the open end radiates
+    // them better: the level rises 3 dB an octave, so the third octave rings out as a flute's does.
+    // At a slur it glides to the new note's over 5 ms, as the pads move: stepped, it clicks.
+    const double pitchGain = std::sqrt(fs / period_ / 261.6);
+    const double pitchGlide = 1.0 - std::exp(-1.0 / (0.005 * fs));
 
     for (std::uint32_t frame = 0; frame < frameCount; ++frame) {
         frame_ = frame;
@@ -203,9 +208,8 @@ void FluteEngine::render(float* left, float* right, std::uint32_t frameCount) {
         const double raw = (radiated + 0.09 * noiseLevel * jetSpeed * airGain * (airLow_ - airHigh_)) * volume_;
         level_ = std::max(std::abs(raw), level_ * 0.9995);
         const double sample = voicing_.process(raw);
-        // Players blow high notes harder (Fletcher: pressure ~ frequency) and the open end radiates
-        // them better: the level rises 3 dB an octave, so the third octave rings out as a flute's does.
-        const double gain = output * expression_ * std::sqrt(fs / period_ / 261.6);
+        pitchGain_ += pitchGlide * (pitchGain - pitchGain_);
+        const double gain = output * expression_ * pitchGain_;
         left[frame] = static_cast<float>(gain * sample * gainLeft);
         right[frame] = static_cast<float>(gain * sample * gainRight);
     }

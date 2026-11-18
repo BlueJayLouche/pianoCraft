@@ -47,6 +47,13 @@ struct ReedModel {
     double attack;            // how fast the breath arrives, against the flute's (MonoWind), and how
     double puff;              // far the tongue's puff overshoots the held breath
     double reedLevel;         // dB a unit of Reed, keeping the loudness where it was
+    // The top register, from topKey: its bore's losses shrink with its length (as length^topLoss),
+    // and its even harmonics grow (1 + topEvens x the octaves above topKey, squared). Fitted to the
+    // recordings' top octave, which the model played nearly pure.
+    int topKey;
+    double topLoss;
+    double topEvens;
+    double topStretch; // cents per kHz^2 less stretch above topKey, where the loop runs less flat
 };
 
 // A reed instrument, played by MonoWind: a reed valve (J. O. Smith's reed table) on a bore. See

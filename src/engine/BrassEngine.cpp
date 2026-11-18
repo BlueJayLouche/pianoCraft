@@ -94,6 +94,10 @@ void BrassEngine::noteOn(const NoteAddress& address, double velocity) {
         endNote(address);
         return;
     }
+    std::size_t stack = 0; // this key's notes already held: a stacked voice is another player
+    for (const auto& other : voices_) {
+        stack += other.active && other.keyDown && other.address.key == address.key ? 1 : 0;
+    }
     Voice* voice = nullptr;
     for (auto& candidate : voices_) {
         if (!candidate.active) {
@@ -115,9 +119,20 @@ void BrassEngine::noteOn(const NoteAddress& address, double velocity) {
     voice->active = voice->keyDown = true;
     voice->velocity = std::clamp(velocity, 0.0, 1.0);
     voice->breath = breathTarget_;
-    voice->noise = 0x9E3779B9u ^ (static_cast<std::uint32_t>(address.key) * 2654435761u);
-    // Each note its own player, a cent or two from the others.
-    const double cents = 4.0 * (unit(static_cast<std::uint64_t>(address.key)) - 0.5);
+    // Each note its own player, a cent or two from the others. A stacked voice is another player
+    // again: 3-8 cents from the first (sharp and flat in turn) and wandering a couple of cents, so the
+    // two never lock into a slow cancelling beat; coming in up to 20 ms after the first, sitting a
+    // little apart, its own breath.
+    const auto player = static_cast<std::uint64_t>(address.key) + 4096u * stack;
+    voice->stack = stack;
+    voice->noise = (0x9E3779B9u ^ (static_cast<std::uint32_t>(address.key) * 2654435761u) ^ (static_cast<std::uint32_t>(stack) * 0x85EBCA6Bu)) | 1u;
+    voice->wait = stack == 0 ? 0.0 : 0.02 * unit(player + 1);
+    voice->seat = stack == 0 ? 0.0 : 2.0 * unit(player + 2) - 1.0;
+    const double apart = stack == 0 ? 0.0 : (stack % 2 == 1 ? 1.0 : -1.0) * (3.0 + 5.0 * unit(player + 3));
+    voice->driftCents = stack == 0 ? 0.0 : 1.5 + unit(player + 4);
+    voice->driftStep = 2.0 * filters::pi * (0.15 + 0.25 * unit(player + 5)) / sampleRate_;
+    voice->driftPhase = 2.0 * filters::pi * unit(player + 6);
+    const double cents = 4.0 * (unit(static_cast<std::uint64_t>(address.key)) - 0.5) + apart;
     voice->period = sampleRate_ / (parameters_[index(HornParameterId::masterTune)] * std::pow(2.0, (address.key - 69) / 12.0)) *
                     std::pow(2.0, -cents / 1200.0) * lipPull;
     std::size_t size = 1;
@@ -127,12 +142,19 @@ void BrassEngine::noteOn(const NoteAddress& address, double velocity) {
     voice->mask = std::min(size, lineSize_) - 1;
     float* bore = pool_.data() + static_cast<std::size_t>(voice - voices_.data()) * lineSize_;
     std::fill_n(bore, voice->mask + 1, 0.0F);
+    if (voice->wait <= 0.0) {
+        launch(*voice);
+    }
+}
+
+void BrassEngine::launch(Voice& voice) {
     // The tongue's release launches the note's wave at once: the bore starts with a sinusoid of the
     // note's period circulating, which the lips take up within a period or two, rather than their
     // buzz growing from nothing (about 1 dB a millisecond, too slow beside a player's attack).
-    const double seed = model_.tongue * (0.3 + 0.7 * voice->velocity) * (0.35 + 0.65 * voice->breath);
-    for (std::size_t n = 1; seed > 0.0 && n <= voice->mask; ++n) {
-        bore[(voice->mask + 1 - n) & voice->mask] = static_cast<float>(-seed * std::sin(2.0 * filters::pi * static_cast<double>(n) / voice->period));
+    float* bore = pool_.data() + static_cast<std::size_t>(&voice - voices_.data()) * lineSize_;
+    const double seed = model_.tongue * (0.3 + 0.7 * voice.velocity) * (0.35 + 0.65 * voice.breath);
+    for (std::size_t n = 1; seed > 0.0 && n <= voice.mask; ++n) {
+        bore[(voice.write + voice.mask + 1 - n) & voice.mask] = static_cast<float>(-seed * std::sin(2.0 * filters::pi * static_cast<double>(n) / voice.period));
     }
 }
 
@@ -284,7 +306,8 @@ void BrassEngine::render(float* left, float* right, std::uint32_t frameCount) {
             continue;
         }
         const double bend = std::pow(2.0, 2.0 * bend_[static_cast<std::size_t>(std::clamp<int>(voice.address.channel, 0, 15))] / 12.0);
-        const double period = voice.period / bend;
+        const double period = voice.period / bend * std::pow(2.0, -voice.driftCents * std::sin(voice.driftPhase) / 1200.0);
+        voice.driftPhase = std::fmod(voice.driftPhase + voice.driftStep * frameCount, 2.0 * filters::pi);
         const double omega = 2.0 * filters::pi / period;
         const double loop = phaseDelay(1.0 - bellPole, 0.0, bellPole, omega) + phaseDelay(1.0, -1.0, dcPole, omega);
         const double brightness = std::clamp(p[index(HornParameterId::brightness)] + globalModulation_[index(HornParameterId::brightness)] +
@@ -292,7 +315,7 @@ void BrassEngine::render(float* left, float* right, std::uint32_t frameCount) {
         // The hand in the bell darkens the horn: a low-pass, opening with breath.
         const double handCorner = std::min(model_.tone * brightness * (1.0 + model_.bloom * voice.breath * voice.breath * voice.breath) *
                                                std::pow(fs / period / 130.81, model_.track), 0.4 * fs);
-        const double place = 0.5 + 0.25 * width * std::clamp((voice.address.key - centre) / span, -1.0, 1.0) + (voice.pan - 0.5);
+        const double place = 0.5 + 0.25 * width * std::clamp((voice.address.key - centre) / span, -1.0, 1.0) + 0.1 * width * voice.seat + (voice.pan - 0.5);
         block[v] = {std::clamp(period - loop, 4.0, static_cast<double>(voice.mask) - 4.0),
                     1.0 - std::exp(-1.0 / (model_.attack * (0.06 - 0.045 * voice.velocity) * fs)),
                     1.0 - std::exp(-2.0 * filters::pi * handCorner / fs), std::cos(std::clamp(place, 0.0, 1.0) * 0.5 * filters::pi),
@@ -312,6 +335,17 @@ void BrassEngine::render(float* left, float* right, std::uint32_t frameCount) {
             }
             const auto& b = block[v];
             const bool gate = voice.keyDown || voice.held;
+            if (voice.wait > 0.0) { // a stacked player not yet in
+                if (!gate) {
+                    endNote(voice.address);
+                    continue;
+                }
+                voice.wait -= 1.0 / fs;
+                if (voice.wait > 0.0) {
+                    continue;
+                }
+                launch(voice);
+            }
             // CC1 is the breath behind the lips, or the note's own Pressure when it has one;
             // stopped notes are blown harder.
             voice.breath += smooth * ((voice.pressure >= 0.0 ? voice.pressure : breathTarget_) - voice.breath);

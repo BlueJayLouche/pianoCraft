@@ -104,8 +104,15 @@ private:
         std::uint32_t noise = 1; // the breath's turbulence, seeded per note so renders repeat
         double turbulence = 0.0;
         std::array<double, 2> wander{}; // the player's breath, never quite steady
+        // Bitwig's voice stacking plays one key as several notes: each after the first is another
+        // player, its own detune, breath, place and entry (wait, seconds before it comes in).
+        std::size_t stack = 0;
+        double wait = 0.0;
+        double seat = 0.0;
+        double driftCents = 0.0, driftStep = 0.0, driftPhase = 0.0; // its intonation's slow wander
     };
 
+    void launch(Voice& voice); // the tongue's release: the note's wave starts in the bore
     void endNote(const NoteAddress& address);
 
     BrassModel model_;

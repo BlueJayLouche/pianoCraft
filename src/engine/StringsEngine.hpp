@@ -112,6 +112,9 @@ private:
         double brightnessModulation = 0.0;
         double pressure = -1.0; // per-note Pressure, unset
         double bow = 0.6;       // CC1 or Pressure, smoothed
+        // Bitwig's voice stacking plays one key as several notes: each after the first is another
+        // desk, seeded apart from it (a stacked soloist another soloist).
+        std::size_t stack = 0;
         std::array<Player, playerLimit> player{};
     };
 

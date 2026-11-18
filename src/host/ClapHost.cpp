@@ -103,7 +103,7 @@ struct Piano {
     static constexpr const char* section = "Piano";
 
     // Listed by group; hosts identify parameters by id, so the order is free.
-    static constexpr std::array<ParameterSpec, 16> parameters{{
+    static constexpr std::array<ParameterSpec, 17> parameters{{
     {pid(ParameterId::hammerHardness), "Hammer Hardness", "Hammer", 0.25, 2.0, 1.0, perNoteFlags},
     {pid(ParameterId::dynamicRange), "Dynamic Range", "Hammer", 0.0, 2.0, 1.0, continuousFlags},
     {pid(ParameterId::velocityBrightness), "Velocity Brightness", "Hammer", 0.0, 2.0, 1.0, continuousFlags},
@@ -113,6 +113,7 @@ struct Piano {
     {pid(ParameterId::unisonDetune), "Unison Detune", "Strings", 0.0, 3.0, 1.0, continuousFlags},
     {pid(ParameterId::aftersound), "Aftersound", "Strings", 0.0, 2.0, 1.0, continuousFlags},
     {pid(ParameterId::sympatheticLevel), "Sympathetic Level", "Strings", 0.0, 1.0, 0.35, continuousFlags},
+    {pid(ParameterId::pedalNoise), "Pedal Noise", "Strings", 0.0, 2.0, 1.0, continuousFlags},
     {pid(ParameterId::masterTune), "Master Tune", "Tuning", 415.0, 466.0, 440.0, continuousFlags},
     {pid(ParameterId::stretch), "Stretch", "Tuning", 0.0, 2.0, 1.0, continuousFlags},
     {pid(ParameterId::age), "Age", "Age", 0.0, 1.0, 0.0, continuousFlags},
@@ -122,7 +123,7 @@ struct Piano {
     {pid(ParameterId::outputGain), "Output Gain", "Mix", 0.0, 2.0, 0.7, continuousFlags},
 }};
 
-    static constexpr std::array<RemotePage, 2> pages{{
+    static constexpr std::array<RemotePage, 3> pages{{
     {"Main", {pid(ParameterId::hammerHardness), pid(ParameterId::dynamicRange),
               pid(ParameterId::velocityBrightness), pid(ParameterId::sustainLength),
               pid(ParameterId::sympatheticLevel), pid(ParameterId::bodyLevel),
@@ -131,6 +132,8 @@ struct Piano {
                  pid(ParameterId::damperRelease), pid(ParameterId::hammerNoise),
                  pid(ParameterId::micPosition), pid(ParameterId::masterTune), pid(ParameterId::stretch),
                  pid(ParameterId::age)}},
+    {"Pedal", {pid(ParameterId::pedalNoise), pid(ParameterId::damperRelease), pid(ParameterId::sympatheticLevel),
+               CLAP_INVALID_ID, CLAP_INVALID_ID, CLAP_INVALID_ID, CLAP_INVALID_ID, CLAP_INVALID_ID}},
 }};
 
     // The Old House score bounces mono, so its wear stages use Stereo Width 0.

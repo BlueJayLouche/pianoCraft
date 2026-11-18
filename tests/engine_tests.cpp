@@ -145,6 +145,91 @@ void restrikesAndPolyphonyAreFinite() {
     require(peak(render(engine, 256, 64)) == 0.0, "Reset did not silence output");
 }
 
+// Nothing steps in a sample: a restrike under the pedal, or the pedal itself, leaves no kink. The
+// waveform's sharpest third difference in the 0.5 ms from the event (before the hammer lands),
+// against its median over the 50 ms before. A restruck string's gain and EQ once stepped: 1000x.
+void nothingClicks() {
+    const auto kink = [](const std::vector<float>& stereo, std::size_t at) {
+        std::vector<double> third;
+        for (std::size_t i = at - 2400; i < at - 24; ++i) {
+            third.push_back(std::abs(stereo[2 * (i + 3)] - 3.0 * stereo[2 * (i + 2)] + 3.0 * stereo[2 * (i + 1)] - stereo[2 * i]));
+        }
+        std::nth_element(third.begin(), third.begin() + third.size() / 2, third.end());
+        double sharpest = 0.0;
+        for (std::size_t i = at - 2; i < at + 24; ++i) {
+            sharpest = std::max(sharpest, static_cast<double>(std::abs(stereo[2 * (i + 3)] - 3.0 * stereo[2 * (i + 2)] +
+                                                                       3.0 * stereo[2 * (i + 1)] - stereo[2 * i])));
+        }
+        return sharpest / third[third.size() / 2];
+    };
+    for (const auto& strikes : {std::pair{0.8, 0.2}, {0.2, 0.8}}) {
+        pianocraft::PianoEngine engine;
+        engine.prepare(48000.0);
+        engine.setSustain(0, 1.0);
+        engine.noteOn(note(60, 1), strikes.first);
+        auto output = render(engine, 9600, 64);
+        engine.noteOff(note(60, 1), 0.0);
+        const auto ringing = render(engine, 33600, 64);
+        output.insert(output.end(), ringing.begin(), ringing.end());
+        engine.noteOn(note(60, 2), strikes.second);
+        const auto restruck = render(engine, 4800, 64);
+        output.insert(output.end(), restruck.begin(), restruck.end());
+        const double sharpest = kink(output, 43200);
+        require(sharpest < 10.0, "A pedalled restrike clicked: " + std::to_string(sharpest) + "x");
+    }
+    pianocraft::PianoEngine engine;
+    engine.prepare(48000.0);
+    engine.setSustain(0, 1.0);
+    for (int key : {48, 55, 60, 64, 67, 72, 76, 79, 84, 88}) {
+        engine.noteOn(note(key, key), 0.8);
+    }
+    auto output = render(engine, 24000, 64);
+    for (int key : {48, 55, 60, 64, 67, 72, 76, 79, 84, 88}) {
+        engine.noteOff(note(key, key), 0.0);
+    }
+    const auto ringing = render(engine, 24000, 64);
+    output.insert(output.end(), ringing.begin(), ringing.end());
+    engine.setSustain(0, 0.0);
+    const auto lifted = render(engine, 4800, 64);
+    output.insert(output.end(), lifted.begin(), lifted.end());
+    engine.setSustain(0, 1.0);
+    const auto lowered = render(engine, 4800, 64);
+    output.insert(output.end(), lowered.begin(), lowered.end());
+    for (std::size_t at : {48000u, 52800u}) {
+        const double sharpest = kink(output, at);
+        require(sharpest < 10.0, "A square pedal step clicked: " + std::to_string(sharpest) + "x");
+    }
+}
+
+// The pedal sounds by its speed: a stamp knocks, a slow move barely (its knock, without the strings'
+// shimmer, which gathers over a slow lift), Pedal Noise 0 not at all, and the noise grows from
+// nothing rather than starting in a sample.
+void pedalMakesNoise() {
+    const auto press = [](double noise, int steps, double sympathy = 0.35) {
+        pianocraft::PianoEngine engine;
+        engine.prepare(48000.0);
+        engine.setParameter(pianocraft::ParameterId::pedalNoise, noise);
+        engine.setParameter(pianocraft::ParameterId::sympatheticLevel, sympathy);
+        std::vector<float> output;
+        for (int step = 1; step <= steps; ++step) {
+            engine.setSustain(0, static_cast<double>(step) / steps);
+            const auto part = render(engine, 14400 / steps, 64);
+            output.insert(output.end(), part.begin(), part.end());
+        }
+        const auto rest = render(engine, 9600, 64);
+        output.insert(output.end(), rest.begin(), rest.end());
+        return output;
+    };
+    const auto stamp = press(1.0, 1);
+    require(peak(stamp) > 1.0e-5, "A pedal stamp made no sound");
+    require(peak(press(0.0, 1)) == 0.0, "Pedal Noise 0 still sounded");
+    const double knock = peak(press(1.0, 1, 0.0));
+    const double slowKnock = peak(press(1.0, 30, 0.0)); // 300 ms down
+    require(slowKnock < 0.18 * knock, "A slow pedal knocked within 15 dB of a stamp");
+    const std::vector<float> onset(stamp.begin(), stamp.begin() + 24);
+    require(peak(onset) < 0.05 * peak(stamp), "The pedal noise started in a sample"); // 2.6% by 0.5 ms
+}
+
 // A re-render must line up with the one it replaces: the same events give the same samples at any
 // host block size, as the CLAP host splits blocks at each event.
 void blockSizesAreDeterministic() {
@@ -699,6 +784,8 @@ int main() {
         noteProducesSoundAndReleases();
         sustainHoldsNotes();
         restrikesAndPolyphonyAreFinite();
+        nothingClicks();
+        pedalMakesNoise();
         blockSizesAreDeterministic();
         parametersAndRatesAreValid();
         sympatheticIsSelective();

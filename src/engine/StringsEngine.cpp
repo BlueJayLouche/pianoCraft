@@ -139,11 +139,14 @@ void StringsEngine::start(Voice& voice) {
     const auto v = static_cast<std::size_t>(&voice - voices_.data());
     for (std::size_t i = 0; i < voice.players; ++i) {
         auto& player = voice.player[i];
-        const auto seed = static_cast<std::uint64_t>(key) * 1000u + i * 10u;
-        const double solo = voice.players == 1 ? 0.0 : 1.0;
+        const auto seed = static_cast<std::uint64_t>(key) * 1000u + i * 10u + voice.stack * 100003u;
+        const double solo = voice.players == 1 && voice.stack == 0 ? 0.0 : 1.0;
         player = Player{};
-        player.detune = std::pow(2.0, -solo * spread * 12.0 * (unit(seed) - 0.5) / 1200.0);
-        player.onset = i == 0 ? 0.0 : spread * 0.03 * unit(seed + 1);
+        // A stacked voice's desk sits 3-8 cents from the first's (sharp and flat in turn), so they
+        // never lock into a slow cancelling beat.
+        const double apart = voice.stack == 0 ? 0.0 : (voice.stack % 2 == 1 ? 1.0 : -1.0) * (3.0 + 5.0 * unit(seed + 11));
+        player.detune = std::pow(2.0, -spread * (apart + (voice.players > 1 ? 12.0 * (unit(seed) - 0.5) : 0.0)) / 1200.0);
+        player.onset = i == 0 && voice.stack == 0 ? 0.0 : spread * 0.03 * unit(seed + 1);
         player.bowScale = 1.0 + solo * spread * 0.15 * (unit(seed + 2) - 0.5);
         player.bowPoint = 1.0 + solo * spread * 0.3 * (unit(seed + 7) - 0.5);
         player.driftSeed = seed + 8;
@@ -153,7 +156,8 @@ void StringsEngine::start(Voice& voice) {
         player.vibratoPhase = 2.0 * filters::pi * unit(seed + 4);
         player.tremoloStep = 2.0 * filters::pi * 7.0 * (1.0 + 0.1 * (unit(seed + 5) - 0.5)) / sampleRate_;
         player.tremoloPhase = 2.0 * filters::pi * unit(seed + 6);
-        player.seat = voice.players == 1 ? 0.0 : 2.0 * static_cast<double>(i) / static_cast<double>(voice.players - 1) - 1.0;
+        player.seat = voice.players > 1 ? 2.0 * static_cast<double>(i) / static_cast<double>(voice.players - 1) - 1.0
+                                        : voice.stack == 0 ? 0.0 : 2.0 * unit(seed + 10) - 1.0;
         std::fill_n(line(v, i, 0), voice.mask + 1, 0.0F);
         std::fill_n(line(v, i, 1), voice.mask + 1, 0.0F);
     }
@@ -172,6 +176,10 @@ void StringsEngine::noteOn(const NoteAddress& address, double velocity) {
     if (address.key < lowestKey || address.key > highestKey) {
         endNote(address);
         return;
+    }
+    std::size_t stack = 0; // this key's notes already held: a stacked voice is another desk
+    for (const auto& other : voices_) {
+        stack += other.active && other.keyDown && other.address.key == address.key ? 1 : 0;
     }
     Voice* voice = nullptr;
     for (auto& candidate : voices_) {
@@ -195,6 +203,7 @@ void StringsEngine::noteOn(const NoteAddress& address, double velocity) {
     voice->active = voice->keyDown = true;
     voice->velocity = std::clamp(velocity, 0.0, 1.0);
     voice->bow = bowTarget_;
+    voice->stack = stack;
     start(*voice);
 }
 
@@ -447,7 +456,7 @@ void StringsEngine::render(float* left, float* right, std::uint32_t frameCount) 
                 // Each player's intonation wanders a few cents every ~quarter second, so no two
                 // stay locked into a slow beat.
                 if ((player.driftClock -= 1.0 / fs) <= 0.0) {
-                    player.driftTarget = solo * spread * 4.0 * (unit(player.driftSeed++) - 0.5) / 1200.0;
+                    player.driftTarget = (voice.stack > 0 ? 1.0 : solo) * spread * 4.0 * (unit(player.driftSeed++) - 0.5) / 1200.0;
                     player.driftClock = 0.15 + 0.2 * unit(player.driftSeed++);
                 }
                 player.drift += driftRate * (player.driftTarget - player.drift);

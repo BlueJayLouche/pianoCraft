@@ -376,6 +376,33 @@ void fluteTests() {
         expect(touching(64) > -6.0 && touching(62) < -6.0, "touching notes slur (dip " + std::to_string(touching(64)) +
                                                               " dB); a repeated one is tongued (" + std::to_string(touching(62)) + " dB)");
     }
+    {
+        // A slur doesn't click: the waveform's sharpest bend (its second difference) within 30 ms of
+        // the slur, against the note before's typical one. The level's rise with pitch once stepped
+        // at the slur: up to 20x.
+        double worst = 0.0;
+        for (const auto& slur : {std::pair{72, 67}, {64, 69}, {67, 72}, {76, 74}}) {
+            const int from = slur.first, to = slur.second;
+            FluteEngine flute;
+            flute.prepare(48000.0);
+            flute.controlChange(0, 1, 0.5);
+            const auto x = render(flute, 1.0, 48000.0, [&](std::size_t f) {
+                if (f == 0) flute.noteOn(note(from), 0.5);
+                if (f == 24000) flute.noteOn(note(to), 0.5);
+            });
+            std::vector<double> bend;
+            for (std::size_t i = 14000; i < 23000; ++i) {
+                bend.push_back(std::abs(x[i + 1] - 2.0 * x[i] + x[i - 1]));
+            }
+            std::nth_element(bend.begin(), bend.begin() + bend.size() / 2, bend.end());
+            double sharpest = 0.0;
+            for (std::size_t i = 24000; i < 25440; ++i) {
+                sharpest = std::max(sharpest, static_cast<double>(std::abs(x[i + 1] - 2.0 * x[i] + x[i - 1])));
+            }
+            worst = std::max(worst, sharpest / bend[bend.size() / 2]);
+        }
+        expect(worst < 10.0, "flute slurs don't click (sharpest bend " + std::to_string(worst) + "x the note before's)");
+    }
 }
 
 void stringsTests() {
@@ -494,6 +521,39 @@ void brassTests(const std::string& name, std::vector<int> keys, const char* clos
 
 // Each brass instrument has its own voice: the trumpet brightest, the tuba darkest, the
 // trombone's blare at ff above the horn's.
+// Bitwig's voice stacking plays one key as several notes at once: each after the first must be
+// another player, not a copy of the first (copies sum 6 dB louder, independent players about 3).
+template <class Engine, class Id>
+void stackTests(const std::string& name, int key, std::vector<std::pair<Id, double>> settings) {
+    const auto play = [&](int voices) {
+        Engine engine;
+        engine.prepare(48000.0);
+        for (const auto& [id, value] : settings) {
+            engine.setParameter(id, value);
+        }
+        engine.controlChange(0, 1, 0.6);
+        return render(engine, 2.0, 48000.0, [&](std::size_t f) {
+            for (int v = 0; f == 0 && v < voices; ++v) {
+                engine.noteOn(note(key, 10 + v), 0.7);
+            }
+        });
+    };
+    // The first voice plays as it would alone, so the second is the difference; a copy correlates 1.
+    const auto one = play(1), two = play(2);
+    double xy = 0.0, xx = 0.0, yy = 0.0;
+    for (std::size_t i = 48000; i < 96000; ++i) {
+        const double x = one[i], y = two[i] - one[i];
+        xy += x * y;
+        xx += x * x;
+        yy += y * y;
+    }
+    const double correlation = xy / std::sqrt(xx * yy + 1.0e-30);
+    const double level = 10.0 * std::log10(yy / (xx + 1.0e-30));
+    expect(std::abs(correlation) < 0.5 && std::abs(level) < 4.0 && two == play(2),
+           name + ": a stacked voice is another player (correlation " + std::to_string(correlation) + " with the first, a copy's 1; level " +
+               std::to_string(level) + " dB re it), and repeats exactly");
+}
+
 void brassVoices() {
     const auto bright = [](auto engine, int key, double breath) {
         using E = decltype(engine);
@@ -687,6 +747,10 @@ int main() {
     brassTests<TromboneEngine>("trombone", {40, 48, 55, 62, 70, 77}, "a muted trombone");
     brassTests<TubaEngine>("tuba", {26, 33, 41, 48, 55, 65}, "a muted tuba");
     brassVoices();
+    stackTests<HornEngine, BrassParameterId>("horn", 60, {});
+    stackTests<TrumpetEngine, BrassParameterId>("trumpet", 67, {});
+    stackTests<StringsEngine, StringsParameterId>("strings, a soloist", 69, {{StringsParameterId::section, 1.0}});
+    stackTests<StringsEngine, StringsParameterId>("strings, a section", 57, {});
     between<FluteEngine>("flute");
     between<OboeEngine>("oboe");
     between<ClarinetEngine>("clarinet");
@@ -713,6 +777,18 @@ int main() {
         const auto a4 = sustain<OboeEngine, R>(69, 0.6, 2.0, 48000.0, {{R::vibratoDepth, 0.0}});
         const double third = at(a4, 3.0 * frequency(69)) - at(a4, frequency(69));
         expect(third > 0.0, "the oboe's A4 sounds its 3rd harmonic " + std::to_string(third) + " dB re its 1st");
+        // The top octave is not a flute's near-sine: the oboe's F-sharp 6 keeps its 4th harmonic, the
+        // clarinet's B-flat 6 its 2nd (36 and 16 dB under the fundamental before the top register's laws).
+        const auto oboeTop = sustain<OboeEngine, R>(90, 0.6, 2.0, 48000.0, {{R::vibratoDepth, 0.0}});
+        const auto clarinetTop = sustain<ClarinetEngine, R>(94, 0.6, 2.0, 48000.0, {});
+        const auto sounding = [](const std::vector<float>& x, int key) { // a harmonic's 1 Hz probe needs the played pitch
+            return frequency(key) * std::pow(2.0, centsOff(x, 1.0, 2.0, 48000.0, frequency(key)) / 1200.0);
+        };
+        const double oboeF0 = sounding(oboeTop, 90), clarinetF0 = sounding(clarinetTop, 94);
+        const double oboeFourth = at(oboeTop, 4.0 * oboeF0) - at(oboeTop, oboeF0);
+        const double clarinetSecond = at(clarinetTop, 2.0 * clarinetF0) - at(clarinetTop, clarinetF0);
+        expect(oboeFourth > -30.0 && clarinetSecond > -10.0, "the top octave: the oboe's 4th harmonic " + std::to_string(oboeFourth) +
+                                                                  " dB, the clarinet's 2nd " + std::to_string(clarinetSecond) + " dB re the 1st");
         // Reed, from none to 2: the oboe's formant rises against its fundamental, the clarinet's even
         // harmonics against its odd ones, and the loudness stays.
         const auto oboeSoft = sustain<OboeEngine, R>(69, 0.6, 2.0, 48000.0, {{R::vibratoDepth, 0.0}, {R::reed, 0.0}});

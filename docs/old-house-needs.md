@@ -15,11 +15,14 @@ Quest plays them through Resonance Audio. Plugin CPU matters only in Bitwig.
   after The Caretaker's *Everywhere at the End of Time*. The piano is heard worn and far away far more often
   than clean.
 - **The piano is Lola's.** The piece follows Lola, who played the piano and later had Alzheimer's. A tape
-  labelled "Lola - piano" has turned up and is not yet digitised. Scene 3 is where the actual piano is first
-  heard. In the final scene it comes back with George's spoken poem, *Home*.
+  labelled "Lola - piano" has turned up and is not yet digitised. In the V.4.1 script (3 Nov) the piano is
+  the guide: a few sparse notes with each spotlight, scene after scene. In the final scene a physical piano
+  against the wall carries the theme under George's spoken poem, *Home*, and on alone after it. So the
+  upright's soft, sparse playing is heard most.
 - **The final act is orchestral.** The motif grows into a symphonic poem in the manner of Debussy's
-  *Prélude à l'après-midi d'un faune*: flute, harp, muted strings and horns. `piano.py` writes it on five
-  Poem tracks, with dynamics as CC1 curves in each clip. The fifth is Lola's piano.
+  *Prélude à l'après-midi d'un faune*: flute, harp, muted strings and horns. `piano.py` writes it on six
+  Poem tracks: those four, Lola's piano and crotales. CC1, CC21 and CC64 are written as track automation,
+  which Bitwig imports (confirmed 3 Nov), so PianoCraft's vibrato needs no "follows Pressure" option.
 - **Lola's piano in the poem is soft throughout** (added 3 Nov). Chris heard a forte piano part against the
   poem on 2 Nov: "too strident… straining/competing to make itself heard. It should be delicate, caressing,
   sensual even." His reference is Debussy's "Pagodes" (*Estampes* I). The new part stays at velocities
@@ -27,6 +30,11 @@ Quest plays them through Resonance Audio. Plugin CPU matters only in Bitwig.
   ringing under the tune. So the upright's soft end carries it: warm, round and even at *pp*, with
   long, clean decays in the bass. Chris may move this line to the woodwinds instead (*Faune*'s flute, oboe,
   clarinet), at the same soft level.
+- **Poem v2 leans on expression** (added 3 Nov). It's sparse, after *Faune*'s opening, 2:06 long.
+  - The flute sits in its low octave (B3 to C5). Each long note swells on CC1 and Pressure, brightens on
+    Timbre, and leans into its vibrato on CC21: from a plain start (0.15) to deep (0.95) on notes a bar or
+    longer. So the vibrato wants to sound good at full CC21 in that register, and "Solo Flute" is the preset.
+  - Lola's piano uses CC64, changed with each note, and Timbre held soft (0.3 to 0.45).
 
 ## Needs
 

@@ -62,8 +62,10 @@ cmake --install build --config Release
 ```
 
 Rescan plug-ins in Bitwig Studio and insert PianoCraft on an instrument track.
-There is no custom editor. Bitwig shows the parameters in five groups (Hammer,
-Strings, Tuning, Age, Mix) and maps two remote-control pages onto its device knobs:
+Each instrument has a simple editor: one column of its parameters, grouped by
+module, with a slider per value and a pop-up per named choice. Bitwig also shows
+the parameters in five groups (Hammer,
+Strings, Tuning, Age, Mix) and maps three remote-control pages onto its device knobs:
 
 - **Main:** Hammer Hardness, Dynamic Range (pp-ff loudness spread), Velocity
   Brightness, Sustain Length, Sympathetic Level, Body Level, Stereo Width, Output Gain.
@@ -73,6 +75,16 @@ Strings, Tuning, Age, Mix) and maps two remote-control pages onto its device kno
   Damper Release, Hammer Noise, Mic Position,
   Master Tune (A4 in Hz), Stretch (1 is the recorded piano's octave stretch,
   0 equal temperament, 2 double).
+- **Pedal:** Pedal Noise, Damper Release, Sympathetic Level.
+
+Pedal Noise (0 to 2) is the sustain pedal's own sound, from how fast it moves: the
+trapwork's knock through the soundboard, and the damper felt brushing the strings
+as it lifts off or lands, which leaves the open strings ringing faintly. A stamp
+(or square CC64 automation) knocks loudest: about 31 dB under a mf C4 as the
+dampers land and 40 dB as they lift, with the strings' shimmer 51 dB under. A
+pedal moved over 300 ms knocks 20 dB quieter. The dampers ride the pedal's
+motion, a full stroke taking about 25 ms. Age makes it up to twice as loud. The
+levels are chosen, not measured: the reference recordings have no pedal noise.
 
 Age (0 to 1) wears the piano as one control, a little differently on every key
 but identically on every render: pitch slackens about 25 cents with uneven
@@ -137,6 +149,13 @@ orchestra bells; the harp has no reference corpus yet.
   sounding) ring until they die away: the low discs strike bright and settle to their fundamental, and some
   beat. Controls: Brightness (Timbre moves it), Note-Off Damping, Sustain Length, Master Tune, Stereo Width
   (0 is exact mono). Presets: Celesta and Crotales, each in stereo and mono.
+
+Bitwig's voice stacking plays one key as several notes. On the brass and strings each stacked voice
+is another player: its own detune (3-8 cents from the first), entry, breath or bowing, and place. The
+piano, harp, celesta and crotales have one string, bar or disc per key, so a stacked voice re-strikes
+it; the flute, oboe and clarinet are one player each (their slurs need it), so Bitwig offers no
+stacking. Stacked voices accept per-voice Volume, Pan and Brightness; pitch spread comes from the
+players' own detune.
 
 The recorded piano sat at A4 = 439.02 Hz; Master Tune puts A4 exactly where it
 says, so the default plays 3.9 cents above the recordings.

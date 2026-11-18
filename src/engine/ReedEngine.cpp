@@ -15,12 +15,14 @@ using namespace filters;
 // harmonics, the output stages, the breath's turbulence and wander fitted to the University of Iowa
 // recordings (docs/oboe-and-clarinet.md, tools/iowa_calibration.py).
 constexpr ReedModel clarinet{50, 94, false, 0.0, 0.7, -0.3, 0.5, 700.0, {{{1500.0, 2.0, 0.0}, {3000.0, 2.0, 0.0}}}, {}, 0.0,
-                             0.70, 0.78, 1.2, 6.0, 0.0, 3.5, 0.3, {0, 1000.0, 428.0, 30.0, 0.7, 1.0}, 4.0, 1.0, 0.35, 0.0};
+                             0.70, 0.78, 1.2, 6.0, 0.0, 3.5, 0.3, {0, 1000.0, 428.0, 30.0, 0.7, 1.0}, 4.0, 1.0, 0.35, 0.0,
+                             79, 0.0, 2.0, 0.0};
 // The oboe's formants and tip peak fitted to the recordings' harmonics (with the formants off, the
 // model's spectrum, then the filters that best turn it into theirs); its 2.9 kHz formant to their
 // share above 3 kHz.
 constexpr ReedModel oboe{58, 93, true, 0.3, 0.7, -0.3, 0.5, 1000.0, {{{1305.0, 5.0, 16.0}, {2900.0, 2.0, 6.0}}}, {0.99, 3.2, 12.5}, 0.6,
-                         0.70, 0.80, 2.0, 8.0, 4.0, 1.57, 0.0, {1, 1129.0, 10463.0, 1.10, 0.0, 1.81}, 3.0, 0.2, 0.1, -3.0};
+                         0.70, 0.80, 2.0, 8.0, 4.0, 1.57, 0.0, {1, 1129.0, 10463.0, 1.10, 0.0, 1.81}, 3.0, 0.2, 0.1, -3.0,
+                         81, 1.0, 0.0, 4.4};
 
 } // namespace
 
@@ -72,7 +74,10 @@ void ReedEngine::render(float* left, float* right, std::uint32_t frameCount) {
     const double bendFactor = std::pow(2.0, 2.0 * bend_ / 12.0);
     // The bell's losses: a one-pole low-pass in the reflection, darker at low Brightness.
     const double brightness = std::clamp(parameter(ReedParameterId::brightness) + brightnessModulation_ + timbre_, 0.25, 3.0);
-    const double pole = std::pow(std::clamp(model_.loss - 0.15 * (brightness - 1.0), 0.05, 0.9), rateScale);
+    // Above the top register's first note a bore's losses shrink with its length (a shorter tube
+    // loses less of its high partials each round trip); below it the fitted loss holds.
+    const double shorter = std::pow(std::min(period_ / period(model_.topKey), 1.0), model_.topLoss);
+    const double pole = std::pow(std::clamp((model_.loss - 0.15 * (brightness - 1.0)) * shorter, 0.05, 0.9), rateScale);
     const double noiseLevel = std::max(parameter(ReedParameterId::breathNoise), 0.0);
     const double toneHoles = 1.0 - std::exp(-2.0 * pi * model_.toneHoles / fs);
     // Reed: how much the reed buzzes. Up to 1 it raises the oboe's formants (in dB) and the clarinet's
@@ -88,7 +93,10 @@ void ReedEngine::render(float* left, float* right, std::uint32_t frameCount) {
     const double output = 0.3 * model_.level * parameter(ReedParameterId::outputGain);
     const std::size_t mask = delaySize - 1;
     const double frequency = fs / period_ * bendFactor;
-    const double tuning = std::pow(2.0, -model_.stretch * frequency * frequency / 1.0e6 / 1200.0);
+    // The top register's shorter losses run less flat, so less is taken back above its first note.
+    const double topFrequency = fs / period(model_.topKey) * bendFactor;
+    const double above = std::max(frequency * frequency - topFrequency * topFrequency, 0.0);
+    const double tuning = std::pow(2.0, -(model_.stretch * frequency * frequency - model_.topStretch * above) / 1.0e6 / 1200.0);
     const double height = std::clamp((note_.key - model_.lowestKey) / static_cast<double>(model_.highestKey - model_.lowestKey), 0.0, 1.0);
     const double pressure = model_.pressureLow + (model_.pressureHigh - model_.pressureLow) * height;
     // A cone's reed and staple are a fixed length, so the higher the note, the larger their share of
@@ -114,6 +122,9 @@ void ReedEngine::render(float* left, float* right, std::uint32_t frameCount) {
     const double gateRate = 1.0 - std::exp(-1.0 / (0.001 * fs)); // the gate moves over 1 ms, so it never clicks
     const double evenRate = 1.0 - std::exp(-2.0 * pi * 10.0 / fs);
     const auto evenCutoff = butterworth(true, 1500.0, fs);
+    // In the top register more of the harmonics lie above the tone holes' cutoff: the even ones grow.
+    const double topOctaves = std::max(note_.key - model_.topKey, 0) / 12.0;
+    const double evensUp = 1.0 + model_.topEvens * topOctaves * topOctaves;
 
     for (std::uint32_t frame = 0; frame < frameCount; ++frame) {
         frame_ = frame;
@@ -178,7 +189,7 @@ void ReedEngine::render(float* left, float* right, std::uint32_t frameCount) {
         if (model_.evens > 0.0) {
             const double square = holes * holes;
             evenMean_ += evenRate * (square - evenMean_);
-            holes += reedAmount * model_.evens * biquad(evenCutoff, (square - evenMean_) / std::sqrt(evenMean_ + 1.0e-20), evenState_[0], evenState_[1]);
+            holes += reedAmount * model_.evens * evensUp * biquad(evenCutoff, (square - evenMean_) / std::sqrt(evenMean_ + 1.0e-20), evenState_[0], evenState_[1]);
         }
         // The peaks shape the reed's steady regime, where the model's tip cancels: the bore's
         // transients (the note settling, a slur's keys moving, the breath falling away) carry
