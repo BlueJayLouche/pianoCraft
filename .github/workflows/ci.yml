@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15 # arm64; the pinned clap-validator is an aarch64 build
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Tag matches plugin version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          grep -q "\"$V\"" src/host/ClapHost.cpp
+          grep -q "<string>$V</string>" resources/Info.plist
+
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+          cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Validate CLAP
+        run: |
+          python3 tools/fetch_validator.py
+          build/tools/clap-validator-0.4.1/clap-validator validate build/PianoCraft.clap --only-failed
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # ponytail: ad-hoc signature, not notarized — add Developer ID secrets to drop the xattr step
+          codesign --force --deep -s - build/PianoCraft.clap
+          ZIP="PianoCraft-$GITHUB_REF_NAME-macos.zip"
+          ditto -c -k --keepParent build/PianoCraft.clap "$ZIP"
+          gh release create "$GITHUB_REF_NAME" "$ZIP" --title "PianoCraft $GITHUB_REF_NAME" --notes "Universal (Apple Silicon + Intel) CLAP bundle, macOS 11+.
+
+          Unzip into ~/Library/Audio/Plug-Ins/CLAP, then clear the download quarantine (the bundle is not notarized):
+
+              xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/CLAP/PianoCraft.clap
+
+          Rescan plug-ins in your host."
