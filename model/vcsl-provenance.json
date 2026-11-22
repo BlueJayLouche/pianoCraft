@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "instrument": "PianoCraft Upright: the dampers' two-stage release (KeyModel::residualRatio, residualDelay; the release law's partial slope)",
+  "corpus": "Versilian Community Sample Library (VCSL), Upright Piano, Knight (sampled by Simon Dalzell of Ivy Audio for VSCO 2 Pro)",
+  "license": "CC0-1.0 (https://github.com/sgossner/VCSL, repository licence read 2026-11-22)",
+  "usage": "Analysis and selected synthesis constants only (src/model/InstrumentModel.cpp); raw audio stays in calibration/vcsl (git-ignored) and is never bundled or played",
+  "note": "File tags name the octave one low: Knight 'A3' sounds at 441 Hz (MIDI 69). Releases hold the note ~0.3 s, then the damper lands.",
+  "sources": [
+    {
+      "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Releases/Player_rel_rr1_A0.wav",
+      "file": "calibration/vcsl/knight/rel_A0.wav",
+      "sha256": "4099b59f2bc8dd0fdcd9b6d6821346203433f4ac19da9f27a73da3d011fc2ade"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Releases/Player_rel_rr1_A1.wav",
+      "file": "calibration/vcsl/knight/rel_A1.wav",
+      "sha256": "d5dccc85819b4b8920f0c106bf95367344df2b28107f3c3aa93f1c1ecdd17658"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Releases/Player_rel_rr1_A2.wav",
+      "file": "calibration/vcsl/knight/rel_A2.wav",
+      "sha256": "34f54900748a67dd645ab953a30784b67445a6932df4d9a798a57d23b5f012b8"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Releases/Player_rel_rr1_A3.wav",
+      "file": "calibration/vcsl/knight/rel_A3.wav",
+      "sha256": "be910c14267d368c5a4b4cc91ec2f3b2d49213c6bd201d3b2e186e1f770e4ed5"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Releases/Player_rel_rr1_A4.wav",
+      "file": "calibration/vcsl/knight/rel_A4.wav",
+      "sha256": "521c0e32b6c94b4eceb437669beb67cd2aba8d8f3b51e884e0762bc0d35c4996"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Sustains/Player_vl2_rr1_A1.wav",
+      "file": "calibration/vcsl/knight/sus_A1.wav",
+      "sha256": "ac6644ffc1aa25d194f024d3abdae4f06d6dff1ae42ba2a7e8edc1fddcdff12b"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Sustains/Player_vl2_rr1_A2.wav",
+      "file": "calibration/vcsl/knight/sus_A2.wav",
+      "sha256": "0914913456c74ec906e7cfed81a4b2986658c8a006e2f278dfa49784215b1a4b"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Sustains/Player_vl2_rr1_A3.wav",
+      "file": "calibration/vcsl/knight/sus_A3.wav",
+      "sha256": "cc8b22d1779248f6edc88fa5d072b8ce8b51b06fbe62be3d3d19a324d1da9030"
+    }
+  ]
+}

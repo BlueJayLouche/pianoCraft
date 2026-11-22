@@ -6,8 +6,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <iostream>
 #include <utility>
 #include <stdexcept>
@@ -66,7 +68,8 @@ pianocraft::NoteAddress note(int key, int id = -1) {
 
 void modelIsStable() {
     for (double rate : {44100.0, 48000.0, 96000.0}) {
-        pianocraft::InstrumentModel model(rate);
+        const auto modelHolder = std::make_unique<pianocraft::InstrumentModel>(rate);
+        auto& model = *modelHolder; // ~3.5 MB: off the stack
         for (std::size_t region = 0; region < 3; ++region) {
             require(pianocraft::soundboardCalibration.directGain[region] >= 0.5 &&
                     pianocraft::soundboardCalibration.directGain[region] <= 1.5,
@@ -291,7 +294,8 @@ void parametersAndRatesAreValid() {
 }
 
 void sympatheticIsSelective() {
-    pianocraft::InstrumentModel model(48000.0);
+    const auto modelHolder = std::make_unique<pianocraft::InstrumentModel>(48000.0);
+    auto& model = *modelHolder; // ~3.5 MB: off the stack
     pianocraft::SympatheticBank bank;
     bank.prepare(48000.0, model);
     std::array<double, pianocraft::instrumentKeyCount> undamped{};
@@ -443,7 +447,8 @@ void micPositionsAndWidth() {
 
     // A mono bounce sums the channels; no partial may notch against one channel alone. C3's first
     // 24 partials, 0.1-0.6 s, Goertzel per partial.
-    const pianocraft::InstrumentModel model(48000.0);
+    const auto modelHolder = std::make_unique<pianocraft::InstrumentModel>(48000.0);
+    const auto& model = *modelHolder; // ~3.5 MB: off the stack
     const auto& key = model.key(48);
     const auto deepestNotch = [&](double mic, double width) {
         pianocraft::PianoEngine engine;
@@ -599,10 +604,13 @@ void pedalsAreContinuous() {
     const double down = releasedTail(1.0, false);
     const double half = releasedTail(0.5, false);
     const double up = releasedTail(0.0, false);
-    require(dB(down, half) > 6.0 && dB(half, up) > 6.0,
+    // 5 dB: C3's fitted aftersound (tools/fit_piano.py) rings longer than the old law, which narrowed down-to-half.
+    require(dB(down, half) > 5.0 && dB(half, up) > 5.0,
             "Half pedal is not between down and up: " + std::to_string(dB(down, half)) + " / " +
             std::to_string(dB(half, up)) + " dB");
-    require(dB(releasedTail(0.0, true), up) > 6.0, "Re-pedalling did not catch the decaying note");
+    // 3 dB: dampers measured on VCSL's Knight upright leave a released string a residual 17 dB down, where the old
+    // single stage silenced it, so catching it 50 ms after release gains about 4 dB, not the old 6.
+    require(dB(releasedTail(0.0, true), up) > 3.0, "Re-pedalling did not catch the decaying note");
 
     const auto play = [](double soft) {
         pianocraft::PianoEngine engine;
@@ -619,7 +627,8 @@ void pedalsAreContinuous() {
 
 // Master Tune sets A4 exactly; Stretch 0 is equal temperament and 2 doubles the recorded stretch.
 void tuningControls() {
-    pianocraft::InstrumentModel model(48000.0);
+    const auto modelHolder = std::make_unique<pianocraft::InstrumentModel>(48000.0);
+    auto& model = *modelHolder; // ~3.5 MB: off the stack
     require(std::abs(model.key(69).fundamental - 440.0) < 1.0e-9, "Default A4 is not 440 Hz");
     const double partial = model.key(69).modes[0].frequency;
 
@@ -778,6 +787,89 @@ void perNoteControl() {
     require(engine.takeEndedNotes(ended.data(), ended.size()) == 0, "Ended notes were not cleared");
 }
 
+// Phantom partials: a fresh note's phantoms were once scaled by its own gain, which left E1's f6 + f7 at ff 41 dB
+// under partial 13 beside it. Its recording has the phantom 10 dB over; the model's (about 25 dB under) is still
+// short of that, as the longitudinal resonance isn't placed per key (docs/model-laws.md).
+void phantomsSound() {
+    pianocraft::PianoEngine engine;
+    engine.prepare(48000.0);
+    engine.noteOn(note(28), 120.0 / 127.0);
+    const auto output = render(engine, 24000, 256);
+    const auto modelHolder = std::make_unique<pianocraft::InstrumentModel>(48000.0);
+    const auto& model = *modelHolder; // ~3.5 MB: off the stack
+    const auto& key = model.key(28);
+    const auto partial = [&](double k) {
+        return k * key.fundamental * std::sqrt((1.0 + key.inharmonicity * k * k) / (1.0 + key.inharmonicity));
+    };
+    const auto power = [&](double frequency) { // the left channel 50-500 ms, Hann-windowed
+        std::complex<double> sum = 0.0;
+        for (std::size_t i = 2400; i < 24000; ++i) {
+            const double w = 0.5 - 0.5 * std::cos(2.0 * 3.141592653589793 * (i - 2400.0) / 21600.0);
+            sum += w * output[2 * i] * std::polar(1.0, -2.0 * 3.141592653589793 * frequency * i / 48000.0);
+        }
+        return std::norm(sum);
+    };
+    const double over = 10.0 * std::log10(power(partial(6) + partial(7)) / power(partial(13)));
+    require(over > -32.0, "E1's phantom f6 + f7 is " + std::to_string(over) + " dB re partial 13: scaled away?");
+}
+
+// Nothing runs away. A soft restrike just after a loud note's release once peaked 36 dB over the loud
+// strike: the hammer met the ringing rescaled for the new gain. And Velocity Brightness 2 or Hammer
+// Hardness 0.25 on a soft treble note once took its top partials' excitation to +117 dB (peak +39 dBFS).
+void nothingRunsAway() {
+    for (const double soft : {0.01, 0.0551, 0.1}) {
+        pianocraft::PianoEngine engine;
+        engine.prepare(48000.0);
+        engine.noteOn(note(43, 1), 0.8806);
+        const double loud = peak(render(engine, 62720, 256));
+        engine.noteOff(note(43, 1), 0.16);
+        render(engine, 2560, 256);
+        engine.noteOn(note(43, 2), soft);
+        const double restruck = peak(render(engine, 48000, 256));
+        require(restruck < loud, "Restrike at " + std::to_string(soft) + " peaked " + std::to_string(restruck) +
+                                     " over the loud strike's " + std::to_string(loud));
+    }
+    const std::pair<pianocraft::ParameterId, double> settings[][2] = {
+        {{pianocraft::ParameterId::velocityBrightness, 2.0}, {pianocraft::ParameterId::dynamicRange, 0.19}},
+        {{pianocraft::ParameterId::hammerHardness, 0.25}, {pianocraft::ParameterId::dynamicRange, 0.19}},
+    };
+    for (const auto& setting : settings) {
+        for (const int key : {90, 102, 108}) {
+            for (const double velocity : {0.01, 0.12, 0.5}) {
+                pianocraft::PianoEngine engine;
+                engine.prepare(48000.0);
+                for (const auto& [id, value] : setting) {
+                    engine.setParameter(id, value);
+                }
+                engine.noteOn(note(key), velocity);
+                const double level = peak(render(engine, 24000, 256));
+                require(level < 0.5, "Key " + std::to_string(key) + " at " + std::to_string(velocity) +
+                                         " with extreme voicing peaked " + std::to_string(level));
+            }
+        }
+    }
+}
+
+// A damper stops a string in two stages, as VCSL's Knight upright releases show: a fast drop, then a residual
+// 13-18 dB under the held note that fades at 9-25 dB/s. A single fast stage once left C4 64 dB down in 0.3 s.
+void dampersLeaveAResidual() {
+    pianocraft::PianoEngine engine;
+    engine.prepare(48000.0);
+    engine.noteOn(note(60, 1), 0.63);
+    const auto held = render(engine, 96000, 256);
+    engine.noteOff(note(60, 1), 0.5);
+    const auto released = render(engine, 96000, 256);
+    const auto level = [](const std::vector<float>& samples, double from, double to) {
+        return rms(std::vector<float>(samples.begin() + 2 * static_cast<std::size_t>(from * 48000.0),
+                                      samples.begin() + 2 * static_cast<std::size_t>(to * 48000.0)));
+    };
+    const double before = level(held, 1.9, 2.0);
+    const double residual = 20.0 * std::log10(level(released, 0.15, 0.5) / before);
+    const double later = 20.0 * std::log10(level(released, 1.4, 1.6) / before);
+    require(residual > -25.0 && residual < -8.0, "C4's residual after release: " + std::to_string(residual) + " dB");
+    require(later < residual - 10.0, "C4's residual didn't fade: " + std::to_string(later) + " dB at 1.5 s");
+}
+
 int main() {
     try {
         modelIsStable();
@@ -799,6 +891,9 @@ int main() {
         tuningControls();
         ageWearsUnevenly();
         perNoteControl();
+        phantomsSound();
+        nothingRunsAway();
+        dampersLeaveAResidual();
         std::cout << "All engine tests passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -2,7 +2,9 @@
 
 `tools/calibrate.py` produced the frozen per-key data in `src/model/CalibrationData.hpp` and
 can no longer run: its layer-2 gate closed when `tools/validate_layer2.py` recorded the final
-validation. Every constant below came afterwards.
+validation. Every constant below came afterwards. `tools/fit_piano.py` fits the strike positions,
+radiation, velocity and decay tables in `src/model/SpectrumCalibration.hpp` (see "Fitted spectrum and
+decays" below).
 
 `tools/evaluate_model.py` scores a renderer on every metric named here. `--refit` re-derives
 the decay and key-level laws from layers 1, 3 and 4 and the keys outside the every-third-key
@@ -21,6 +23,8 @@ Status column:
 - **Selected**: hand-chosen against the named metric, which the evaluator reproduces. The
   search itself was not scripted.
 - **Analytic**: a modelling choice with no reference data that identifies it.
+- **Fitted**: measured per key or per partial from the recordings by `tools/fit_piano.py`, which
+  regenerates it (`neutral`, `strike`, `decays`, `spectrum 6`).
 
 ## Physical structure
 
@@ -40,17 +44,17 @@ Status column:
 | Hammer set: mass 11.074 - 0.074n + 1e-4 n^2 g, p = 3.7 + 0.015n, Q0 = 183 e^0.045n N/mm^p, hammer n = 1-88 | `InstrumentModel.cpp` | Published | Stulov, Acta Acustica 91 (2005), as fitted in Stulov & Kartofelev (Acoustics High Tatras 2009, eq. 9). The same fit's hereditary amplitude exceeds 1 above n = 10, so it is not used. |
 | Felt hysteresis 0.25: lambda = 0.25 u_max / (p x 2 m/s), with u_max the 2 m/s compression against a rigid stop | `InstrumentModel.cpp` | Selected | Swept at the hammer stage with the 500 Hz radiation pole. 0 / 0.25 / 0.5 gave spectrum error 7.42 / 7.23 / 7.94 dB (layer 2: 7.57 / 6.82 / 7.92). |
 | String give: 700 N on every string, speaking length 5.2 cm at C8 growing 5.45% a semitone, at most 1.15 m | `InstrumentModel.cpp` | Analytic | 700 N is Bank & Sujbert's value; no recording identifies the scale. Contact times come out about 4.4 ms (C1), 3.2 ms (C4) and 0.8-1 ms (C8), matching Askenfelt's "about 4 ms in the bass to less than 1 ms in the highest treble". |
-| Radiation: bridge force through one pole at 500 Hz | `InstrumentModel.cpp` | Selected | Corner 250 / 500 / 1000 / 2000 Hz gave spectrum error 8.02 / 7.94 / 7.97 / 8.82 dB. The old per-partial 1/(1 + 0.018k) weight on modal displacement was about 12 dB/octave darker than bridge force, which the earlier fitted hammer had compensated. |
+| Radiation: bridge force through one pole at 500 Hz, then the fitted radiation and each key's own partials (below) | `InstrumentModel.cpp` | Selected | Corner 250 / 500 / 1000 / 2000 Hz gave spectrum error 8.02 / 7.94 / 7.97 / 8.82 dB. The old per-partial 1/(1 + 0.018k) weight on modal displacement was about 12 dB/octave darker than bridge force, which the earlier fitted hammer had compensated. |
 | Key level law 0.04 x max(1, f0/302.3)^1.042 | `InstrumentModel.cpp` | Selected | Re-fitted once the output became bridge force (which rises with f0). Iterated `--refit` 64.4/1.505 -> 220.0/1.243 -> 303.5/1.093 -> 302.3/1.042; fitting-key std 9.19 -> 3.21 dB. With coupling and phantoms in, the next step (279.2/0.675) lowers that std to 3.14 dB but raises sustain error from 9.07 to 9.82 dB, so it stays. 0.04 keeps the average loudness of the previous voicing. |
-| Prompt decay T60 = 4.89 s (f/440)^-0.745; aftersound 16.87 s (f/440)^-0.444 | `InstrumentModel.cpp` | Selected | These now set each coupled unison's two normal modes exactly. Ungated slope fits, partials 1-3, all 88 keys, layer 3. The gated refit (at least 5 dB observed drop, residual at most 3 dB, end at least 15 dB above the band floor, fitting keys only) accepts 44 early and 51 late of 163 partials and gives 2.42 s (f/440)^-0.310 and 22.60 s (f/440)^-0.216. Its window censors long decays. Complete-envelope sustain error at `a472304` (0.25-5 s, layer 3, bass/mid/treble): shipped 9.98 dB (4.8/5.4/13.7), gated 9.84 dB (10.8/4.7/11.4). The shipped laws stay. |
+| Prompt decay T60 = 4.89 s (f/440)^-0.745; aftersound 16.87 s (f/440)^-0.444, each now times a fitted factor per partial, and the slow mode's level per partial (below) | `InstrumentModel.cpp` | Selected | These now set each coupled unison's two normal modes exactly. Ungated slope fits, partials 1-3, all 88 keys, layer 3. The gated refit (at least 5 dB observed drop, residual at most 3 dB, end at least 15 dB above the band floor, fitting keys only) accepts 44 early and 51 late of 163 partials and gives 2.42 s (f/440)^-0.310 and 22.60 s (f/440)^-0.216. Its window censors long decays. Complete-envelope sustain error at `a472304` (0.25-5 s, layer 3, bass/mid/treble): shipped 9.98 dB (4.8/5.4/13.7), gated 9.84 dB (10.8/4.7/11.4). The shipped laws stay. |
 | Coupled unisons fitted to beat (0.18 + 0.0006 f)(0.6-1.4) Hz and slow mode -18 dB (-35 dB top octave) | `InstrumentModel.cpp` | Analytic | Register-wide estimates from aggregate late intercepts and envelope modulation. `calibrate.py` accepted 0 of 106 per-partial secondary candidates (`model/calibration-report.json`), so these are not measured unisons. The inversion is exact: with r + eta fixed by the two decay rates, w = pi beat + i(fast - slow)/2 gives kappa = Im(w^2)/(2 eta), and the mistuning follows from w^2 = coupling^2 + delta^2/4. Eta is bisected for the slow mode's level. Unison Detune scales the mistuning, so at 0 the aftersound is gone. |
 | Phantom partials: longitudinal modes at n x 13.06 f0, T60 0.1 s, board coupling 0.03 | `InstrumentModel.cpp`, `PianoEngine.cpp` | Analytic ratio, Selected coupling | E1's strongest peak at ff is the phantom f6 + f7 at 532 Hz, 16 dB above partial 13 beside it: a longitudinal resonance at 13.06 f0. No other key shows one clearly. T60 0.1 s follows Bank & Sujbert's decay time. Coupling 0.015 / 0.03 / 0.05 gave phantom level -5.0 / -0.2 / +3.8 dB re the recordings. The recordings' phantom level rises with velocity relative to the partials (A1 +7 dB pp to ff), and so does the model's (+8 dB). |
 | Velocity gain law keeps 0.2 of its slope above mf | `PianoEngine.cpp` | Selected | From mf to ff the recordings rise 4.5 dB and the full law gave 10.1 dB. Velocity span L1-L4, model minus recordings: +6.2 -> -0.8 dB. |
-| Velocity treble shelf above 1 kHz: 8 dB per velocity doubling above mf, 20 dB per halving below | `PianoEngine.cpp` | Selected | Rauhala-Välimäki excitation-filter fallback, re-selected under the reference-floor gate. Below mf, 8 / 14 / 20 / 24 / 28 dB gave layers 1/3/4 spectrum error 6.53 / 6.28 / 6.17 / 6.17 / 6.20 dB and L1 brightness +5.2 / +1.7 / 0.0 / -0.2 / -0.1 dB. One slope both ways can't do it: 12 or 16 brightened ff (L4 +1.3, +3.0 dB). |
+| Velocity treble shelf above 1 kHz: 8 dB per velocity doubling above mf, 20 dB per halving below. Now on the hammer knock only: the strings take the fitted velocity tables (below) | `PianoEngine.cpp` | Selected | Rauhala-Välimäki excitation-filter fallback, re-selected under the reference-floor gate. Below mf, 8 / 14 / 20 / 24 / 28 dB gave layers 1/3/4 spectrum error 6.53 / 6.28 / 6.17 / 6.17 / 6.20 dB and L1 brightness +5.2 / +1.7 / 0.0 / -0.2 / -0.1 dB. One slope both ways can't do it: 12 or 16 brightened ff (L4 +1.3, +3.0 dB). |
 | Bridge high-pass at 0.7 f0, radiated path only | `InstrumentModel.cpp` | Selected | Low-frequency share of the first ms of the attack. Onset overshoot mean -0.7 dB, max +4.5 dB. |
-| Hammer knock 0.05 x force into the soundboard, through the velocity shelf and two poles at 16 f0 | `PianoEngine.cpp` | Selected | Between-partial energy 20-100 ms, layer 3: +0.4 dB re the recordings (0.04 gave -1.2, 0.06 +1.2). Unshelved, it gave pp attacks their bright click: attack 2-8 kHz share L1 +17.6 -> +0.9 dB. Unfiltered, it was most of C2's and C3's attack excess at every velocity, while C5 and C6 need its treble. A fixed corner darkened the treble's pp attacks too; 8 f0 one pole / 8 f0 two / 16 f0 two / 32 f0 two gave attack share L1-L4 means -3.6..+4.1 / -5.8..+2.3 / -3.7..+3.4 / -0.8..+6.2 dB, and 16 f0 left C3 and C4 within 2.3 dB of the recordings at every layer. Also scaling it by the velocity gain law evened its level error across layers (L1/L4 +3.1/-1.4 -> -1.8/-0.5 dB) but left pp 5 dB too quiet (velocity span +4.8 dB), so it doesn't. |
+| Hammer knock 0.03 x force into the soundboard, through the velocity shelf and two poles at 16 f0, at most 4 kHz: about 17 dB under the strings over a mf C4's first 100 ms. The original 0.05 and open low-pass are described in this row's evidence; by ear (20 Nov 2026) the knock was far too loud, as the metric below counts the recordings' room and noise between partials too (it now reads -6 dB). Above C5 the open low-pass clicked: notes peaked in 2-4 ms and fell 10-15 dB by 30 ms where the recordings rise over 10 ms | `PianoEngine.cpp` | Selected | Between-partial energy 20-100 ms, layer 3: +0.4 dB re the recordings (0.04 gave -1.2, 0.06 +1.2). Unshelved, it gave pp attacks their bright click: attack 2-8 kHz share L1 +17.6 -> +0.9 dB. Unfiltered, it was most of C2's and C3's attack excess at every velocity, while C5 and C6 need its treble. A fixed corner darkened the treble's pp attacks too; 8 f0 one pole / 8 f0 two / 16 f0 two / 32 f0 two gave attack share L1-L4 means -3.6..+4.1 / -5.8..+2.3 / -3.7..+3.4 / -0.8..+6.2 dB, and 16 f0 left C3 and C4 within 2.3 dB of the recordings at every layer. Also scaling it by the velocity gain law evened its level error across layers (L1/L4 +3.1/-1.4 -> -1.8/-0.5 dB) but left pp 5 dB too quiet (velocity span +4.8 dB), so it doesn't. |
 | Output high-pass, 3 x one-pole at 100 Hz | `PianoEngine.cpp` | Selected | Bass octave bands; low fundamentals 4-8 dB closer, C2 still ~16 dB strong. |
-| Partial extension to 4 kHz along measured inharmonicity | `InstrumentModel.cpp` | Selected | Energy above the 32nd partial, A0-E2: within ~3 dB on average. |
+| Partial extension to 9 kHz along measured inharmonicity (was 4 kHz) | `InstrumentModel.cpp` | Fitted | At 4 kHz the bass's and mid's series stopped in a visible wall; the recordings hold partials to 6-9 kHz, which the fitted levels now place. |
 | Soundboard: ~70 shared modes, Q 40 | `Soundboard.cpp` | Selected | Between-partial energy 20-300 ms. Q 80 matched averages but rang metallically per note (by ear). |
 | Spaced-pair phase spread above 100 Hz | `InstrumentModel.cpp` | Selected | L/R correlation, model -0.05 vs recordings -0.01. |
 | Sympathetic output 1.2, drive 1/sqrt(level law), 8 partials, whole board | `SympatheticBank.cpp`, `InstrumentModel.cpp` | Analytic | The corpus documents no pedal state, so no pedal coupling is fitted from it (research roadmap 3.4). Pedal-down renders against the isolated-note recordings are a plausibility check only: -1.9/+3.4/-0.6 dB, per-note spread 3.9 dB. Confirm by ear. |
@@ -60,8 +64,72 @@ Status column:
 | Age at 1: pitch -25 cents +-6 per key, unison mistuning 1.5-4.5x, damper release 1.5x (up to 5.5x on a few keys), hammers 15% harder +-35%, key response +-2.5 dB; a fixed per-key hash | `InstrumentModel.cpp` | Analytic | Chosen by ear for an old home upright (`docs/old-house-needs.md`); nothing measured. Lola's tape or Andrew's upright may later identify the tuning and unison spread. Age 0 is bit-identical to the calibrated piano. |
 | Stereo Width below 1 crossfades from one coherent microphone (the voices without mic phase or key pan, and the left microphone's view of the board) | `PianoEngine.cpp`, `Soundboard.cpp` | Analytic | Mono bounces: summing the spaced pair notches partials by more than 6 dB; at width 0 no partial of C3 notches by even 1 dB at any Mic Position (`engine_tests`). |
 | Hammer Hardness h scales Q0 by h^p; Dynamic Range also scales the knock's distance from mf | `PianoEngine.cpp` | Analytic | Control mappings. A linear Q0 scale moved C4's treble share by only ~1 dB over the whole range, because the string's give sets mid-register contact times. |
+| Dampers in two stages: the release poles (fundamental T60 0.12-0.75 s, bass slowest; partial k's shorter by 1 + 0.007k + 0.0003k^2) until the fundamental has fallen 8 dB (25 dB at E6, the top damper), then over 25 ms a residual 3 s / release T60 times slower, and at least 2.5 times faster than the free string | `InstrumentModel.cpp`, `PianoEngine.cpp` | Selected | VCSL's Knight upright releases (CC0, `model/vcsl-provenance.json`), broadband, re the held note, A2 / A3 / A4: drop in the first 100 ms -12.5 / -11.8 / -9.8 dB, the residual over 150-500 ms -17.1 / -17.7 / -17.3 dB, fading at 20 / 20 / 9 dB/s; its undamped strings fall at 6-11 dB/s. Now -11.6 / -13.1 / -13.0, -18.9 / -18.7 / -17.4 and 25 / 16 / 20. The single fast stage left -40 to -80 dB residuals; Pianoteq, bounced in our host for diagnosis only, leaves -25 to -35. Catching a released note by re-pedalling 50 ms later now gains 4 dB, not 6. |
 
-Release and damper noise are not modelled: the recordings contain no key releases.
+Release and damper noise are not modelled. VCSL's Yamaha upright has release-noise samples to measure them from.
+
+## Fitted spectrum and decays
+
+Added in November 2026 after a per-partial review: the octave-band metrics above averaged away errors of
+22-24 dB in individual partials' levels. `tools/fit_piano.py` measures each partial's level 0.1 s after the strike
+(both channels' power, a line over 0.05-0.4 s) in the recordings and in renders, and fits the tables below. Fits use
+layers 1, 3 and 4 and the keys outside the every-third-key split; layer 2 and the split keys are the check.
+
+| Table | Code | Status | Evidence |
+|---|---|---|---|
+| Strike position per key, replacing 0.115 + 0.00045 (n - 60) | `SpectrumCalibration.hpp` | Fitted | The recordings' partials show the strike's comb: B1's partials 8, 16 and 24 sit 25-35 dB under their neighbours, a strike at 1/8, where the analytic law put it near 1/10 and left those partials 20-30 dB loud. Each key's levels, detrended by a running median over 5 partials, against the comb averaged over strikes spread +-0.3% of the string (a unison's strings and the felt's contact don't meet at a point, so the notches fill in up the series): A0-B3 fit 1/8.0-1/8.5 (35-89% of the detrended variance), the treble 1/9-1/10 where its few partials identify it; the others take their neighbours'. |
+| Radiation, dB over (key, 1/12 octave) | same | Fitted | A smooth surface (knots every 6 keys and 1/6 octave, second-difference smoothing) through layer 3's level differences less their median, each partial weighted by the square root of its amplitude so the fit follows the partials that carry the sound. It holds what the board and microphones make of each frequency: mid fundamentals were 12-16 dB strong, treble fundamentals 13 dB weak, the bass's 1-1.5 kHz band missing. Applied to each mode's radiated weight at load, not to the bridge force the board and sympathetic strings feel. |
+| Each key's own partials, dB (partials 1-112) | same | Fitted | What layer 3's differences leave after the surface, in full where the recording holds the partial 20 dB over its floor, fading to none at 10 dB. A smooth law reproduces the median partial but not the recordings' +-8 dB scatter about it, whose energy runs ~7 dB higher; ff was 5 dB dark for that reason. |
+| Velocity, dB at velocity 40 and 120 re 80, over (key, 1/6 octave) | same | Fitted | Smooth surfaces (knots every 12 keys), uniform weights, through each partial's difference at layers 1 and 4 less its difference at layer 3. Applied per voice to what the hammer puts into each mode (an excitation filter), linear in log velocity, so a restruck string's ringing keeps its spectrum. The hammer reads each mode through the inverse share, so it meets the physical string: read through the shares, a boosted mode made ff unstable at very low sample rates. A partial the recording doesn't hold over its floor pulls down to that floor. The soft law reaches +30 dB/octave at 5-9 kHz, where the recordings at velocity 40 are that much brighter than the soft hammer. Each strike's shares are held to at most +30 dB, the most the recordings ask. Extrapolated to velocity 20, or scaled by Velocity Brightness 2 or Hammer Hardness 0.25, they reached +117 dB and peaked a treble note at +39 dBFS. Below velocity 40 they also made C2 louder at velocity 13 than at 40. |
+| Brightening, dB at 40 and 120 re 80 and re the fundamental | same | Fitted | The recordings' own brightening, the same surfaces through each partial's level change from layer 3. Velocity Brightness scales it (0: every velocity with mf's spectrum); Hammer Hardness h moves along it by log2(h) octaves of velocity at the same level, as the felt's stiffness changes too. Hardness alone moved C4's treble share ~1 dB once the click below was gone. |
+| Prompt and aftersound decay factors and the slow mode's level per partial | same | Fitted | Each partial's envelope at layer 3, fitted directly as A e^-2at + B e^-2bt over its floor, 0.03-5 s: a calibrated partial is a coupled unison (a its prompt decay, b its aftersound, B/A its slow mode's level), an extended partial one exponential. Fits that rise 10 dB over the floor and stay within 4 dB rms count (875 prompt, 763 aftersound on fitting keys); the others take a smooth surface through them. At 20 dB and 4x, the bass's upper partials, which ring on 15-20 dB over their floor for seconds, took the surface and died early: 3-9 kHz partials A0-B2 were 9 / 20 / 33 dB under the recordings at 0.4 / 0.8 / 1.6 s, now 0 / 2 / 5. Bounded to 1/8-16x the prompt law and 3x the aftersound law: within 5 s a slower, quieter aftersound is indistinguishable from a plateau of noise or other strings (C2 otherwise fitted 300 s). Fitting the early slope, late slope and knee instead left them matched but the shape wrong: G#6 fell at -160 dB/s then plateaued, where the recording eases from -60. |
+
+Also corrected:
+
+- **Restrike runaway (bug, since 0.1).** A restruck string's ringing is rescaled to the new strike's gain so it sounds on unchanged, up to 100x for a soft strike on a loud note. The hammer met that rescaled ringing, so a soft restrike just after a loud note's release peaked 36 dB over the loud note. Repeated restrikes grew without bound, to +266 dB in a Bitwig session. The per-velocity shares made it far more likely. The hammer now reads only the motion its own strike put into each mode, kept in parallel while it is on, so it lands as on a still string. A fresh strike is bit-identical. Test: `nothingRunsAway` in `tests/engine_tests.cpp`.
+- **Phantom partials (bug).** Since `295fbb8` a fresh note's phantoms were scaled by its own gain (the restrike
+  carry ran on clear()'s gain of 1), 20-30 dB down; the phantom metric read -10.5 dB. The engine test guards it.
+  The aggregate metric hides a real gap: E1's recorded phantom f6 + f7 stands 10 dB over partial 13, the model's
+  25 dB under, and other bass keys' phantoms are 5-10 dB strong. The longitudinal resonance at 13.06 f0 isn't
+  placed per key.
+- **Evaluator.** Brightness rendered 0.6 s, so the renderer released the key at 0.24 s, inside the metric's
+  10-400 ms window, while the recordings' keys stay held; it now renders 1 s. The old model rescored: L1-L4
+  -0.4 / +2.4 / +1.6 / -0.8 dB.
+
+Not fitted, and what remains:
+
+- **Beating.** The unisons' beat rates stay analytic. Whole-note sustain error, sampled at a few instants, is
+  dominated by where each strong partial sits in its beat: below F#6 it is 8.1 dB, as before (7.8).
+- **The treble's tail.** From G#6 up the recordings' tails after ~1 s are room, board and the undamped treble
+  strings' sympathy, as loud as the note (G#7 at 1 s: below-f0 content -29 dB, its fundamental -49 dB). The
+  sustain metric renders the model without sympathy, so the top keys score 18-26 dB.
+- **The top octave's first half-second** carries ~5 dB more energy than the recordings' (G#7, C8), though their
+  fundamentals' levels match.
+- **CPU:** partials to 9 kHz add ~40%: 64 voices under the pedal take p50 559 us of a 1333 us block (was 390).
+- **The attack transient.** Above 4 kHz a note's first 4 ms stand 8-24 dB over its ringing 20-60 ms later, the
+  recordings' 2-7 dB, in the original model too. With the radiation tables flat it is 12-20 dB, so they add up to
+  ~15 dB on some keys (G4). Not the knock, board, phantoms, the felt's hysteresis or the force's smoothness: smoothing
+  the force into the strings made it worse. Tried and removed: subtracting the static push of modes above 1.5 kHz
+  (or 3 f0) from the radiated force. It assumes they follow the hammer statically, which holds only far above its
+  1-4 ms contact; on G4, E4, C5 and G5 it over-subtracted into a plucked-string click (G4 at mf 19 dB under its peak,
+  the recording 49 dB), which was heard. Subtracting only what the radiation weights add changed nothing.
+- **Noise levels.** Pedal Noise is 20 dB under its first choice: the dampers landing 39 dB under a mf C4's peak,
+  lifting 49 dB. The strings' output gain is 0.018 (was 0.04): the fitted tables had raised them ~7 dB, a single
+  velocity-127 note to -4.9 dBFS; it peaks at -12 dBFS again.
+
+| Metric | `fbeb14d` with the phantom fix | After the spectrum fit |
+|---|---|---|
+| Partial level error, mean abs., L1 / L2 / L3 / L4 (fitting keys) | 23.8 / 22.0 / 23.1 / 23.1 dB | 6.5 / 5.8 / 3.1 / 5.3 dB |
+| Same, split keys | 24.1 / 21.9 / 22.8 / 22.9 dB | 7.2 / 5.9 / 3.0 / 5.5 dB |
+| Spectrum error, layers 1/3/4 / held-out layer 2 | 6.16 / 5.77 dB | 4.37 / 3.57 dB |
+| Key level std, layer 3 | 3.56 dB | 1.39 dB |
+| 1-8 kHz brightness L1 / L2 / L3 / L4 | -0.4 / +2.4 / +1.6 / -0.8 dB | +0.8 / +4.1 / +0.5 / +0.4 dB |
+| Attack 2-8 kHz share L1 / L2 / L3 / L4 | -3.7 / +1.9 / +3.4 / +1.5 dB | +6.0 / +1.4 / +0.4 / -2.4 dB |
+| Knock, between-partial 20-100 ms (counts room and noise; see the knock row) | +0.4 dB | -6.1 dB |
+| Velocity span L1-L4 | +0.4 dB | -1.1 dB |
+| Sustain error, layer 3, keys below F#6 / all | 7.8 / 8.97 dB | 8.1 / 12.2 dB (see above) |
+
+The attack averages hide C2-C3 still bright in a soft note's first 10 ms and C5-C6 dark at ff.
 
 ## Baseline vs current
 

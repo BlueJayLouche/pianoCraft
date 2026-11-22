@@ -62,6 +62,12 @@ struct Voice {
     const KeyModel* key = nullptr;
     NoteAddress address{};
     std::array<ModeState, modeLimit> modes{};
+    // While the hammer is on, the part of each mode's motion this strike put there: what the hammer meets.
+    // A restruck string's ringing is rescaled to the new strike's gain (strike()), up to 100x for a soft
+    // strike on a loud note, and read through the new strike's shares; met by the hammer, it threw it hard
+    // enough to peak 36 dB over the loud note, and repeated restrikes grew without bound. The hammer now
+    // lands as on a still string; the ringing sounds on, untouched by it.
+    std::array<ModeState, modeLimit> struckModes{};
     std::array<ModeState, longitudinalLimit> longitudinal{};
     HammerState hammer{};
     std::uint64_t age = 0;
@@ -70,17 +76,20 @@ struct Voice {
     double velocityGain = 1.0;
     double knockGain = 1.0;
     double releaseBlend = 0.0;
+    double residualBlend = 0.0; // the damped string's second stage (KeyModel::residualDelay)
+    std::uint64_t damped = 0;   // samples the dampers have been seated
     double chokeGain = 1.0;
     bool active = false;
     bool keyDown = false;
     bool choking = false;
     std::array<double, 8> highpassState{};
-    std::array<double, 5> velocityShelf{1.0, 0.0, 0.0, 0.0, 0.0};
-    std::array<double, 8> shelfState{};
-    // A restruck string's previous velocity EQ, playing on as it crossfades to the new one.
-    std::array<double, 5> fadingShelf{1.0, 0.0, 0.0, 0.0, 0.0};
-    std::array<double, 8> fadingState{};
-    double shelfFade = 0.0; // the previous EQ's share, 1 to 0
+    // The strike's share of each mode, set by its velocity (tools/fit_piano.py): an excitation filter. It
+    // shapes only what the hammer puts in, so a restruck string's ringing keeps its own spectrum and nothing
+    // steps. The hammer itself meets the physical string: it reads each mode through the inverse share.
+    std::array<double, modeLimit> weight{};
+    std::array<double, modeLimit> unweight{};
+    double strikeOctaves = 0.0; // the strike's velocity, octaves re mf
+    std::array<double, 5> knockShelf{1.0, 0.0, 0.0, 0.0, 0.0};
     // The phantom partials' drive is the string's motion squared, so a restrike's rescaled ringing
     // takes it with a matching scale; it glides to whichever strike now dominates.
     double phantomScale = 1.0;
@@ -112,6 +121,7 @@ struct Voice {
         key = nullptr;
         address = {};
         modes = {};
+        struckModes = {};
         longitudinal = {};
         hammer = {};
         age = 0;
@@ -120,15 +130,16 @@ struct Voice {
         velocityGain = 1.0;
         knockGain = 1.0;
         releaseBlend = 0.0;
+        residualBlend = 0.0;
+        damped = 0;
         chokeGain = 1.0;
         active = false;
         keyDown = false;
         choking = false;
         highpassState = {};
-        velocityShelf = {1.0, 0.0, 0.0, 0.0, 0.0};
-        shelfState = {};
-        fadingState = {};
-        shelfFade = 0.0;
+        weight = {};
+        unweight = {};
+        knockShelf = {1.0, 0.0, 0.0, 0.0, 0.0};
         phantomScale = phantomTarget = 1.0;
         knockState = {};
         knockLow = {};
@@ -185,7 +196,6 @@ struct PianoEngine::Impl {
     std::array<double, 2 * highpassStages> highpassInput{};
     std::array<double, 2 * highpassStages> highpassOutput{};
     double highpassCoefficient = 1.0;
-    double shelfFadeStep = 1.0; // a restruck string's EQ crossfades over 5 ms
     double phantomGlide = 1.0;  // and its phantom drive moves over 1 ms, before the hammer lands
 
     Impl() {
@@ -270,8 +280,7 @@ struct PianoEngine::Impl {
     // brushing the strings as it leaves or lands on them, for the strings. Both follow the rail's
     // speed, so a stamp (or square automation) is loud, a slow or half pedal quiet, and nothing
     // starts in a sample. Analytic: the corpus has no pedal noise, so the levels are chosen: a stamp
-    // landing (the dampers dropping onto the strings) 31 dB under a mf C4's peak, lifting 40 dB, the
-    // strings' shimmer after it 51 dB.
+    // landing (the dampers dropping onto the strings) 39 dB under a mf C4's peak, lifting 49 dB.
     // Analytic half-pedal zone: dampers fully on below 25% travel, fully off above 75%. Squared
     // because damping shortens decay fast: mid-travel then leaves C3 ringing ~1.5 s rather than
     // ~0.8 s. The corpus has no part-pedalled notes, so this is chosen, not measured.
@@ -322,8 +331,9 @@ struct PianoEngine::Impl {
         return {pedalThump * pedalKnockLevel, drive * noise * pedalBrushLevel};
     }
     // ponytail: chosen, not fitted (see pedalNoise); refit if licensed pedal recordings turn up.
-    static constexpr double pedalKnockLevel = 0.05;
-    static constexpr double pedalBrushLevel = 0.2;
+    // 20 dB under the first choice, which sounded far too loud by ear (20 Nov 2026).
+    static constexpr double pedalKnockLevel = 0.005;
+    static constexpr double pedalBrushLevel = 0.02;
 
     void updateUndamped() {
         const double lifted = 1.0 - *std::min_element(damperContact.begin(), damperContact.end());
@@ -397,6 +407,47 @@ struct PianoEngine::Impl {
         return selected;
     }
 
+    // Velocity shapes the strike's spectrum (the excitation filter of the research notes): each mode's share
+    // follows its fitted law in dB, linear in log velocity through 40, 80 and 120 (of 127) and held below 20.
+    // The hammer alone brightens too little from pp to ff: in the mid register the string's give, not the felt,
+    // sets the contact time. Velocity Brightness scales the recordings' own brightening against the fundamental,
+    // leaving its level: 0 plays every velocity with mf's spectrum. Hammer Hardness (with Timbre) moves along
+    // the same brightening: hardness h takes the spectrum of log2(h) octaves more velocity at the same level,
+    // as the felt's stiffness also changes (feltForce). Set at the strike, and again by modulation or Timbre
+    // that arrives with it, before the voice has sounded.
+    void shape(Voice& voice) {
+        const auto& key = *voice.key;
+        if (key.modeCount == 0) {
+            return;
+        }
+        const double brightness = parameters[parameterIndex(ParameterId::velocityBrightness)];
+        const std::size_t hardnessIndex = parameterIndex(ParameterId::hammerHardness);
+        const double hardness = std::clamp(parameters[hardnessIndex] + modulation[hardnessIndex] +
+                                           voice.hardnessModulation + voice.brightness, 0.25, 2.0);
+        const double x = voice.strikeOctaves;
+        const double harder = std::clamp(x + std::log2(hardness), -2.0, 1.0);
+        const auto atVelocity = [](double at, double soft, double loud) {
+            at = std::max(at, -2.0);
+            return at < 0.0 ? -at * soft : at / std::log2(1.5) * loud;
+        };
+        const auto tilt = [&](const ModeCoefficients& mode, double at) {
+            return atVelocity(at, mode.softBrighteningDb, mode.loudBrighteningDb) -
+                atVelocity(at, key.modes[0].softBrighteningDb, key.modes[0].loudBrighteningDb);
+        };
+        // Read through 1 / share (at most 40 dB up), the modes give under the hammer as the physical string does:
+        // a boosted share once made the string livelier than it is, and ff unstable at very low sample rates.
+        for (std::size_t index = 0; index < key.modeCount; ++index) {
+            const auto& mode = key.modes[index];
+            const double db = atVelocity(x, mode.softDb, mode.loudDb) + (brightness - 1.0) * tilt(mode, x) +
+                tilt(mode, harder) - tilt(mode, x);
+            // At most +30 dB, the most the recordings ask (velocity 40, the softest, 5-9 kHz). Unbounded, the soft
+            // law's extrapolation to velocity 20, Velocity Brightness 2 or Hammer Hardness 0.25 took a treble
+            // note's top partials to +117 dB and its peak to +39 dBFS.
+            voice.weight[index] = std::pow(10.0, std::clamp(db, -90.0, 30.0) / 20.0);
+            voice.unweight[index] = 1.0 / std::max(voice.weight[index], 0.01);
+        }
+    }
+
     void strike(Voice& voice, const NoteAddress& address, double velocity) {
         constexpr double referenceVelocity = 80.0 / 127.0;
         const bool ringing = voice.key != nullptr; // restruck, not a fresh voice
@@ -408,6 +459,8 @@ struct PianoEngine::Impl {
         voice.chokeGain = 1.0;
         voice.age = 0;
         voice.neutralExpressions();
+        voice.strikeOctaves = std::log2(std::max(velocity, 0.01) / referenceVelocity);
+        shape(voice);
         const double normalizedVelocity = velocity / referenceVelocity;
         const double referenceGain = 0.18 + 0.82 * std::pow(referenceVelocity, 1.35);
         const auto hammerSpeed = [](double v) { return 0.35 + 2.4 * std::pow(v, 0.85); };
@@ -424,8 +477,9 @@ struct PianoEngine::Impl {
             voice.key->outputGain * voice.key->wearGain;
         // A restruck string is still ringing, loudly under the pedal: only the new strike takes the
         // new gain, so the ringing and the filters holding it are rescaled to sound as before.
-        // Stepped to the new gain, the ringing clicked: 1000x its sharpest bend.
-        const double carry = previousGain / voice.velocityGain;
+        // Stepped to the new gain, the ringing clicked: 1000x its sharpest bend. A fresh voice has no
+        // ringing to carry: taken from clear()'s gain of 1, it scaled every note's phantoms by its own gain.
+        const double carry = ringing ? previousGain / voice.velocityGain : 1.0;
         for (auto& mode : voice.modes) {
             mode.y1 *= carry;
             mode.y2 *= carry;
@@ -434,55 +488,38 @@ struct PianoEngine::Impl {
             mode.y1 *= carry;
             mode.y2 *= carry;
         }
-        for (auto* state : {&voice.highpassState, &voice.shelfState}) {
-            for (auto& value : *state) {
-                value *= carry;
-            }
+        for (auto& value : voice.highpassState) {
+            value *= carry;
         }
         // Unscaled, the phantoms jumped carry-fold at once. A louder strike's own partials take over
         // (scale 1); a softer one's ringing still dominates and keeps its scale.
         voice.phantomScale /= carry;
         voice.phantomTarget = carry < 1.0 ? 1.0 : voice.phantomScale;
         voice.knockGain = std::pow(hammerSpeed(velocity) / hammerSpeed(referenceVelocity), dynamics - 1.0);
-        // A heavy bass hammer thumps the board low and a light treble one clicks: two poles at 16 f0.
-        voice.knockLowpass =
-            1.0 - std::exp(-2.0 * 3.141592653589793 * std::min(16.0 * voice.key->fundamental, 0.45 * sampleRate) / sampleRate);
+        // A heavy bass hammer thumps the board low and a light treble one knocks higher: two poles at 16 f0, at
+        // most 4 kHz. Open above C5, the treble's knock clicked: its notes peaked in 2-4 ms and fell 10-15 dB by
+        // 30 ms, where the recordings rise over 10 ms and hold.
+        voice.knockLowpass = 1.0 - std::exp(-2.0 * 3.141592653589793 *
+            std::min({16.0 * voice.key->fundamental, 4000.0, 0.45 * sampleRate}) / sampleRate);
+        voice.struckModes = {};
         voice.hammer.position = voice.displacement - 0.004;
         voice.hammer.velocity = hammerSpeed(velocity);
         voice.hammer.mass = voice.key->hammerMass;
         voice.hammer.load = 0.0;
         voice.hammer.active = true;
-        // Velocity EQ (the excitation-filter fallback in the research notes) above 1 kHz, flat at
-        // mf: 8 dB per doubling of velocity above mf, 20 dB per halving below. The hammer alone
-        // brightens ~10 dB too little from pp to ff: in the mid register the string's give, not the
-        // felt, sets the contact time.
-        const double octaves = std::log2(std::max(velocity, 0.01) / referenceVelocity);
-        // A ringing string's EQ holds its sound: new coefficients on it jumped the output 7x in a
-        // sample. The previous EQ plays on, crossfading to the new.
-        if (ringing) {
-            voice.fadingShelf = voice.velocityShelf;
-            voice.fadingState = voice.shelfState;
-            voice.shelfFade = 1.0;
-        }
-        voice.velocityShelf = highShelf(std::min(1000.0, 0.45 * sampleRate),
-                                        (octaves < 0.0 ? 20.0 : 8.0) * octaves *
-                                            parameters[parameterIndex(ParameterId::velocityBrightness)],
-                                        sampleRate);
+        // The knock keeps a plain shelf above 1 kHz, flat at mf: 8 dB per doubling of velocity above
+        // mf, 20 dB per halving below; without it a soft note began with a loud one's click.
+        const double octaves = voice.strikeOctaves;
+        voice.knockShelf = highShelf(std::min(1000.0, 0.45 * sampleRate), (octaves < 0.0 ? 20.0 : 8.0) * octaves *
+                                     parameters[parameterIndex(ParameterId::velocityBrightness)], sampleRate);
     }
 
     static double radiated(Voice& voice, double input, std::size_t channel) {
-        const double filtered = biquad(voice.key->bridgeHighpass, &voice.highpassState[channel * 4], input);
-        const double shelved = biquad(voice.velocityShelf, &voice.shelfState[channel * 4], filtered);
-        if (voice.shelfFade <= 0.0) {
-            return shelved;
-        }
-        // Smoothstep: the new EQ's start, on the old one's state, is a transient; it eases in.
-        const double fade = voice.shelfFade * voice.shelfFade * (3.0 - 2.0 * voice.shelfFade);
-        return shelved + fade * (biquad(voice.fadingShelf, &voice.fadingState[channel * 4], filtered) - shelved);
+        return biquad(voice.key->bridgeHighpass, &voice.highpassState[channel * 4], input);
     }
 
     struct VoiceSample {
-        double left = 0.0;   // radiated: bridge high-pass and velocity EQ
+        double left = 0.0;   // radiated: through the bridge high-pass
         double right = 0.0;
         double centre = 0.0; // the left channel's signal before key and note panning: mono-safe
         double bridge = 0.0; // unfiltered: the bridge still feels the hammer's push, which drives
@@ -547,8 +584,13 @@ struct PianoEngine::Impl {
         const double damping = voice.keyDown || !key.hasDamper ? 0.0 : damperContact[voice.address.channel];
         const double step = 40.0 / sampleRate;
         voice.releaseBlend += std::clamp(damping - voice.releaseBlend, -step, step);
+        // Seated (over half on) for the key's delay, the dampers leave the slow residual, gliding in over 25 ms.
+        voice.damped = voice.releaseBlend > 0.5 ? voice.damped + 1 : 0;
+        const double residualTarget = voice.damped > key.residualDelay * sampleRate ? 1.0 : 0.0;
+        voice.residualBlend += std::clamp(residualTarget - voice.residualBlend, -step, step);
         double bridge = 0.0;
         double bridgeRight = 0.0;
+        double drive = 0.0;
         double displacement = 0.0;
         const bool struck = voice.hammer.active;
         for (std::size_t index = 0; index < key.modeCount; ++index) {
@@ -557,16 +599,28 @@ struct PianoEngine::Impl {
             double a1 = coefficients.sustainA1;
             double a2 = coefficients.sustainA2;
             if (voice.releaseBlend > 0.0) {
-                a1 += (coefficients.releaseA1 - a1) * voice.releaseBlend;
-                a2 += (coefficients.releaseA2 - a2) * voice.releaseBlend;
+                double releaseA1 = coefficients.releaseA1;
+                double releaseA2 = coefficients.releaseA2;
+                if (voice.residualBlend > 0.0) {
+                    releaseA1 += (coefficients.residualA1 - releaseA1) * voice.residualBlend;
+                    releaseA2 += (coefficients.residualA2 - releaseA2) * voice.residualBlend;
+                }
+                a1 += (releaseA1 - a1) * voice.releaseBlend;
+                a2 += (releaseA2 - a2) * voice.releaseBlend;
             }
-            const double output = force * coefficients.excitation + a1 * state.y1 - a2 * state.y2;
+            const double input = force * coefficients.excitation * voice.weight[index];
+            const double output = input + a1 * state.y1 - a2 * state.y2;
             state.y2 = state.y1;
             state.y1 = std::abs(output) < 1.0e-30 ? 0.0 : output;
             bridge += state.y1 * coefficients.outputLeft + state.y2 * coefficients.outputLeftPrevious;
+            drive += state.y1 * coefficients.driveCurrent + state.y2 * coefficients.drivePrevious;
             bridgeRight += state.y1 * coefficients.outputRight + state.y2 * coefficients.outputRightPrevious;
             if (struck) {
-                displacement += coefficients.strike * (a1 * state.y1 - a2 * state.y2);
+                auto& own = voice.struckModes[index];
+                const double moved = input + a1 * own.y1 - a2 * own.y2;
+                own.y2 = own.y1;
+                own.y1 = std::abs(moved) < 1.0e-30 ? 0.0 : moved;
+                displacement += coefficients.strike * voice.unweight[index] * (a1 * own.y1 - a2 * own.y2);
             }
         }
         voice.displacement = displacement;
@@ -593,6 +647,7 @@ struct PianoEngine::Impl {
             const double excitation =
                 2.0 * key.longitudinalDrive * voice.phantomScale * (adjacent + first * first + 2.0 * skip);
             double longitudinalForce = 0.0;
+            double longitudinalDrive = 0.0;
             for (std::size_t index = 0; index < key.longitudinalCount; ++index) {
                 const auto& coefficients = key.longitudinal[index];
                 auto& state = voice.longitudinal[index];
@@ -600,9 +655,11 @@ struct PianoEngine::Impl {
                 state.y2 = state.y1;
                 state.y1 = std::abs(output) < 1.0e-30 ? 0.0 : output;
                 longitudinalForce += state.y1 * coefficients.output;
+                longitudinalDrive += state.y1 * coefficients.drive;
             }
             bridge += longitudinalForce;
             bridgeRight += longitudinalForce;
+            drive += longitudinalDrive;
         }
 
         if (voice.choking) {
@@ -627,14 +684,13 @@ struct PianoEngine::Impl {
         const std::size_t noiseIndex = parameterIndex(ParameterId::hammerNoise);
         const double noise =
             std::clamp(parameters[noiseIndex] + modulation[noiseIndex] + voice.noiseModulation, 0.0, 2.0);
-        const double knock = biquad(voice.velocityShelf, voice.knockState.data(),
-                                    force * voice.knockGain * voice.chokeGain * voice.volume * 0.05 * noise);
+        const double knock = biquad(voice.knockShelf, voice.knockState.data(),
+                                    force * voice.knockGain * voice.chokeGain * voice.volume * 0.03 * noise);
         voice.knockLow[0] += voice.knockLowpass * (knock - voice.knockLow[0]);
         voice.knockLow[1] += voice.knockLowpass * (voice.knockLow[0] - voice.knockLow[1]);
         const double radiatedLeft = radiated(voice, bridge, 0) * gain;
         const VoiceSample sample{radiatedLeft * voice.panLeft, radiated(voice, bridgeRight, 1) * gain * voice.panRight,
-                                 radiatedLeft * 0.5 * (voice.panLeft + voice.panRight), bridge * gain, voice.knockLow[1]};
-        voice.shelfFade = std::max(0.0, voice.shelfFade - shelfFadeStep);
+                                 radiatedLeft * 0.5 * (voice.panLeft + voice.panRight), drive * gain, voice.knockLow[1]};
         voice.level = std::max({std::abs(sample.left), std::abs(sample.right), voice.level * 0.99995});
         if (!voice.hammer.active && voice.level < 1.0e-8 && voice.age > sampleRate) {
             voice.active = false;
@@ -651,7 +707,6 @@ void PianoEngine::prepare(double sampleRate) {
     impl_->model = std::make_unique<InstrumentModel>(sampleRate);
     impl_->sampleRate = sampleRate;
     impl_->highpassCoefficient = 1.0 / (1.0 + 2.0 * 3.141592653589793 * 100.0 / sampleRate);
-    impl_->shelfFadeStep = 1.0 / (0.005 * sampleRate);
     impl_->phantomGlide = 1.0 - std::exp(-1.0 / (0.001 * sampleRate));
     impl_->pedalOmega = 1.0 / 0.006; // peak speed 6 ms in, 90% there by 24 ms
     impl_->pedalThumpLowpass = 1.0 - std::exp(-2.0 * 3.141592653589793 * 400.0 / sampleRate);
@@ -880,13 +935,19 @@ void PianoEngine::modulate(const NoteAddress& target, ParameterId id, double amo
     if (!std::isfinite(amount) || (id != ParameterId::hammerHardness && id != ParameterId::hammerNoise)) {
         return;
     }
-    if (target.noteId < 0 && target.port < 0 && target.channel < 0 && target.key < 0) {
+    const bool global = target.noteId < 0 && target.port < 0 && target.channel < 0 && target.key < 0;
+    if (global) {
         impl_->modulation[parameterIndex(id)] = amount;
-        return;
     }
     for (auto& voice : impl_->voices) {
-        if (Impl::targets(voice, target)) {
+        if (!Impl::targets(voice, target)) {
+            continue;
+        }
+        if (!global) {
             (id == ParameterId::hammerHardness ? voice.hardnessModulation : voice.noiseModulation) = amount;
+        }
+        if (id == ParameterId::hammerHardness && voice.age == 0) {
+            impl_->shape(voice); // sent with its note: the strike takes it
         }
     }
 }
@@ -931,6 +992,9 @@ void PianoEngine::setNoteBrightness(const NoteAddress& target, double brightness
     for (auto& voice : impl_->voices) {
         if (Impl::targets(voice, target)) {
             voice.brightness = 2.0 * (std::clamp(brightness, 0.0, 1.0) - 0.5);
+            if (voice.age == 0) {
+                impl_->shape(voice); // sent with its note: the strike takes it
+            }
         }
     }
 }

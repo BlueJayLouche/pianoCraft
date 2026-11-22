@@ -16,12 +16,19 @@ struct ModeCoefficients {
     double sustainA2 = 0.0;
     double releaseA1 = 0.0;
     double releaseA2 = 0.0;
+    double residualA1 = 0.0; // the damped string's slow second stage
+    double residualA2 = 0.0;
     double excitation = 0.0;
     double output = 0.0; // radiation weight; the channels below add the mode's phase to it
     double outputLeft = 0.0;
     double outputLeftPrevious = 0.0;
     double outputRight = 0.0;
     double outputRightPrevious = 0.0;
+    // The bridge force before the fitted radiation, with the mode's phase: what the board and the sympathetic
+    // strings feel.
+    double drive = 0.0;
+    double driveCurrent = 0.0;
+    double drivePrevious = 0.0;
     double frequency = 0.0;
     double decaySeconds = 0.0;
     bool secondary = false;
@@ -39,6 +46,12 @@ struct ModeCoefficients {
     // slope that drives its longitudinal motion.
     double slope = 0.0;
     double baseSlope = 0.0;
+    // How the strike's share of this mode changes with velocity, dB re velocity 80 (of 127): at 40 and at
+    // 120; and how much the recordings brighten there, re the fundamental (tools/fit_piano.py).
+    double softDb = 0.0;
+    double loudDb = 0.0;
+    double softBrighteningDb = 0.0;
+    double loudBrighteningDb = 0.0;
 };
 
 // A longitudinal string mode (Bank & Sujbert 2005): a resonator driven by the transverse modes'
@@ -48,6 +61,7 @@ struct LongitudinalMode {
     double a2 = 0.0;
     double input = 0.0;  // modal displacement (m) per newton for one sample
     double output = 0.0; // radiated bridge force (N) per metre
+    double drive = 0.0;  // and before the fitted radiation
     double baseFrequency = 0.0;
     double inverseMass = 0.0;
 };
@@ -89,6 +103,10 @@ struct KeyModel {
     double leftGain = 0.707;
     double rightGain = 0.707;
     bool hasDamper = true;
+    // A damper stops its string in two stages (VCSL's Knight upright): the release poles until each mode has
+    // fallen about 15 dB (residualDelay, s, after the damper seats), then a residual residualRatio times slower.
+    double residualRatio = 1.0;
+    double residualDelay = 0.0;
     std::size_t primaryModeCount = 0;
     std::size_t modeCount = 0;
     std::array<ModeCoefficients, modeLimit> modes{};

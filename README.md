@@ -4,7 +4,9 @@ PianoCraft is an original, clean-room CLAP piano instrument for macOS, Windows a
 a hysteretic felt hammer (Stulov's published hammer set) striking physically
 scaled modal strings, coupled unison strings (Weinreich), phantom partials from
 longitudinal string motion (Bank & Sujbert), damper and sustain behavior,
-sympathetic resonance, and regional soundboard filters. It does not play
+sympathetic resonance, and regional soundboard filters. Each key's strike point,
+each partial's level, how it brightens with velocity and its two-stage decay are
+fitted to the CC0 Meta Piano recordings (`tools/fit_piano.py`). It does not play
 reference samples or use Pianoteq data.
 
 ## Build
@@ -88,8 +90,8 @@ Strings, Tuning, Age, Mix) and maps three remote-control pages onto its device k
 Pedal Noise (0 to 2) is the sustain pedal's own sound, from how fast it moves: the
 trapwork's knock through the soundboard, and the damper felt brushing the strings
 as it lifts off or lands, which leaves the open strings ringing faintly. A stamp
-(or square CC64 automation) knocks loudest: about 31 dB under a mf C4 as the
-dampers land and 40 dB as they lift, with the strings' shimmer 51 dB under. A
+(or square CC64 automation) knocks loudest: about 39 dB under a mf C4 as the
+dampers land and 49 dB as they lift, with the strings' shimmer fainter still. A
 pedal moved over 300 ms knocks 20 dB quieter. The dampers ride the pedal's
 motion, a full stroke taking about 25 ms. Age makes it up to twice as loud. The
 levels are chosen, not measured: the reference recordings have no pedal noise.
@@ -205,6 +207,23 @@ To score the current build against the corpus and check the fitted model laws
 ```sh
 .venv/bin/python tools/evaluate_model.py --refit
 ```
+
+The strike positions, radiation, velocity and decay tables in `src/model/SpectrumCalibration.hpp` are
+regenerated from the recordings (about 15 minutes; each spectrum round renders all 352 notes):
+
+```sh
+.venv/bin/python tools/fit_piano.py neutral
+.venv/bin/python tools/fit_piano.py strike
+.venv/bin/python tools/fit_piano.py decays
+.venv/bin/python tools/fit_piano.py spectrum 6
+.venv/bin/python tools/fit_piano.py score
+```
+
+To compare PianoCraft with another piano by ear, `tools/ab_project.py` writes
+`renders/ab/ab-test.dawproject`: the same notes, pedalling and soft pedal on two
+tracks, a marker per section. Load PianoCraft Upright on one and the other piano on
+the other, with no effects, and bounce both. It's for diagnosis only
+(`docs/clean-room.md`).
 
 `tools/calibrate.py` reproduced the original measured tables but is now frozen:
 its layer-2 gate closed when the final validation was recorded. Its original

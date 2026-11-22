@@ -277,7 +277,7 @@ def brightness_by_layer() -> dict[int, float]:
     def one(item):
         midi, layer = item
         ref, floor = octave_bands(*reference(midi, layer), floor=True)
-        diff = octave_bands(*render(midi, layer, 0.6)) - ref
+        diff = octave_bands(*render(midi, layer, 1.0)) - ref  # the key held through the window, as recorded
         return layer, [diff[i] for i in high if ref[i] > floor[i] + 6]
     results = parallel(one, [(m, l) for m in (36, 48, 60, 72, 84) for l in (1, 2, 3, 4)])
     return {layer: float(np.mean([d for l, v in results if l == layer for d in v])) for layer in (1, 2, 3, 4)}

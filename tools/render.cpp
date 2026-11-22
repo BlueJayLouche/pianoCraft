@@ -63,7 +63,7 @@ struct Event {
 int main(int argc, char** argv) {
     try {
         if (argc < 2) {
-            std::cerr << "Usage: pianocraft-render <output.wav> [midi] [velocity] [seconds] [pedal] [body] [sympathy] [mic]\n";
+            std::cerr << "Usage: pianocraft-render <output.wav> [midi] [velocity] [seconds] [pedal] [body] [sympathy] [mic] [id=value ...]\n";
             return 2;
         }
         const std::string output = argv[1];
@@ -87,6 +87,15 @@ int main(int argc, char** argv) {
         engine.setParameter(pianocraft::ParameterId::bodyLevel, body);
         engine.setParameter(pianocraft::ParameterId::sympatheticLevel, sympathy);
         engine.setParameter(pianocraft::ParameterId::micPosition, mic);
+        for (int index = 9; index < argc; ++index) { // any parameter by its id, e.g. 13=0 for no hammer noise
+            const std::string setting = argv[index];
+            const auto equals = setting.find('=');
+            if (equals == std::string::npos) {
+                throw std::runtime_error("Expected id=value: " + setting);
+            }
+            engine.setParameter(static_cast<pianocraft::ParameterId>(std::stoi(setting.substr(0, equals))),
+                                std::stod(setting.substr(equals + 1)));
+        }
         const double noteOffTime = std::min(1.5, seconds * 0.4);
         std::vector<Event> events;
         if (pedal == 1) {
