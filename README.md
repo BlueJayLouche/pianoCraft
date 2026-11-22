@@ -41,7 +41,7 @@ ctest --test-dir build --output-on-failure
 
 The renderer arguments are output path, MIDI note, velocity, seconds, sustain
 pedal, body level, sympathy level, and mic position (0 spaced pair, 1 coincident,
-2 player). Optional numeric arguments use the engine
+2 player, 3 close). Optional numeric arguments use the engine
 defaults when omitted. Raw calibration recordings and renders are not included
 in the plugin. `pianocraft-render-voice` takes the instrument, output, key, velocity,
 seconds, then optionally the release time and `id=value` parameters or `ccN=value`
@@ -110,9 +110,16 @@ Stereo Width 0 is a true mono render: one coherent microphone, so summing to
 mono can't comb-filter at any Mic Position. Use it for mono bounces; widths
 between 0 and 1 crossfade to the microphone pair.
 
-Bitwig's preset browser lists four built-in voicings: Calibrated Upright
-(stereo) and, for mono bounces, Whole, Lightly Worn (Age 0.3) and Most Worn
-(Age 1). They ship as marker files in the bundle's `Contents/Resources/Presets`,
+Mic Position: the Spaced Pair (the recordings' perspective) is solid below about
+500 Hz and spacious above 1 kHz; Coincident is level-panned and fully coherent;
+Player is the pianist's ears; Close is a pair just over the strings, solid below
+1 kHz, brighter (+5 dB from 700 Hz to 2.5 kHz) and a little leaner in the deep
+bass. Close is chosen by reasoning, not measured: a starting point to voice by
+ear, nearer the brighter, more focused presentation of commercial piano models.
+
+Bitwig's preset browser lists five built-in voicings: Calibrated Upright
+(stereo), Close and Bright (Close, 6 dB louder, a quarter more sustain) and, for
+mono bounces, Whole, Lightly Worn (Age 0.3) and Most Worn (Age 1). They ship as marker files in the bundle's `Contents/Resources/Presets`,
 because Bitwig lists preset files, not presets held inside a plugin; the values
 live in `src/host/ClapHost.cpp`. Save your own as Bitwig presets.
 

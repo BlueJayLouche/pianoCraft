@@ -63,13 +63,13 @@ void Soundboard::prepare(double sampleRate) {
 }
 
 // Spaced microphones see each mode with an unrelated amplitude; coincident ones see the same;
-// ears are close enough to hear the same below ~1 kHz.
+// ears, and a close pair, are near enough to hear the same below ~1 kHz.
 void Soundboard::setMicPosition(MicPosition position) {
     for (std::size_t index = 0; index < modeCount_; ++index) {
         auto& mode = modes_[index];
         const double independence = position == MicPosition::spacedPair ? 1.0
             : position == MicPosition::coincident ? 0.0
-            : std::min(1.0, mode.frequency / 1000.0);
+            : std::min(1.0, mode.frequency / 1000.0); // the player and the close pair
         mode.gainLeft = mode.shapeLeft;
         mode.gainRight = mode.shapeLeft + (mode.shapeRight - mode.shapeLeft) * independence;
     }

@@ -11,6 +11,7 @@
 #include <functional>
 #include <memory>
 #include <iostream>
+#include <tuple>
 #include <utility>
 #include <stdexcept>
 #include <string>
@@ -439,6 +440,27 @@ void micPositionsAndWidth() {
             "Spaced/player mics are not wider than coincident: " + std::to_string(spaced) + " " +
             std::to_string(player));
     require(play(1.0, 1.0, true) == play(1.0, 1.0, false), "Mic change after prepare differs from before");
+    // The close pair hears the strings' upper partials more directly: C3 brighter than through the spaced pair, by a
+    // third difference (18 dB an octave, weighting the top).
+    const auto top = [](double mic) {
+        pianocraft::PianoEngine engine;
+        engine.setParameter(pianocraft::ParameterId::micPosition, mic);
+        engine.prepare(48000.0);
+        engine.noteOn(note(48), 0.63);
+        const auto x = render(engine, 24000, 64);
+        double high = 0.0, all = 0.0, d1 = 0.0, d2 = 0.0, previous = 0.0;
+        for (std::size_t i = 0; i < x.size(); i += 2) {
+            const double a = x[i] - previous, b = a - d1, c = b - d2;
+            previous = x[i];
+            d1 = a;
+            d2 = b;
+            high += c * c;
+            all += static_cast<double>(x[i]) * x[i];
+        }
+        return 10.0 * std::log10(high / all);
+    };
+    const double brighter = top(3.0) - top(0.0);
+    require(brighter > 1.5, "Close is not brighter than the spaced pair: " + std::to_string(brighter) + " dB");
 
     const auto mono = play(0.0, 0.0, false);
     for (std::size_t index = 0; index < mono.size(); index += 2) {
@@ -604,8 +626,9 @@ void pedalsAreContinuous() {
     const double down = releasedTail(1.0, false);
     const double half = releasedTail(0.5, false);
     const double up = releasedTail(0.0, false);
-    // 5 dB: C3's fitted aftersound (tools/fit_piano.py) rings longer than the old law, which narrowed down-to-half.
-    require(dB(down, half) > 5.0 && dB(half, up) > 5.0,
+    // 4 dB: C3's fitted aftersound (tools/fit_piano.py) rings longer than the old law, which narrowed down-to-half,
+    // and since its slow modes reach their fitted level (the polarization's share) half-to-up is 5.0 dB, not 6.
+    require(dB(down, half) > 4.0 && dB(half, up) > 4.0,
             "Half pedal is not between down and up: " + std::to_string(dB(down, half)) + " / " +
             std::to_string(dB(half, up)) + " dB");
     // 3 dB: dampers measured on VCSL's Knight upright leave a released string a residual 17 dB down, where the old
@@ -902,6 +925,39 @@ void releasesThump() {
                                                                std::to_string(before) + " before, " + std::to_string(after) + " after");
 }
 
+// A strike builds rather than bursting: aligned on its peak, a note's first 4 ms over its 0.1-0.5 s level. The fitted lifts
+// on the hammer's push made C6 at velocity 120 22 dB (now 16; Meta ~9: the rest is its early decay), and the knock
+// at velocity 40 made D4 10 and G6 21 (now 5 and 14).
+double attackOverBody(int key, double velocity) {
+    pianocraft::PianoEngine engine;
+    engine.prepare(48000.0);
+    engine.noteOn(note(key, 1), velocity);
+    const auto x = render(engine, 33600, 256);
+    std::vector<double> frames;
+    for (std::size_t frame = 0; frame + 1 < x.size() / 96; ++frame) {
+        double sum = 0.0;
+        for (std::size_t i = frame * 96; i < frame * 96 + 96; ++i) {
+            sum += static_cast<double>(x[i]) * x[i];
+        }
+        frames.push_back(sum / 96.0 + 1.0e-30);
+    }
+    const auto peak = static_cast<std::size_t>(std::max_element(frames.begin(), frames.begin() + 200) - frames.begin());
+    const double first = (frames[peak] + frames[peak + 1] + frames[peak + 2] + frames[peak + 3]) / 4.0;
+    double body = 0.0;
+    for (std::size_t frame = peak + 100; frame < peak + 500; ++frame) {
+        body += frames[frame] / 400.0;
+    }
+    return 10.0 * std::log10(first / body);
+}
+
+void strikesBuild() {
+    for (const auto [key, velocity, limit] : {std::tuple{84, 0.945, 18.5}, std::tuple{62, 0.315, 7.5}, std::tuple{91, 0.315, 17.0}}) {
+        const double over = attackOverBody(key, velocity);
+        require(over < limit, "the strike bursts: key " + std::to_string(key) + " at " + std::to_string(velocity) +
+                                  ", its first 4 ms " + std::to_string(over) + " dB over its body");
+    }
+}
+
 int main() {
     try {
         modelIsStable();
@@ -927,6 +983,7 @@ int main() {
         nothingRunsAway();
         dampersLeaveAResidual();
         releasesThump();
+        strikesBuild();
         std::cout << "All engine tests passed\n";
         return 0;
     } catch (const std::exception& error) {

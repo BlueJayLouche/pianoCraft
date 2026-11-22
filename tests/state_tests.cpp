@@ -138,15 +138,15 @@ int main(int argc, char** argv) {
                                                                 file.path().string().c_str(), &receiver);
     }
     const auto presetsFor = [&](const char* id) { return std::count(discovered.pluginIds.begin(), discovered.pluginIds.end(), id); };
-    check(everyFileRead && discovered.names.size() == 39 && discovered.pluginIds.size() == 39 && !discovered.keyed &&
-          presetsFor("com.pianocraft.upright") == 4 && presetsFor("com.pianocraft.harp") == 4 &&
+    check(everyFileRead && discovered.names.size() == 40 && discovered.pluginIds.size() == 40 && !discovered.keyed &&
+          presetsFor("com.pianocraft.upright") == 5 && presetsFor("com.pianocraft.harp") == 4 &&
           presetsFor("com.pianocraft.flute") == 2 && presetsFor("com.pianocraft.strings") == 7 &&
           presetsFor("com.pianocraft.horn") == 3 && presetsFor("com.pianocraft.trumpet") == 2 &&
           presetsFor("com.pianocraft.trombone") == 2 && presetsFor("com.pianocraft.tuba") == 2 &&
           presetsFor("com.pianocraft.oboe") == 2 && presetsFor("com.pianocraft.clarinet") == 2 &&
           presetsFor("com.pianocraft.celesta") == 2 && presetsFor("com.pianocraft.crotales") == 2 &&
           presetsFor("com.pianocraft.vibraphone") == 3 && presetsFor("com.pianocraft.handpan") == 2,
-          "39 preset files, one unkeyed preset each: 4 piano, 4 harp, 2 flute, 7 strings, 3 horn, 2 trumpet, 2 trombone, "
+          "40 preset files, one unkeyed preset each: 5 piano, 4 harp, 2 flute, 7 strings, 3 horn, 2 trumpet, 2 trombone, "
           "2 tuba, 2 oboe, 2 clarinet, 2 celesta, 2 crotales, 3 vibraphone, 2 handpan");
     provider->destroy(provider);
     auto* presetLoad = static_cast<const clap_plugin_preset_load_t*>(plugin->get_extension(plugin, CLAP_EXT_PRESET_LOAD));

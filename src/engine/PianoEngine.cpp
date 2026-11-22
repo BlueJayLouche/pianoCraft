@@ -68,6 +68,9 @@ struct Voice {
     // enough to peak 36 dB over the loud note, and repeated restrikes grew without bound. The hammer now
     // lands as on a still string; the ringing sounds on, untouched by it.
     std::array<ModeState, modeLimit> struckModes{};
+    // How far the fitted boosts reach that motion: 0 while the hammer is on, rising to 1 once it has left (see the
+    // mode loop). Kept running until then.
+    double ringBlend = 1.0;
     std::array<ModeState, longitudinalLimit> longitudinal{};
     HammerState hammer{};
     std::uint64_t age = 0;
@@ -99,8 +102,9 @@ struct Voice {
     double knockLowpass = 1.0;
     // The strings' partials above 9 kHz, which aren't synthesized, while the hammer is on them: the force times
     // noise, through two one-pole high-passes at 5 kHz (input, output per stage).
-    std::array<double, 4> sheen{};
+    std::array<double, 8> sheen{}; // two noises' high-pass states: the right channel mixes in the second
     std::uint32_t sheenNoise = 0x9E3779B9u;
+    std::uint32_t sheenNoiseRight = 0x7F4A7C15u;
     double sheenGain = 0.0;
     // Per-note CLAP modulation and expressions.
     double hardnessModulation = 0.0;
@@ -127,6 +131,7 @@ struct Voice {
         address = {};
         modes = {};
         struckModes = {};
+        ringBlend = 1.0;
         longitudinal = {};
         hammer = {};
         age = 0;
@@ -151,6 +156,7 @@ struct Voice {
         knockLowpass = 1.0;
         sheen = {};
         sheenNoise = 0x9E3779B9u;
+        sheenNoiseRight = 0x7F4A7C15u;
         sheenGain = 0.0;
         neutralExpressions();
         volume = 1.0;
@@ -215,9 +221,11 @@ struct PianoEngine::Impl {
     double highpassCoefficient = 1.0;
     double phantomGlide = 1.0;  // and its phantom drive moves over 1 ms, before the hammer lands
     double sheenHighpass = 1.0;
-    // Selected: 0.015 brings the first 6 ms above 4 kHz within 3 dB of Meta at velocity 40, 80 and 120 (from -8, -5
-    // and -5 dB); 0.02 brightens mf by +2.6. Erring dark, as the attack is what was first heard as a click.
-    static constexpr double sheenLevel = 0.015;
+    double ringStep = 1.0; // the lifts' rise per sample once the hammer has left
+    // Selected: the first 6 ms above 4 kHz within about 1 dB of Meta at velocity 40, 80 and 120 (+1.1 / +0.4 / -0.1 dB),
+    // with the strike's burst gone (see the mode loop); 0.015 had matched them while the burst was there, and
+    // without it overshot by 3-5 dB.
+    static constexpr double sheenLevel = 0.006;
 
     Impl() {
         parameters.fill(0.0);
@@ -544,9 +552,11 @@ struct PianoEngine::Impl {
         // A low string has the most partials above 9 kHz: 3 dB more an octave down (selected on Meta's attacks).
         voice.sheenGain = sheenLevel * std::exp2(-(address.key - 60) / 24.0);
         voice.sheenNoise = 0x9E3779B9u ^ (static_cast<std::uint32_t>(address.key + 1) * 0x85EBCA6Bu); // each string its own
+        voice.sheenNoiseRight = 0x7F4A7C15u ^ (static_cast<std::uint32_t>(address.key + 1) * 0xC2B2AE35u);
         voice.knockLowpass = 1.0 - std::exp(-2.0 * 3.141592653589793 *
             std::min({16.0 * voice.key->fundamental, 4000.0, 0.45 * sampleRate}) / sampleRate);
         voice.struckModes = {};
+        voice.ringBlend = 0.0;
         voice.hammer.position = voice.displacement - 0.004;
         voice.hammer.velocity = hammerSpeed(velocity);
         voice.hammer.mass = voice.key->hammerMass;
@@ -555,6 +565,9 @@ struct PianoEngine::Impl {
         // The knock keeps a plain shelf above 1 kHz, flat at mf: 8 dB per doubling of velocity above
         // mf, 20 dB per halving below; without it a soft note began with a loud one's click.
         const double octaves = voice.strikeOctaves;
+        // Below mf the knock falls 10 dB per halving of velocity, all of it (by force alone a soft note's first 16 ms
+        // stood 5-7 dB hotter over its body than Meta's; 10 dB brings them within 1-3, 14 hardly further).
+        voice.knockGain *= octaves < 0.0 ? std::exp2(octaves * 10.0 / 6.0206) : 1.0;
         voice.knockShelf = highShelf(std::min(1000.0, 0.45 * sampleRate), (octaves < 0.0 ? 20.0 : 8.0) * octaves *
                                      parameters[parameterIndex(ParameterId::velocityBrightness)], sampleRate);
     }
@@ -638,6 +651,16 @@ struct PianoEngine::Impl {
         double drive = 0.0;
         double displacement = 0.0;
         const bool struck = voice.hammer.active;
+        // The fitted radiation and per-partial tables lift weak high partials up to 40 dB, where the felt excites them
+        // too little. While the hammer is on the string those modes follow its push, and lifted with them that push
+        // was a burst: a note's first 4 ms stood 16-25 dB over its body (G4, C6), Meta's 5-9, rising from silence in
+        // under 1 ms. This strike's own motion radiates without the lifts while the hammer is on, and they come in
+        // over 8 ms once it has left, as Meta's attacks build (2 and 4 ms left the peak 1.5-2 dB higher). A restruck
+        // string's ringing keeps them throughout.
+        if (!struck && voice.ringBlend < 1.0) {
+            voice.ringBlend = std::min(1.0, voice.ringBlend + ringStep);
+        }
+        const double unlifted = 1.0 - voice.ringBlend;
         for (std::size_t index = 0; index < key.modeCount; ++index) {
             const auto& coefficients = key.modes[index];
             auto& state = voice.modes[index];
@@ -660,12 +683,17 @@ struct PianoEngine::Impl {
             bridge += state.y1 * coefficients.outputLeft + state.y2 * coefficients.outputLeftPrevious;
             drive += state.y1 * coefficients.driveCurrent + state.y2 * coefficients.drivePrevious;
             bridgeRight += state.y1 * coefficients.outputRight + state.y2 * coefficients.outputRightPrevious;
-            if (struck) {
+            if (struck || unlifted > 0.0) {
                 auto& own = voice.struckModes[index];
                 const double moved = input + a1 * own.y1 - a2 * own.y2;
                 own.y2 = own.y1;
                 own.y1 = std::abs(moved) < 1.0e-30 ? 0.0 : moved;
-                displacement += coefficients.strike * voice.unweight[index] * (a1 * own.y1 - a2 * own.y2);
+                if (struck) {
+                    displacement += coefficients.strike * voice.unweight[index] * (a1 * own.y1 - a2 * own.y2);
+                }
+                const double cut = coefficients.boost * unlifted;
+                bridge -= cut * (own.y1 * coefficients.outputLeft + own.y2 * coefficients.outputLeftPrevious);
+                bridgeRight -= cut * (own.y1 * coefficients.outputRight + own.y2 * coefficients.outputRightPrevious);
             }
         }
         voice.displacement = displacement;
@@ -735,22 +763,36 @@ struct PianoEngine::Impl {
         voice.knockLow[1] += voice.knockLowpass * (voice.knockLow[0] - voice.knockLow[1]);
         // The attack's top end: Meta's first 6 ms hold 3-14 dB (7 on average) more above 4 kHz than the partials
         // to 9 kHz give. It lasts as the force does, rising and falling with the felt, so it can't step.
+        // Meta's attacks above 4 kHz correlate 0.3-0.9 between their microphones: the right channel mixes a second
+        // noise in, 0.6 / 0.8 (0.6).
         double sheen = 0.0;
-        if (force != 0.0 || voice.sheen[3] != 0.0) {
-            voice.sheenNoise ^= voice.sheenNoise << 13;
-            voice.sheenNoise ^= voice.sheenNoise >> 17;
-            voice.sheenNoise ^= voice.sheenNoise << 5;
-            double x = force * (static_cast<double>(voice.sheenNoise) / 2147483648.0 - 1.0) * voice.sheenGain;
-            for (std::size_t stage = 0; stage < 2; ++stage) {
-                const double y = sheenHighpass * (voice.sheen[2 * stage + 1] + x - voice.sheen[2 * stage]);
-                voice.sheen[2 * stage] = x;
-                voice.sheen[2 * stage + 1] = std::abs(y) < 1.0e-30 ? 0.0 : y;
-                x = y;
+        double sheenRight = 0.0;
+        if (force != 0.0 || voice.sheen[3] != 0.0 || voice.sheen[7] != 0.0) {
+            const auto next = [](std::uint32_t& state) {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                return static_cast<double>(state) / 2147483648.0 - 1.0;
+            };
+            const double drive = force * voice.sheenGain * voice.chokeGain;
+            const double noise[2] = {next(voice.sheenNoise), next(voice.sheenNoiseRight)};
+            double out[2] = {};
+            for (std::size_t chain = 0; chain < 2; ++chain) {
+                double x = drive * noise[chain];
+                for (std::size_t stage = 0; stage < 2; ++stage) {
+                    auto* state = &voice.sheen[4 * chain + 2 * stage];
+                    const double y = sheenHighpass * (state[1] + x - state[0]);
+                    state[0] = x;
+                    state[1] = std::abs(y) < 1.0e-30 ? 0.0 : y;
+                    x = y;
+                }
+                out[chain] = x;
             }
-            sheen = x * voice.chokeGain;
+            sheen = out[0];
+            sheenRight = 0.6 * out[0] + 0.8 * out[1];
         }
         const double radiatedLeft = (radiated(voice, bridge, 0) + sheen) * gain;
-        const VoiceSample sample{radiatedLeft * voice.panLeft, (radiated(voice, bridgeRight, 1) + sheen) * gain * voice.panRight,
+        const VoiceSample sample{radiatedLeft * voice.panLeft, (radiated(voice, bridgeRight, 1) + sheenRight) * gain * voice.panRight,
                                  radiatedLeft * 0.5 * (voice.panLeft + voice.panRight), drive * gain, voice.knockLow[1]};
         voice.level = std::max({std::abs(sample.left), std::abs(sample.right), voice.level * 0.99995});
         if (!voice.hammer.active && voice.level < 1.0e-8 && voice.age > sampleRate) {
@@ -769,6 +811,7 @@ void PianoEngine::prepare(double sampleRate) {
     impl_->sampleRate = sampleRate;
     impl_->highpassCoefficient = 1.0 / (1.0 + 2.0 * 3.141592653589793 * 100.0 / sampleRate);
     impl_->phantomGlide = 1.0 - std::exp(-1.0 / (0.001 * sampleRate));
+    impl_->ringStep = 1.0 / (0.008 * sampleRate);
     impl_->sheenHighpass = 1.0 / (1.0 + 2.0 * 3.141592653589793 * std::min(5000.0, 0.4 * sampleRate) / sampleRate);
     impl_->pedalOmega = 1.0 / 0.006; // peak speed 6 ms in, 90% there by 24 ms
     impl_->pedalThumpLowpass = 1.0 - std::exp(-2.0 * 3.141592653589793 * 400.0 / sampleRate);
@@ -869,7 +912,7 @@ void PianoEngine::setParameter(ParameterId id, double value) {
             value = std::clamp(value, 0.0, 2.0);
             break;
         case ParameterId::micPosition:
-            value = std::clamp(std::round(value), 0.0, 2.0);
+            value = std::clamp(std::round(value), 0.0, 3.0);
             break;
         case ParameterId::stereoWidth:
         case ParameterId::dynamicRange:

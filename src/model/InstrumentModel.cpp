@@ -266,7 +266,9 @@ InstrumentModel::InstrumentModel(double sampleRate) {
             const double own = k <= spectrumPartials ? partialDb[index][static_cast<std::size_t>(k) - 1] : 0.0;
             mode.drive = 4.0 * key.fundamental * std::sin(2.0 * pi * frequency / sampleRate) /
                 (normalization * sampleRate) / (1.0 + frequency / 500.0);
-            mode.output = mode.drive * std::pow(10.0, (band(radiationDb[index], frequency) + own) / 20.0);
+            const double fitted = std::pow(10.0, (band(radiationDb[index], frequency) + own) / 20.0);
+            mode.output = mode.drive * fitted;
+            mode.boost = std::max(0.0, 1.0 - 1.0 / fitted);
             mode.softDb = band(velocityDb[index][0], frequency);
             mode.loudDb = band(velocityDb[index][1], frequency);
             mode.softBrighteningDb = band(brighteningDb[index][0], frequency);
@@ -410,6 +412,14 @@ InstrumentModel::InstrumentModel(double sampleRate) {
                 (std::abs(modes.slowShare) < partnerGain * std::abs(modes.fastShare) ? low : high) = unison.damping;
             }
             unison.loss = (fastRate + slowRate) / 2.0 - unison.damping;
+            // Two coupled strings can't radiate a strong slow mode beside a much faster one: their antisymmetric motion
+            // cancels at the bridge (C4's 3rd partial, fast 2 s and slow 16 s, reaches -18 dB at any beat; the
+            // recording's is -11). A real string also swings along the board, a polarization the hammer barely
+            // excites but which couples weakly and rings on. It carries the shortfall: the slow mode's excitation
+            // raised to the fitted level. It has no strike coupling, so the hammer never reads it.
+            const auto realized = unisonModes(unison.damping, unison.reactance, unison.mistuning);
+            unison.polarization = std::max(1.0, partnerGain * std::abs(realized.fastShare) /
+                                                    std::max(std::abs(realized.slowShare), 1.0e-12));
             if (spread >= 0.5) {
                 unison.reactance = -unison.reactance; // the slow mode sits above instead
             }
@@ -418,6 +428,7 @@ InstrumentModel::InstrumentModel(double sampleRate) {
             mode.baseReleaseSeconds = releaseSeconds(k);
             mode.baseExcitation = primary.baseExcitation;
             mode.output = primary.output;
+            mode.boost = primary.boost;
             mode.drive = primary.drive;
             mode.softDb = primary.softDb;
             mode.loudDb = primary.loudDb;
@@ -474,7 +485,8 @@ void InstrumentModel::setVoicing(const Voicing& voicing) {
                     sampleRate_);
             prompt.excitation = prompt.baseExcitation * std::abs(modes.fastShare);
             prompt.phase = std::arg(modes.fastShare);
-            partner.excitation = partner.baseExcitation * std::abs(modes.slowShare) * voicing.aftersound;
+            partner.excitation = partner.baseExcitation * voicing.aftersound *
+                std::min(std::abs(modes.slowShare) * unison.polarization, std::abs(modes.fastShare));
             partner.phase = std::arg(modes.slowShare);
         }
         key.strikeCompliance = 0.0;
@@ -499,8 +511,8 @@ void InstrumentModel::setMicPosition(MicPosition position) {
     for (std::size_t index = 0; index < keys_.size(); ++index) {
         auto& key = keys_[index];
         const auto& calibration = measuredCalibration[index];
-        // The spaced pair keeps the calibrated pan; the coincident pair and the player's ears
-        // hear the keyboard spread wider, bass left and treble right.
+        // The spaced pair keeps the calibrated pan; the coincident pair, the player's ears and the close pair hear the
+        // keyboard spread wider, bass left and treble right.
         const double width = position == MicPosition::spacedPair ? 0.55 : 0.9;
         const double pan = std::clamp((key.midi - 64.5) / 55.0, -width, width);
         key.leftGain = std::sqrt(0.5 * (1.0 - pan)) * calibration.stereoLeftGain;
@@ -508,30 +520,48 @@ void InstrumentModel::setMicPosition(MicPosition position) {
 
         // Each partial reaches the right channel with its own phase, built from the resonator's
         // current and previous outputs:
-        // - spaced pair: diffuse phase above 100 Hz, matching the reference recordings' ~0 L/R
-        //   correlation while the deep bass stays mono-compatible;
+        // - spaced pair: a phase that spreads from none at 100 Hz to fully diffuse at 1 kHz, so every partial below
+        //   ~550 Hz stays within 90 degrees and can't cancel in mono. Fully diffuse from 100 Hz matched the reference
+        //   recordings' ~0 average correlation, but each partial kept its random phase for good: over the A/B
+        //   project 200 Hz-1 kHz sat anti-phase (-0.2 to -0.4), and a note's fundamental could vanish summed to mono;
         // - coincident: no phase difference, so the image comes from level alone (mono-safe);
         // - player: up to 0.3 ms interaural delay toward the ends of the keyboard, plus diffuse
-        //   soundboard radiation above ~1 kHz.
+        //   soundboard radiation above ~1 kHz;
+        // - close: a pair just over the strings, coherent below 1 kHz and diffuse above 3 kHz, hearing the strings'
+        //   upper partials more directly than the board's bass: +5 dB from 700 Hz rising to 2.5 kHz, -3 dB below
+        //   75 Hz falling from 150. Chosen by reasoning, to be voiced by ear; nothing measured (a presentation
+        //   nearer the commercial models', which sound brighter, leaner and more focused than the recordings).
         for (std::size_t modeIndex = 0; modeIndex < key.modeCount; ++modeIndex) {
             auto& mode = key.modes[modeIndex];
             const double spread = std::fmod(modeIndex * 0.7548776662 + key.midi * 0.5698402910, 1.0) - 0.5;
             double phase = 0.0;
             if (position == MicPosition::spacedPair) {
-                phase = 2.0 * pi * spread * std::min(1.0, mode.frequency / 100.0);
+                phase = 2.0 * pi * spread * std::clamp((mode.frequency - 100.0) / 900.0, 0.0, 1.0);
+            } else if (position == MicPosition::close) {
+                phase = 2.0 * pi * spread * std::clamp((mode.frequency - 1000.0) / 2000.0, 0.0, 1.0);
             } else if (position == MicPosition::player) {
                 phase = 2.0 * pi * mode.frequency * 0.0003 * pan / width +
                     2.0 * pi * spread * std::clamp((mode.frequency - 1000.0) / 2000.0, 0.0, 1.0);
             }
+            // The board is dispersive and radiates each partial from all over it, so partials reach a microphone with
+            // unrelated phases. Without it the strike, which starts every mode together, summed to a click: a note's
+            // first 10 ms peaked 20 dB over its 0.1-0.5 s level, Meta's 8. One phase per partial (its two coupled
+            // modes share it, so they beat as before), the same in both channels and in the bridge's drive of the board,
+            // so the board's share of each partial keeps its phase to the direct one (rotating the direct sound alone
+            // put them at random phases, and the octave spectra 0.7 dB further from the recordings).
+            const double dispersion = 2.0 * pi * (std::fmod(mode.baseFrequency * 4.2360679775, 1.0) - 0.5);
             // A phase shift is a mix of the current and previous outputs.
             const double omega = 2.0 * pi * mode.frequency / sampleRate_;
             const auto rotate = [&](double weight, double shift, double& current, double& previous) {
                 current = weight * (std::cos(shift) + std::sin(shift) * std::cos(omega) / std::sin(omega));
                 previous = -weight * std::sin(shift) / std::sin(omega);
             };
-            rotate(mode.output, mode.phase, mode.outputLeft, mode.outputLeftPrevious);
-            rotate(mode.output, mode.phase + phase, mode.outputRight, mode.outputRightPrevious);
-            rotate(mode.drive, mode.phase, mode.driveCurrent, mode.drivePrevious);
+            const double tilt = position != MicPosition::close ? 1.0
+                : std::pow(10.0, (5.0 * std::clamp(std::log2(mode.frequency / 700.0) / std::log2(2500.0 / 700.0), 0.0, 1.0) -
+                                  3.0 * std::clamp(std::log2(150.0 / mode.frequency), 0.0, 1.0)) / 20.0);
+            rotate(mode.output * tilt, mode.phase + dispersion, mode.outputLeft, mode.outputLeftPrevious);
+            rotate(mode.output * tilt, mode.phase + dispersion + phase, mode.outputRight, mode.outputRightPrevious);
+            rotate(mode.drive, mode.phase + dispersion, mode.driveCurrent, mode.drivePrevious);
         }
     }
 }

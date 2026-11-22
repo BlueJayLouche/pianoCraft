@@ -20,6 +20,7 @@ struct ModeCoefficients {
     double residualA2 = 0.0;
     double excitation = 0.0;
     double output = 0.0; // radiation weight; the channels below add the mode's phase to it
+    double boost = 0.0;  // the share of output the fitted tables added (1 - 1 / their gain; 0 where they cut)
     double outputLeft = 0.0;
     double outputLeftPrevious = 0.0;
     double outputRight = 0.0;
@@ -75,6 +76,9 @@ struct Unison {
     double damping = 0.0;
     double reactance = 0.0;
     double mistuning = 0.0;
+    // How much more the slow mode carries than the coupled pair can (the strings' other polarization; see
+    // InstrumentModel's constructor), at least 1.
+    double polarization = 1.0;
 };
 
 struct KeyModel {
@@ -118,7 +122,7 @@ struct KeyModel {
     std::array<LongitudinalMode, longitudinalLimit> longitudinal{};
 };
 
-enum class MicPosition { spacedPair = 0, coincident = 1, player = 2 };
+enum class MicPosition { spacedPair = 0, coincident = 1, player = 2, close = 3 };
 
 // User voicing on top of the measured model; 1.0 everywhere is the calibrated piano.
 struct Voicing {

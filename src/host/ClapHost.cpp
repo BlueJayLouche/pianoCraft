@@ -60,7 +60,7 @@ constexpr clap_param_info_flags steppedFlags = CLAP_PARAM_IS_AUTOMATABLE | CLAP_
 constexpr clap_param_info_flags perNoteFlags = continuousFlags | CLAP_PARAM_IS_MODULATABLE |
     CLAP_PARAM_IS_MODULATABLE_PER_NOTE_ID | CLAP_PARAM_IS_MODULATABLE_PER_KEY |
     CLAP_PARAM_IS_MODULATABLE_PER_CHANNEL | CLAP_PARAM_IS_MODULATABLE_PER_PORT;
-constexpr std::array<const char*, 3> micPositionNames{"Spaced Pair", "Coincident", "Player"};
+constexpr std::array<const char*, 4> micPositionNames{"Spaced Pair", "Coincident", "Player", "Close"};
 constexpr std::array<const char*, 2> offOnNames{"Off", "On"};
 
 template <class Id>
@@ -118,7 +118,7 @@ struct Piano {
     {pid(ParameterId::stretch), "Stretch", "Tuning", 0.0, 2.0, 1.0, continuousFlags},
     {pid(ParameterId::age), "Age", "Age", 0.0, 1.0, 0.0, continuousFlags},
     {pid(ParameterId::bodyLevel), "Body Level", "Mix", 0.0, 2.0, 1.0, continuousFlags},
-    {pid(ParameterId::micPosition), "Mic Position", "Mix", 0.0, 2.0, 0.0, choiceFlags, micPositionNames.data()},
+    {pid(ParameterId::micPosition), "Mic Position", "Mix", 0.0, 3.0, 0.0, choiceFlags, micPositionNames.data()},
     {pid(ParameterId::stereoWidth), "Stereo Width", "Mix", 0.0, 2.0, 1.0, continuousFlags},
     {pid(ParameterId::outputGain), "Output Gain", "Mix", 0.0, 2.0, 0.7, continuousFlags},
 }};
@@ -137,7 +137,7 @@ struct Piano {
 }};
 
     // The Old House score bounces mono, so its wear stages use Stereo Width 0.
-    static constexpr std::array<Preset, 4> presets{{
+    static constexpr std::array<Preset, 5> presets{{
     {"Calibrated Upright", "calibrated", "The recorded upright as measured, spaced pair, stereo",
      {{{pid(ParameterId::stereoWidth), 1.0}, {pid(ParameterId::age), 0.0}}}},
     {"Whole (Mono)", "whole-mono", "Unworn, mono-safe for a single emitter",
@@ -146,6 +146,9 @@ struct Piano {
      {{{pid(ParameterId::stereoWidth), 0.0}, {pid(ParameterId::age), 0.3}}}},
     {"Most Worn (Mono)", "most-worn-mono", "Age 1, mono-safe for a single emitter",
      {{{pid(ParameterId::stereoWidth), 0.0}, {pid(ParameterId::age), 1.0}}}},
+    {"Close and Bright", "close-bright", "Close microphones, louder, a little more sustain: a starting point to voice by ear",
+     {{{pid(ParameterId::micPosition), 3.0}, {pid(ParameterId::outputGain), 1.4}, {pid(ParameterId::sustainLength), 1.25},
+       {pid(ParameterId::stereoWidth), 1.0}}}},
 }};
 };
 
