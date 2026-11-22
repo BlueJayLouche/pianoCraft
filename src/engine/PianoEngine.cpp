@@ -1,5 +1,7 @@
 #include "engine/PianoEngine.hpp"
 
+#include "engine/ModeBank.hpp"
+
 #include "engine/Soundboard.hpp"
 #include "engine/SympatheticBank.hpp"
 #include "model/InstrumentModel.hpp"
@@ -58,21 +60,33 @@ struct HammerState {
     bool active = false;
 };
 
+// Samples the voice loop runs a ringing string ahead for at once (ModeBank.hpp).
+constexpr std::size_t blockFrames = 64;
+
 struct Voice {
     const KeyModel* key = nullptr;
+    const ModeBank* bank = nullptr; // the key's modes as the loop runs them
     NoteAddress address{};
-    std::array<ModeState, modeLimit> modes{};
+    ModeStates modes{};
     // While the hammer is on (and the board builds its sound), the part of each mode's motion this strike put there:
     // what the hammer meets.
     // A restruck string's ringing is rescaled to the new strike's gain (strike()), up to 100x for a soft
     // strike on a loud note, and read through the new strike's shares; met by the hammer, it threw it hard
     // enough to peak 36 dB over the loud note, and repeated restrikes grew without bound. The hammer now
     // lands as on a still string; the ringing sounds on, untouched by it.
-    std::array<ModeState, modeLimit> struckModes{};
+    ModeStates struckModes{};
     // How far the fitted boosts reach that motion: 0 while the hammer is on, rising to 1 once it has left (see the
     // mode loop). Kept running until then.
     double ringBlend = 1.0;
-    std::array<double, modeLimit> unbuilt{}; // the share of this strike's sound the board has yet to build, per mode
+    alignas(32) std::array<double, modeLimit> unbuilt{}; // the share of this strike's sound the board has yet to build
+    // Once nothing of the strike's own is left to track (the hammer gone, the lifts in, the board built), the string
+    // only rings: render() runs it a block ahead (ringAhead) and processVoice reads these, per sample.
+    bool ringsAlone = false;
+    bool ranAhead = false;
+    std::array<double, blockFrames> aheadLeft{};
+    std::array<double, blockFrames> aheadRight{};
+    std::array<double, blockFrames> aheadDrive{};
+    std::array<double, blockFrames> aheadSlope{};
     std::array<ModeState, longitudinalLimit> longitudinal{};
     HammerState hammer{};
     std::uint64_t age = 0;
@@ -91,8 +105,8 @@ struct Voice {
     // The strike's share of each mode, set by its velocity (tools/fit_piano.py): an excitation filter. It
     // shapes only what the hammer puts in, so a restruck string's ringing keeps its own spectrum and nothing
     // steps. The hammer itself meets the physical string: it reads each mode through the inverse share.
-    std::array<double, modeLimit> weight{};
-    std::array<double, modeLimit> unweight{};
+    alignas(32) std::array<double, modeLimit> weight{};
+    alignas(32) std::array<double, modeLimit> unweight{};
     double strikeOctaves = 0.0; // the strike's velocity, octaves re mf
     std::array<double, 5> knockShelf{1.0, 0.0, 0.0, 0.0, 0.0};
     // The phantom partials' drive is the string's motion squared, so a restrike's rescaled ringing
@@ -132,9 +146,12 @@ struct Voice {
         key = nullptr;
         address = {};
         modes = {};
+        bank = nullptr;
         struckModes = {};
         ringBlend = 1.0;
         unbuilt = {};
+        ringsAlone = false;
+        ranAhead = false;
         longitudinal = {};
         hammer = {};
         age = 0;
@@ -172,6 +189,7 @@ struct Voice {
 
 struct PianoEngine::Impl {
     std::unique_ptr<InstrumentModel> model;
+    std::array<ModeBank, instrumentKeyCount> banks{}; // the model's modes packed for the voice loop
     std::array<Voice, voiceCount> voices{};
     // Damper contact per channel: 1 with the pedal up, 0 with it down.
     std::array<double, 16> damperContact{};
@@ -247,8 +265,9 @@ struct PianoEngine::Impl {
         parameters[parameterIndex(ParameterId::stretch)] = 1.0;
     }
 
-    // ponytail: recomputed on the audio thread at the next render() after a change, at most once
-    // per block: ~65 us, worst ~200 us at 48 kHz. Move off-thread if fast voicing automation glitches.
+    // ponytail: recomputed on the audio thread at the next render() after a change, at most once per block: ~450 us
+    // at 48 kHz (M5 Pro; ~400 before the mode banks), most of it the unisons' normal modes and the poles. Move it
+    // off-thread, or spread the keys over several blocks, if fast voicing automation glitches.
     void applyVoicing() {
         const auto value = [this](ParameterId id) { return parameters[parameterIndex(id)]; };
         Voicing voicing;
@@ -260,6 +279,7 @@ struct PianoEngine::Impl {
         voicing.stretch = value(ParameterId::stretch);
         voicing.age = value(ParameterId::age);
         model->setVoicing(voicing);
+        packBanks();
         sympathetic.update(sampleRate, *model);
         voicingDirty = false;
     }
@@ -271,7 +291,14 @@ struct PianoEngine::Impl {
         // percent of a 64-sample block, only when the enum changes. Precompute the three layouts if
         // fast mic automation ever glitches.
         model->setMicPosition(micPosition);
+        packBanks();
         soundboard.setMicPosition(micPosition);
+    }
+
+    void packBanks() {
+        for (std::size_t index = 0; index < banks.size(); ++index) {
+            banks[index].pack(model->key(static_cast<int>(index) + 21));
+        }
     }
 
     void resetVoices() {
@@ -322,7 +349,13 @@ struct PianoEngine::Impl {
         return contact * contact;
     }
 
-    std::pair<double, double> movePedals() {
+    struct PedalStep {
+        double knock = 0.0; // for the board
+        double brush = 0.0; // for the strings
+        bool moved = false; // the dampers' contact changed: who rings sympathetically may have
+    };
+
+    PedalStep movePedals() {
         double speed = 0.0;
         bool moved = false;
         for (std::size_t channel = 0; channel < pedalTarget.size(); ++channel) {
@@ -342,13 +375,10 @@ struct PianoEngine::Impl {
             moved = moved || contact != damperContact[channel];
             damperContact[channel] = contact;
         }
-        if (moved) {
-            updateUndamped();
-        }
         const double level = parameters[parameterIndex(ParameterId::pedalNoise)] *
             (1.0 + parameters[parameterIndex(ParameterId::age)]); // worn trapwork rattles more
         if (speed == 0.0 && pedalThump == 0.0 && releaseSlow == 0.0 && releaseThump == 0.0) {
-            return {0.0, 0.0};
+            return {0.0, 0.0, moved};
         }
         // A full stroke's peak speed is omega / e: that stamp is 1.
         const double drive = level * speed * 2.718281828459045 / pedalOmega;
@@ -367,7 +397,21 @@ struct PianoEngine::Impl {
         if (releaseSlow < 1.0e-12 && std::abs(releaseThump) < 1.0e-20) {
             releaseFast = releaseSlow = releaseThump = 0.0;
         }
-        return {pedalThump * pedalKnockLevel + releaseThump * releaseKnockLevel, drive * noise * pedalBrushLevel};
+        return {pedalThump * pedalKnockLevel + releaseThump * releaseKnockLevel, drive * noise * pedalBrushLevel, moved};
+    }
+
+    // The pedals for a block, ahead of the voices, which they don't depend on: per sample, the dampers' contact the
+    // voices meet there (the previous sample's), and that sample's step. render() replays them in order.
+    std::array<std::array<double, 16>, blockFrames> pedalContact{};
+    std::array<PedalStep, blockFrames> pedalSteps{};
+    std::array<double, 16> pedalContactAfter{};
+
+    void runPedals(std::size_t frames) {
+        for (std::size_t frame = 0; frame < frames; ++frame) {
+            pedalContact[frame] = damperContact;
+            pedalSteps[frame] = movePedals();
+        }
+        pedalContactAfter = damperContact;
     }
     // A key let go: its damper landing (or, the pedal holding it off, the key and jack alone at half).
     void releaseKey(std::int16_t channel, bool hasDamper) {
@@ -505,6 +549,7 @@ struct PianoEngine::Impl {
         constexpr double referenceVelocity = 80.0 / 127.0;
         const bool ringing = voice.key != nullptr; // restruck, not a fresh voice
         voice.key = &model->key(address.key);
+        voice.bank = &banks[static_cast<std::size_t>(address.key - 21)];
         voice.address = address;
         voice.active = true;
         voice.keyDown = true;
@@ -533,9 +578,9 @@ struct PianoEngine::Impl {
         // Stepped to the new gain, the ringing clicked: 1000x its sharpest bend. A fresh voice has no
         // ringing to carry: taken from clear()'s gain of 1, it scaled every note's phantoms by its own gain.
         const double carry = ringing ? previousGain / voice.velocityGain : 1.0;
-        for (auto& mode : voice.modes) {
-            mode.y1 *= carry;
-            mode.y2 *= carry;
+        for (std::size_t index = 0; index < modeLimit; ++index) {
+            voice.modes.y1[index] *= carry;
+            voice.modes.y2[index] *= carry;
         }
         for (auto& mode : voice.longitudinal) {
             mode.y1 *= carry;
@@ -561,6 +606,7 @@ struct PianoEngine::Impl {
         voice.struckModes = {};
         voice.ringBlend = 0.0;
         voice.unbuilt.fill(1.0);
+        voice.ringsAlone = false;
         voice.hammer.position = voice.displacement - 0.004;
         voice.hammer.velocity = hammerSpeed(velocity);
         voice.hammer.mass = voice.key->hammerMass;
@@ -607,14 +653,16 @@ struct PianoEngine::Impl {
         const double p = key.feltExponent;
         const double stiffness = key.feltStiffness * std::pow(hardness * key.wearHardness, p);
         const double memory = key.feltRelaxation * sampleRate;
+        // u^p once per step: the slope's u^(p-1) is u^p / u, and the felt's load is the last step's u^p.
+        double power = 0.0;
         const auto force = [&](double u) {
-            return u > 0.0 ? std::max(0.0, stiffness * ((1.0 + memory) * std::pow(u, p) - memory * voice.hammer.load))
-                           : 0.0;
+            power = u > 0.0 ? std::pow(u, p) : 0.0;
+            return u > 0.0 ? std::max(0.0, stiffness * ((1.0 + memory) * power - memory * voice.hammer.load)) : 0.0;
         };
         double u = gap;
         double f = force(u);
         for (int iteration = 0; iteration < 12 && f > 0.0; ++iteration) {
-            const double slope = 1.0 + compliance * stiffness * (1.0 + memory) * p * std::pow(u, p - 1.0);
+            const double slope = 1.0 + compliance * stiffness * (1.0 + memory) * p * power / u;
             const double step = (u + compliance * f - gap) / slope;
             u -= step;
             f = force(u);
@@ -622,90 +670,163 @@ struct PianoEngine::Impl {
                 break;
             }
         }
-        voice.hammer.load = u > 0.0 ? std::pow(u, p) : 0.0;
+        voice.hammer.load = power;
         return f;
     }
 
-    VoiceSample processVoice(Voice& voice) {
+    // Dampers rest on a string once its key is up, as far as the pedal lets them, and lift off
+    // again when the pedal goes down, catching what is still ringing. Fully on or off in 25 ms.
+    void moveDampers(Voice& voice, double contact) const {
         const auto& key = *voice.key;
-        const std::size_t hardnessIndex = parameterIndex(ParameterId::hammerHardness);
-        const double hardness = std::clamp(
-            parameters[hardnessIndex] + modulation[hardnessIndex] + voice.hardnessModulation + voice.brightness,
-            0.25, 2.0);
-        double force = 0.0;
-        if (voice.hammer.active) {
-            force = feltForce(voice, hardness);
-            const double compression = voice.hammer.position - voice.displacement;
-            voice.hammer.velocity -= force / voice.hammer.mass / sampleRate;
-            voice.hammer.position += voice.hammer.velocity / sampleRate;
-            const double maximumContactTime = 0.06;
-            if (voice.age > static_cast<std::uint64_t>(maximumContactTime * sampleRate) ||
-                (voice.hammer.velocity < 0.0 && compression < -0.001)) {
-                voice.hammer.active = false;
-            }
-        }
-
-        // Dampers rest on a string once its key is up, as far as the pedal lets them, and lift off
-        // again when the pedal goes down, catching what is still ringing. Fully on or off in 25 ms.
-        const double damping = voice.keyDown || !key.hasDamper ? 0.0 : damperContact[voice.address.channel];
+        const double damping = voice.keyDown || !key.hasDamper ? 0.0 : contact;
         const double step = 40.0 / sampleRate;
         voice.releaseBlend += std::clamp(damping - voice.releaseBlend, -step, step);
         // Seated (over half on) for the key's delay, the dampers leave the slow residual, gliding in over 25 ms.
         voice.damped = voice.releaseBlend > 0.5 ? voice.damped + 1 : 0;
         const double residualTarget = voice.damped > key.residualDelay * sampleRate ? 1.0 : 0.0;
         voice.residualBlend += std::clamp(residualTarget - voice.residualBlend, -step, step);
+    }
+
+    // One sample of every mode, as ringBlock runs them, plus what a strike's own motion needs: the fitted radiation and
+    // per-partial tables lift weak high partials up to 40 dB, where the felt excites them too little. While the hammer
+    // is on the string those modes follow its push, and lifted with them that push was a burst: a note's first 4 ms
+    // stood 16-25 dB over its body (G4, C6), Meta's 5-9, rising from silence in under 1 ms. This strike's own motion
+    // radiates without the lifts while the hammer is on, and they come in over 8 ms once it has left, as Meta's attacks
+    // build (2 and 4 ms left the peak 1.5-2 dB higher). The same motion rises as the board builds it
+    // (ModeCoefficients::build). A restruck string's ringing keeps both throughout. Sets the voice's displacement under
+    // the hammer, and whether it now only rings.
+    void stepModes(Voice& voice, double force, double& bridge, double& bridgeRight, double& drive, double& slope) {
+        // Branches hoisted out of the loop: while the hammer is on, every mode tracks its strike.
+        const bool blend = voice.releaseBlend > 0.0;
+        if (voice.hammer.active) {
+            blend ? stepModes<true, true>(voice, force, bridge, bridgeRight, drive, slope)
+                  : stepModes<false, true>(voice, force, bridge, bridgeRight, drive, slope);
+        } else {
+            blend ? stepModes<true, false>(voice, force, bridge, bridgeRight, drive, slope)
+                  : stepModes<false, false>(voice, force, bridge, bridgeRight, drive, slope);
+        }
+    }
+
+    template <bool Blend, bool Struck>
+    void stepModes(Voice& voice, double force, double& bridge, double& bridgeRight, double& drive, double& slope) {
+        const auto& bank = *voice.bank;
+        const double unlifted = 1.0 - voice.ringBlend;
+        const double release = voice.releaseBlend;
+        const double residual = voice.residualBlend;
+        LaneSums sum;
+        double displacement[modeLanes] = {};
+        double building = 0.0;
+        for (std::size_t chunk = 0; chunk < bank.chunkCount; ++chunk) {
+            const ModeChunkView coefficients(bank, chunk);
+            forEachLane([&](std::size_t lane) {
+                const std::size_t index = chunk * modeLanes + lane;
+                double a1 = 0.0;
+                double a2 = 0.0;
+                const double input = force * bank.excitation[index] * voice.weight[index];
+                ringMode<Blend>(coefficients, lane, input, release, residual, voice.modes.y1[index],
+                                voice.modes.y2[index], a1, a2, sum.left[lane], sum.right[lane], sum.drive[lane],
+                                sum.slope[lane]);
+                if (Struck || unlifted > 0.0 || voice.unbuilt[index] > 1.0e-4) {
+                    const double next = strikeMode(coefficients, lane, input, a1, a2, bank.build[index],
+                                                   bank.boost[index], unlifted, voice.unbuilt[index],
+                                                   voice.struckModes.y1[index], voice.struckModes.y2[index],
+                                                   sum.left[lane], sum.right[lane]);
+                    building = std::max(building, voice.unbuilt[index]);
+                    if (Struck) {
+                        displacement[lane] += bank.strike[index] * voice.unweight[index] * next;
+                    }
+                }
+            });
+        }
+        bridge = LaneSums::reduce(sum.left);
+        bridgeRight = LaneSums::reduce(sum.right);
+        drive = LaneSums::reduce(sum.drive);
+        slope = LaneSums::reduce(sum.slope);
+        voice.displacement = Struck ? LaneSums::reduce(displacement) : 0.0;
+        voice.ringsAlone = !Struck && voice.ringBlend >= 1.0 && building <= 1.0e-4;
+    }
+
+    // A string the hammer has left runs its modes for the whole block up front (and its strike's own motion while that
+    // still builds), its dampers and lifts moving per sample as they would in processVoice, which then reads the sums:
+    // the same arithmetic in the same order, so nothing changes but the speed (block-wise its coefficients stay in
+    // registers, and the lanes run side by side). Only the hammer's contact, where its force meets every mode each
+    // sample, runs per sample.
+    std::array<LaneSums, blockFrames> laneSums{};
+
+    void ringAhead(Voice& voice, std::size_t frames) {
+        std::array<double, blockFrames> release{};
+        std::array<double, blockFrames> residual{};
+        std::array<double, blockFrames> unlifted{};
+        bool blend = false;
+        for (std::size_t frame = 0; frame < frames; ++frame) {
+            moveDampers(voice, pedalContact[frame][static_cast<std::size_t>(voice.address.channel)]);
+            if (voice.ringBlend < 1.0) {
+                voice.ringBlend = std::min(1.0, voice.ringBlend + ringStep);
+            }
+            release[frame] = voice.releaseBlend;
+            residual[frame] = voice.residualBlend;
+            unlifted[frame] = 1.0 - voice.ringBlend;
+            blend = blend || voice.releaseBlend > 0.0;
+            laneSums[frame] = {};
+        }
+        const auto& bank = *voice.bank;
+        if (voice.ringsAlone) {
+            if (blend) {
+                ringBlock<true>(bank, voice.modes, frames, release.data(), residual.data(), laneSums.data());
+            } else {
+                ringBlock<false>(bank, voice.modes, frames, release.data(), residual.data(), laneSums.data());
+            }
+        } else {
+            const double building = blend
+                ? buildBlock<true>(bank, voice.modes, voice.struckModes, voice.unbuilt.data(), frames, release.data(),
+                                   residual.data(), unlifted.data(), laneSums.data())
+                : buildBlock<false>(bank, voice.modes, voice.struckModes, voice.unbuilt.data(), frames, release.data(),
+                                    residual.data(), unlifted.data(), laneSums.data());
+            voice.ringsAlone = voice.ringBlend >= 1.0 && building <= 1.0e-4;
+        }
+        for (std::size_t frame = 0; frame < frames; ++frame) {
+            voice.aheadLeft[frame] = LaneSums::reduce(laneSums[frame].left);
+            voice.aheadRight[frame] = LaneSums::reduce(laneSums[frame].right);
+            voice.aheadDrive[frame] = LaneSums::reduce(laneSums[frame].drive);
+            voice.aheadSlope[frame] = LaneSums::reduce(laneSums[frame].slope);
+        }
+        voice.ranAhead = true;
+    }
+
+    VoiceSample processVoice(Voice& voice, std::size_t frame) {
+        const auto& key = *voice.key;
+        double force = 0.0;
         double bridge = 0.0;
         double bridgeRight = 0.0;
         double drive = 0.0;
-        double displacement = 0.0;
-        const bool struck = voice.hammer.active;
-        // The fitted radiation and per-partial tables lift weak high partials up to 40 dB, where the felt excites them
-        // too little. While the hammer is on the string those modes follow its push, and lifted with them that push
-        // was a burst: a note's first 4 ms stood 16-25 dB over its body (G4, C6), Meta's 5-9, rising from silence in
-        // under 1 ms. This strike's own motion radiates without the lifts while the hammer is on, and they come in
-        // over 8 ms once it has left, as Meta's attacks build (2 and 4 ms left the peak 1.5-2 dB higher). The same motion
-        // rises as the board builds it (ModeCoefficients::build). A restruck string's ringing keeps both throughout.
-        if (!struck && voice.ringBlend < 1.0) {
-            voice.ringBlend = std::min(1.0, voice.ringBlend + ringStep);
-        }
-        const double unlifted = 1.0 - voice.ringBlend;
-        for (std::size_t index = 0; index < key.modeCount; ++index) {
-            const auto& coefficients = key.modes[index];
-            auto& state = voice.modes[index];
-            double a1 = coefficients.sustainA1;
-            double a2 = coefficients.sustainA2;
-            if (voice.releaseBlend > 0.0) {
-                double releaseA1 = coefficients.releaseA1;
-                double releaseA2 = coefficients.releaseA2;
-                if (voice.residualBlend > 0.0) {
-                    releaseA1 += (coefficients.residualA1 - releaseA1) * voice.residualBlend;
-                    releaseA2 += (coefficients.residualA2 - releaseA2) * voice.residualBlend;
+        double slope = 0.0;
+        if (voice.ranAhead) {
+            bridge = voice.aheadLeft[frame];
+            bridgeRight = voice.aheadRight[frame];
+            drive = voice.aheadDrive[frame];
+            slope = voice.aheadSlope[frame];
+        } else {
+            const std::size_t hardnessIndex = parameterIndex(ParameterId::hammerHardness);
+            const double hardness = std::clamp(
+                parameters[hardnessIndex] + modulation[hardnessIndex] + voice.hardnessModulation + voice.brightness,
+                0.25, 2.0);
+            if (voice.hammer.active) {
+                force = feltForce(voice, hardness);
+                const double compression = voice.hammer.position - voice.displacement;
+                voice.hammer.velocity -= force / voice.hammer.mass / sampleRate;
+                voice.hammer.position += voice.hammer.velocity / sampleRate;
+                const double maximumContactTime = 0.06;
+                if (voice.age > static_cast<std::uint64_t>(maximumContactTime * sampleRate) ||
+                    (voice.hammer.velocity < 0.0 && compression < -0.001)) {
+                    voice.hammer.active = false;
                 }
-                a1 += (releaseA1 - a1) * voice.releaseBlend;
-                a2 += (releaseA2 - a2) * voice.releaseBlend;
             }
-            const double input = force * coefficients.excitation * voice.weight[index];
-            const double output = input + a1 * state.y1 - a2 * state.y2;
-            state.y2 = state.y1;
-            state.y1 = std::abs(output) < 1.0e-30 ? 0.0 : output;
-            bridge += state.y1 * coefficients.outputLeft + state.y2 * coefficients.outputLeftPrevious;
-            drive += state.y1 * coefficients.driveCurrent + state.y2 * coefficients.drivePrevious;
-            bridgeRight += state.y1 * coefficients.outputRight + state.y2 * coefficients.outputRightPrevious;
-            if (struck || unlifted > 0.0 || voice.unbuilt[index] > 1.0e-4) {
-                voice.unbuilt[index] *= coefficients.build;
-                auto& own = voice.struckModes[index];
-                const double moved = input + a1 * own.y1 - a2 * own.y2;
-                own.y2 = own.y1;
-                own.y1 = std::abs(moved) < 1.0e-30 ? 0.0 : moved;
-                if (struck) {
-                    displacement += coefficients.strike * voice.unweight[index] * (a1 * own.y1 - a2 * own.y2);
-                }
-                const double cut = 1.0 - (1.0 - coefficients.boost * unlifted) * (1.0 - voice.unbuilt[index]);
-                bridge -= cut * (own.y1 * coefficients.outputLeft + own.y2 * coefficients.outputLeftPrevious);
-                bridgeRight -= cut * (own.y1 * coefficients.outputRight + own.y2 * coefficients.outputRightPrevious);
+            moveDampers(voice, damperContact[static_cast<std::size_t>(voice.address.channel)]);
+            if (!voice.hammer.active && voice.ringBlend < 1.0) {
+                voice.ringBlend = std::min(1.0, voice.ringBlend + ringStep);
             }
+            stepModes(voice, force, bridge, bridgeRight, drive, slope);
         }
-        voice.displacement = displacement;
         ++voice.age;
 
         // Phantom partials: the squared string slope at the bridge drives the longitudinal modes, whose force on the
@@ -714,10 +835,6 @@ struct PianoEngine::Impl {
         // spread by inharmonicity: A#0-A#1's energy between their partials (0.4-4 kHz, 0.03-0.33 s) sat at -31 / -30 dB
         // re the partials at velocity 40 / 120, Meta's -22 / -13; now -23 / -14, the 150-700 Hz phantoms +3.4 dB (were +0.1).
         if (key.longitudinalCount > 0) {
-            double slope = 0.0;
-            for (std::size_t index = 0; index < key.primaryModeCount; ++index) {
-                slope += voice.modes[index].y1 * key.modes[index].slope;
-            }
             voice.phantomScale += phantomGlide * (voice.phantomTarget - voice.phantomScale);
             const double excitation = key.longitudinalDrive * voice.phantomScale * slope * slope;
             double longitudinalForce = 0.0;
@@ -976,73 +1093,94 @@ void PianoEngine::render(float* left, float* right, std::uint32_t frameCount) {
     const double sympatheticLevel = impl_->parameters[parameterIndex(ParameterId::sympatheticLevel)];
     const double bodyLevel = impl_->parameters[parameterIndex(ParameterId::bodyLevel)];
     const double targetWidth = impl_->parameters[parameterIndex(ParameterId::stereoWidth)];
-    for (std::uint32_t frame = 0; frame < frameCount; ++frame) {
-        impl_->currentFrame = frame;
-        std::array<double, 3> regionLeft{};
-        std::array<double, 3> regionRight{};
-        std::array<double, 3> regionCentre{};
-        std::array<double, 3> regionMono{};
-        std::array<double, 3> regionSympathetic{};
-        std::array<double, 3> regionKnock{};
-        bool sounding = false;
+    // In blocks: the pedals and every string the hammer has left run a block ahead (ringAhead), the rest per sample.
+    // Everything is computed per sample as it would be one sample at a time, so the host's block size can't matter.
+    for (std::uint32_t start = 0; start < frameCount; start += static_cast<std::uint32_t>(blockFrames)) {
+        const std::size_t frames = std::min<std::size_t>(blockFrames, frameCount - start);
+        impl_->runPedals(frames);
         for (auto& voice : impl_->voices) {
-            if (!voice.active || voice.key == nullptr) {
-                continue;
+            voice.ranAhead = false;
+            if (voice.active && voice.key != nullptr && !voice.hammer.active) {
+                impl_->ringAhead(voice, frames);
             }
-            sounding = true;
-            const std::size_t region = voice.address.key < 48 ? 0 : (voice.address.key < 72 ? 1 : 2);
-            const auto sample = impl_->processVoice(voice);
-            const double sampleLeft = sample.left * voice.key->leftGain;
-            const double sampleRight = sample.right * voice.key->rightGain;
-            regionLeft[region] += sampleLeft;
-            regionRight[region] += sampleRight;
-            regionCentre[region] += sample.centre * 0.5 * (voice.key->leftGain + voice.key->rightGain);
-            // Sympathetic strings hear the bridge, not the per-channel radiation phase.
-            const double bridgeSample = 0.5 * sample.bridge * (voice.key->leftGain + voice.key->rightGain);
-            regionMono[region] += bridgeSample;
-            regionSympathetic[region] += bridgeSample * voice.key->sympatheticDrive;
-            regionKnock[region] += sample.knock;
         }
-        // The trapwork and damper rail span the case: their noise reaches every region alike.
-        const auto [pedalKnock, pedalBrush] = impl_->movePedals();
-        for (auto& drive : regionSympathetic) {
-            drive += pedalBrush;
+        for (std::size_t offset = 0; offset < frames; ++offset) {
+            const std::uint32_t frame = start + static_cast<std::uint32_t>(offset);
+            impl_->currentFrame = frame;
+            impl_->damperContact = impl_->pedalContact[offset];
+            std::array<double, 3> regionLeft{};
+            std::array<double, 3> regionRight{};
+            std::array<double, 3> regionCentre{};
+            std::array<double, 3> regionMono{};
+            std::array<double, 3> regionSympathetic{};
+            std::array<double, 3> regionKnock{};
+            bool sounding = false;
+            for (auto& voice : impl_->voices) {
+                if (!voice.active || voice.key == nullptr) {
+                    continue;
+                }
+                sounding = true;
+                const std::size_t region = voice.address.key < 48 ? 0 : (voice.address.key < 72 ? 1 : 2);
+                const auto sample = impl_->processVoice(voice, offset);
+                const double sampleLeft = sample.left * voice.key->leftGain;
+                const double sampleRight = sample.right * voice.key->rightGain;
+                regionLeft[region] += sampleLeft;
+                regionRight[region] += sampleRight;
+                regionCentre[region] += sample.centre * 0.5 * (voice.key->leftGain + voice.key->rightGain);
+                // Sympathetic strings hear the bridge, not the per-channel radiation phase.
+                const double bridgeSample = 0.5 * sample.bridge * (voice.key->leftGain + voice.key->rightGain);
+                regionMono[region] += bridgeSample;
+                regionSympathetic[region] += bridgeSample * voice.key->sympatheticDrive;
+                regionKnock[region] += sample.knock;
+            }
+            // The pedals' step this sample (run ahead in runPedals): the dampers' new contact, who now rings
+            // sympathetically, and the noise. The trapwork and damper rail span the case: it reaches every region alike.
+            impl_->damperContact = offset + 1 < frames ? impl_->pedalContact[offset + 1] : impl_->pedalContactAfter;
+            const auto& pedalStep = impl_->pedalSteps[offset];
+            if (pedalStep.moved) {
+                impl_->updateUndamped();
+            }
+            const double pedalKnock = pedalStep.knock;
+            const double pedalBrush = pedalStep.brush;
+            for (auto& drive : regionSympathetic) {
+                drive += pedalBrush;
+            }
+            const auto resonance = impl_->sympathetic.process(regionSympathetic, impl_->undamped, sympatheticLevel);
+            std::array<double, 3> bridge{};
+            for (std::size_t region = 0; region < 3; ++region) {
+                regionLeft[region] += resonance[region] * 0.707;
+                regionRight[region] += resonance[region] * 0.707;
+                regionCentre[region] += resonance[region] * 0.707;
+                bridge[region] = regionMono[region] + resonance[region] + regionKnock[region] + pedalKnock;
+            }
+            double mixedLeft = 0.0;
+            double mixedRight = 0.0;
+            double mixedCentre = 0.0;
+            impl_->soundboard.process(regionLeft, regionRight, regionCentre, bridge, bodyLevel, mixedLeft, mixedRight,
+                                      mixedCentre);
+            // Gain and width glide while notes sound and settle at once between them, so a bounce whose
+            // host sends them at the start doesn't open with a glide. Per sample, so block size can't matter.
+            impl_->smoothedGain += sounding ? 0.0002 * (targetGain - impl_->smoothedGain) : targetGain - impl_->smoothedGain;
+            impl_->smoothedWidth += sounding ? 0.0002 * (targetWidth - impl_->smoothedWidth) : targetWidth - impl_->smoothedWidth;
+            // Below 1, Stereo Width crossfades from one coherent microphone (0: a true mono that sums
+            // without comb filtering at every Mic Position) to the pair; above 1 it widens mid/side.
+            const double width = impl_->smoothedWidth;
+            double wideLeft = 0.0;
+            double wideRight = 0.0;
+            if (width < 1.0) {
+                wideLeft = mixedCentre + width * (mixedLeft - mixedCentre);
+                wideRight = mixedCentre + width * (mixedRight - mixedCentre);
+            } else {
+                const double mid = 0.5 * (mixedLeft + mixedRight);
+                const double side = 0.5 * (mixedLeft - mixedRight) * width;
+                wideLeft = mid + side;
+                wideRight = mid - side;
+            }
+            const double outputLeft = impl_->highpass(wideLeft, 0) * impl_->smoothedGain;
+            const double outputRight = impl_->highpass(wideRight, 1) * impl_->smoothedGain;
+            left[frame] = std::abs(outputLeft) < 1.0e-20 ? 0.0F : static_cast<float>(outputLeft);
+            right[frame] = std::abs(outputRight) < 1.0e-20 ? 0.0F : static_cast<float>(outputRight);
         }
-        const auto resonance = impl_->sympathetic.process(regionSympathetic, impl_->undamped, sympatheticLevel);
-        std::array<double, 3> bridge{};
-        for (std::size_t region = 0; region < 3; ++region) {
-            regionLeft[region] += resonance[region] * 0.707;
-            regionRight[region] += resonance[region] * 0.707;
-            regionCentre[region] += resonance[region] * 0.707;
-            bridge[region] = regionMono[region] + resonance[region] + regionKnock[region] + pedalKnock;
-        }
-        double mixedLeft = 0.0;
-        double mixedRight = 0.0;
-        double mixedCentre = 0.0;
-        impl_->soundboard.process(regionLeft, regionRight, regionCentre, bridge, bodyLevel, mixedLeft, mixedRight,
-                                  mixedCentre);
-        // Gain and width glide while notes sound and settle at once between them, so a bounce whose
-        // host sends them at the start doesn't open with a glide. Per sample, so block size can't matter.
-        impl_->smoothedGain += sounding ? 0.0002 * (targetGain - impl_->smoothedGain) : targetGain - impl_->smoothedGain;
-        impl_->smoothedWidth += sounding ? 0.0002 * (targetWidth - impl_->smoothedWidth) : targetWidth - impl_->smoothedWidth;
-        // Below 1, Stereo Width crossfades from one coherent microphone (0: a true mono that sums
-        // without comb filtering at every Mic Position) to the pair; above 1 it widens mid/side.
-        const double width = impl_->smoothedWidth;
-        double wideLeft = 0.0;
-        double wideRight = 0.0;
-        if (width < 1.0) {
-            wideLeft = mixedCentre + width * (mixedLeft - mixedCentre);
-            wideRight = mixedCentre + width * (mixedRight - mixedCentre);
-        } else {
-            const double mid = 0.5 * (mixedLeft + mixedRight);
-            const double side = 0.5 * (mixedLeft - mixedRight) * width;
-            wideLeft = mid + side;
-            wideRight = mid - side;
-        }
-        const double outputLeft = impl_->highpass(wideLeft, 0) * impl_->smoothedGain;
-        const double outputRight = impl_->highpass(wideRight, 1) * impl_->smoothedGain;
-        left[frame] = std::abs(outputLeft) < 1.0e-20 ? 0.0F : static_cast<float>(outputLeft);
-        right[frame] = std::abs(outputRight) < 1.0e-20 ? 0.0F : static_cast<float>(outputRight);
     }
     impl_->currentFrame = 0;
 }
