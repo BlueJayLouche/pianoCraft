@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(PianoCraft VERSION 0.1.1 LANGUAGES CXX)
+project(PianoCraft VERSION 0.2.0 LANGUAGES CXX)
 if(APPLE)
     enable_language(OBJCXX)
 endif()
@@ -67,8 +67,8 @@ if(APPLE)
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/resources/Info.plist"
         MACOSX_BUNDLE_BUNDLE_NAME "PianoCraft"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.pianocraft.upright"
-        MACOSX_BUNDLE_BUNDLE_VERSION "0.1.1"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "0.1.1"
+        MACOSX_BUNDLE_BUNDLE_VERSION "0.2.0"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "0.2.0"
     )
     set(PIANOCRAFT_PLUGIN_PATH $<TARGET_BUNDLE_DIR:pianocraft>)
 else()
