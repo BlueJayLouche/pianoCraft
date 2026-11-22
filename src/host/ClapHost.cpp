@@ -182,11 +182,12 @@ struct Harp {
     static constexpr const char* name = "PianoCraft Harp";
     static constexpr const char* description = "Original concert harp instrument";
     static constexpr const char* section = "Harp";
-    static constexpr std::array<ParameterSpec, 11> parameters{{
-        {pid(HarpParameterId::pluckPosition), "Pluck Position", "Pluck", 0.03, 0.5, 0.35, perNoteFlags},
+    static constexpr std::array<ParameterSpec, 12> parameters{{
+        {pid(HarpParameterId::pluckPosition), "Pluck Position", "Pluck", 0.03, 0.5, 0.425, perNoteFlags},
         {pid(HarpParameterId::presDeLaTable), "Pres de la Table", "Pluck", 0.0, 1.0, 0.0, continuousFlags},
         {pid(HarpParameterId::harmonics), "Harmonics", "Pluck", 0.0, 1.0, 0.0, choiceFlags, offOnNames.data()},
         {pid(HarpParameterId::brightness), "Brightness", "Pluck", 0.25, 2.0, 1.0, perNoteFlags},
+        {pid(HarpParameterId::pluckNoise), "Pluck Noise", "Pluck", 0.0, 2.0, 0.06, continuousFlags},
         {pid(HarpParameterId::damping), "Note-Off Damping", "Strings", 0.0, 1.0, 0.0, continuousFlags},
         {pid(HarpParameterId::sustainLength), "Sustain Length", "Strings", 0.25, 4.0, 1.0, continuousFlags},
         {pid(HarpParameterId::sympatheticLevel), "Sympathetic Level", "Strings", 0.0, 2.0, 1.0, continuousFlags},
@@ -201,7 +202,7 @@ struct Harp {
                   pid(HarpParameterId::damping), pid(HarpParameterId::sustainLength),
                   pid(HarpParameterId::stereoWidth), pid(HarpParameterId::outputGain)}},
         {"Strings", {pid(HarpParameterId::sympatheticLevel), pid(HarpParameterId::bodyLevel),
-                     pid(HarpParameterId::masterTune), CLAP_INVALID_ID, CLAP_INVALID_ID, CLAP_INVALID_ID,
+                     pid(HarpParameterId::masterTune), pid(HarpParameterId::pluckNoise), CLAP_INVALID_ID, CLAP_INVALID_ID,
                      CLAP_INVALID_ID, CLAP_INVALID_ID}},
     }};
     static constexpr std::array<Preset, 4> presets{{

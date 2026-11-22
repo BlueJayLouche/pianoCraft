@@ -1,4 +1,5 @@
 #include "engine/HarpEngine.hpp"
+#include "engine/HarpCalibration.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -54,20 +55,49 @@ std::pair<double, double> partial(int stringKey, int n, double sustain) {
     return {frequency, t60};
 }
 
-// How well the board radiates a partial: weak below ~120 Hz, gently falling above 6 kHz.
+// What the box, board and microphones make of each frequency on top of the engine's own soundbox, and how a pluck's
+// partials fall in partial number: fitted to VCSL's concert harp (HarpCalibration.hpp, tools/fit_harp.py).
 double radiation(double frequency) {
-    return (frequency / 120.0) / std::sqrt(1.0 + std::pow(frequency / 120.0, 2.0)) / std::sqrt(1.0 + std::pow(frequency / 6000.0, 2.0));
+    const double position = std::clamp(2.0 * std::log2(frequency / 30.0), 0.0, static_cast<double>(harpRadiationDb.size() - 1));
+    const auto below = std::min(static_cast<std::size_t>(position), harpRadiationDb.size() - 2);
+    return std::pow(10.0, (harpRadiationDb[below] + (position - below) * (harpRadiationDb[below + 1] - harpRadiationDb[below])) / 20.0);
 }
+
+// The fingertip's corner at mf with Brightness 1: velocity and Brightness tilt the fitted spectrum about it.
+constexpr double mfCorner = 3000.0 * (0.55 + 0.65 * 0.55);
 
 // Sympathetic coupling: a string partial in tune with a partial in the board's motion settles at
 // this share of it.
 constexpr double sympathy = 0.2;
 
+// The string leaving the fingertip: the output rises as 1 - (1 - t / 3 tau)^3 (1 - exp(-t / tau)'s start, reaching 1
+// smoothly at 3 tau), tau 8 ms at C2, 3.5 at C4, 2.2 at C6. Selected against VCSL's harp (tools/fit_harp.py score, each
+// take's first 50 ms re its 50-150 ms): rms 5.8 dB in the middle and 6.3 in the treble (7.0 and 6.4 rising at once);
+// the bass's 8.6 is unmoved, its recordings building over 50 ms as no rise of the whole does.
+double onsetSeconds(int stringKey) {
+    return 0.002 + 0.0015 * std::exp2(-(stringKey - 60) / 12.0);
+}
+
+// Each string's level, dB re C4, in octaves from it: E1 15 dB under C4, C5-C6 a dB or two over, G7 7 under, as the
+// board radiates a low string's fundamental poorly. Fitted to VCSL's harp (tools/fit_harp.py score: each take's
+// 50-150 ms level, mf and f each about its mean, on even keys): the odd keys' spread 6.5 dB at one level, 4.4 with it.
+double stringLevelDb(int stringKey) {
+    const double octaves = (stringKey - 60) / 12.0;
+    return 2.10 * octaves - 1.45 * octaves * octaves;
+}
+
+// The finger's and board's noise at the pluck, scaled with the note: white, low-passed at 400 Hz and 3 kHz, dying with a
+// 30 ms time constant, into the voice (so the board and the other strings hear it too). Selected against VCSL's harp
+// from G4 up (tools/fit_harp.py score): the noise between the partials within 4 dB of the recordings' in every octave
+// band 250 Hz-16 kHz to 80 ms, where with none the model stood 14-44 dB cleaner. A bare pluck sounded synthetic; at the
+// recordings' level it was too much by ear, so Pluck Noise defaults to 0.06 (-24 dB).
+constexpr double pluckNoise = 11.0;
+
 } // namespace
 
 HarpEngine::HarpEngine() {
     parameters_[index(HarpParameterId::outputGain)] = 0.7;
-    parameters_[index(HarpParameterId::pluckPosition)] = 0.35;
+    parameters_[index(HarpParameterId::pluckPosition)] = 0.425;
     parameters_[index(HarpParameterId::presDeLaTable)] = 0.0;
     parameters_[index(HarpParameterId::harmonics)] = 0.0;
     parameters_[index(HarpParameterId::brightness)] = 1.0;
@@ -77,6 +107,7 @@ HarpEngine::HarpEngine() {
     parameters_[index(HarpParameterId::stereoWidth)] = 1.0;
     parameters_[index(HarpParameterId::masterTune)] = 440.0;
     parameters_[index(HarpParameterId::sympatheticLevel)] = 1.0;
+    parameters_[index(HarpParameterId::pluckNoise)] = 0.06;
 }
 
 void HarpEngine::prepare(double sampleRate) {
@@ -184,8 +215,8 @@ void HarpEngine::endNote(const NoteAddress& address) {
 }
 
 // The string starts from the finger's triangle at the pluck point, released at rest: partial n
-// pushes the board with sin(n pi beta) / n, falling 12 dB an octave above a corner set by the
-// fingertip and how hard it pulls. Touching the middle of the string (harmonics) leaves the even partials of the
+// pushes the board with sin(n pi beta), falling as the recordings' plucks do in partial number, through the
+// radiation; harder, or brighter, the fingertip's corner rises above its mf place and the top with it. Touching the middle of the string (harmonics) leaves the even partials of the
 // string an octave down, so the key still names the sounding pitch.
 void HarpEngine::pluck(Voice& voice, double velocity) {
     const auto& p = parameters_;
@@ -214,7 +245,8 @@ void HarpEngine::pluck(Voice& voice, double velocity) {
         if (frequency > limit) {
             break;
         }
-        double a = std::sin(k * pi * beta) / k / (1.0 + std::pow(frequency / corner, 2.0)) * radiation(frequency);
+        double a = std::sin(k * pi * beta) * std::pow(k, harpPluckSlopeDb / 6.0206) * radiation(frequency) *
+                   (1.0 + std::pow(frequency / mfCorner, 2.0)) / (1.0 + std::pow(frequency / corner, 2.0));
         const bool touched = harmonics && n % 2 == 1;
         // The touched string's odd partials only tick before the palm stops them.
         const double t60 = touched ? 0.05 : stringT60;
@@ -237,12 +269,15 @@ void HarpEngine::pluck(Voice& voice, double velocity) {
         }
     }
 
-    const double gain = 0.35 * (0.03 + 0.97 * std::pow(velocity, 1.7)) * (1.0 - 0.3 * table) /
-                        std::sqrt(std::max(energy, 1.0e-12));
+    const double gain = 0.35 * (0.03 + 0.97 * std::pow(velocity, 1.7)) * (1.0 - 0.3 * table) *
+                        std::pow(10.0, stringLevelDb(stringKey) / 20.0) / std::sqrt(std::max(energy, 1.0e-12));
     // A ringing string re-plucked keeps a quarter of its motion: the finger catches it first.
     const bool sameString = voice.modeCount == count && count > 0 && voice.modes[0].frequency == modes[0].frequency;
+    voice.catching = sameString;
+    voice.caughtRelease = sameString ? voice.release : 0.0;
     for (std::size_t i = 0; i < count; ++i) {
         if (sameString) {
+            voice.caught[i] = {voice.modes[i].y1, voice.modes[i].y2};
             modes[i].y1 = 0.25 * voice.modes[i].y1;
             modes[i].y2 = 0.25 * voice.modes[i].y2;
         }
@@ -269,6 +304,12 @@ void HarpEngine::pluck(Voice& voice, double velocity) {
         load += amplitude[i] * gain * mode.radius * std::cos(omega); // this mode's first output sample
     }
     voice.release += load;
+    // ponytail: one rise and one noise for every string, measured from G4 up (fit_harp.py's noise windows need the
+    // partials apart); per-register laws if the bass's own measure ever asks for them.
+    voice.onsetRate = 1.0 / (3.0 * onsetSeconds(stringKey) * sampleRate_);
+    voice.noise += pluckNoise * std::max(p[index(HarpParameterId::pluckNoise)], 0.0) * gain * std::sqrt(energy);
+    voice.noiseDecay = std::exp(-1.0 / (0.030 * sampleRate_));
+    voice.seed = 2654435761u * static_cast<std::uint32_t>(voice.address.key + 1);
     voice.releaseDecay = std::exp(-fundamental * factor / sampleRate_);
     const auto channel = static_cast<std::size_t>(std::clamp<int>(voice.address.channel, 0, 15));
     if (!voice.keyDown && !sustain_[channel]) {
@@ -501,6 +542,8 @@ void HarpEngine::render(float* left, float* right, std::uint32_t frameCount) {
     }
     const double glide = 100.0 / sampleRate_;
     const double release = 0.05 * sampleRate_;
+    const double noiseCorner = 1.0 - std::exp(-2.0 * pi * 400.0 / sampleRate_);
+    const double noiseTop = 1.0 - std::exp(-2.0 * pi * 3000.0 / sampleRate_);
     for (std::uint32_t frame = 0; frame < frameCount; ++frame) {
         frame_ = frame;
         double sumLeft = 0.0;
@@ -519,8 +562,37 @@ void HarpEngine::render(float* left, float* right, std::uint32_t frameCount) {
                 mode.y1 = std::abs(y) < 1.0e-30 ? 0.0 : y;
                 sample += mode.y1;
             }
+            double caught = 0.0;
+            if (voice.catching) {
+                for (std::size_t i = 0; i < voice.modeCount; ++i) {
+                    auto& state = voice.caught[i];
+                    const double y = voice.modes[i].a1 * state[0] - voice.modes[i].a2 * state[1];
+                    state[1] = state[0];
+                    state[0] = y;
+                    caught += y;
+                }
+                caught -= voice.caughtRelease;
+                voice.caughtRelease *= voice.releaseDecay;
+            }
             sample -= voice.release;
             voice.release *= voice.releaseDecay;
+            voice.seed ^= voice.seed << 13;
+            voice.seed ^= voice.seed >> 17;
+            voice.seed ^= voice.seed << 5;
+            voice.noiseLow += noiseCorner * (voice.noise * (voice.seed * 2.3283064365386963e-10 - 0.5) - voice.noiseLow);
+            voice.noiseLower += noiseTop * (voice.noiseLow - voice.noiseLower);
+            voice.noise *= voice.noiseDecay;
+            if (voice.noise < 1.0e-15) {
+                voice.noise = voice.noiseLow = voice.noiseLower = 0.0; // spent, before it reaches denormals
+            }
+            sample += voice.noiseLower;
+            const double rising = static_cast<double>(voice.age) * voice.onsetRate;
+            if (rising < 1.0) {
+                const double rest = (1.0 - rising) * (1.0 - rising) * (1.0 - rising);
+                sample = (1.0 - rest) * sample + rest * caught;
+            } else {
+                voice.catching = false;
+            }
             voice.volume += glide * (voice.volumeTarget - voice.volume);
             sample *= voice.volume;
             voice.level = std::max(std::abs(sample), voice.level * 0.9999);

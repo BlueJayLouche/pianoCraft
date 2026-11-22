@@ -20,6 +20,7 @@ enum class HarpParameterId : std::uint32_t {
     stereoWidth = 9,
     masterTune = 10,
     sympatheticLevel = 11,
+    pluckNoise = 12, // x the finger and board's noise as recorded
 };
 
 // A concert harp: one string per key (C1-G7, B0 with the C-flat pedal), plucked from rest into
@@ -56,7 +57,7 @@ public:
 
 private:
     static constexpr std::size_t modeLimit = 52;
-    static constexpr std::size_t parameterCount = 12;
+    static constexpr std::size_t parameterCount = 13;
     static constexpr int lowestString = 23; // B0
     static constexpr std::size_t stringCount = 82; // to G#7
     static constexpr std::size_t sympatheticPartials = 6;
@@ -96,6 +97,18 @@ private:
         // A note-on plucks at the next render, so per-note modulation sent with it applies.
         double pendingVelocity = -1.0;
         int stringKey = -1; // the string it plucked (an octave down for harmonics)
+        // The string leaving the fingertip: the output rises over a few milliseconds, and the finger and board's
+        // noise between the partials dies away after it. A ringing string re-plucked crossfades from its old motion
+        // (caught, run alongside through the rise) to the new.
+        double onsetRate = 0.0; // 1 / the rise's length in samples
+        bool catching = false;
+        std::array<std::array<double, 2>, modeLimit> caught{};
+        double caughtRelease = 0.0;
+        double noise = 0.0;
+        double noiseDecay = 0.0;
+        double noiseLow = 0.0;
+        double noiseLower = 0.0;
+        std::uint32_t seed = 1;
     };
 
     // A string the pedals sound, ringing in sympathy: driven by the soundboard, undamped.
