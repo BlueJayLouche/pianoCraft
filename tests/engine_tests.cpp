@@ -1,6 +1,5 @@
 #include "engine/PianoEngine.hpp"
 #include "engine/SympatheticBank.hpp"
-#include "model/CalibrationData.hpp"
 #include "model/InstrumentModel.hpp"
 
 #include <algorithm>
@@ -72,13 +71,13 @@ void modelIsStable() {
         const auto modelHolder = std::make_unique<pianocraft::InstrumentModel>(rate);
         auto& model = *modelHolder; // ~3.5 MB: off the stack
         for (std::size_t region = 0; region < 3; ++region) {
-            require(pianocraft::soundboardCalibration.directGain[region] >= 0.5 &&
-                    pianocraft::soundboardCalibration.directGain[region] <= 1.5,
+            require(modelHolder->pianoData().body.directGain[region] >= 0.5 &&
+                    modelHolder->pianoData().body.directGain[region] <= 1.5,
                     "Invalid soundboard direct gain");
-            require(pianocraft::soundboardCalibration.resonanceGain[region] >= 0.0 &&
-                    pianocraft::soundboardCalibration.resonanceGain[region] <= 2.0,
+            require(modelHolder->pianoData().body.resonanceGain[region] >= 0.0 &&
+                    modelHolder->pianoData().body.resonanceGain[region] <= 2.0,
                     "Invalid soundboard resonance gain");
-            require(std::abs(pianocraft::soundboardCalibration.spectralTilt[region]) <= 1.0,
+            require(std::abs(modelHolder->pianoData().body.spectralTilt[region]) <= 1.0,
                     "Invalid soundboard spectral tilt");
         }
         for (int key = 21; key <= 108; ++key) {

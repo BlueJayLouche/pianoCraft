@@ -3,11 +3,14 @@
 microphones) and how the hammer brightens with velocity. Writes src/model/SpectrumCalibration.hpp, and with tune,
 src/model/PartialTuning.hpp.
 
+    .venv/bin/python tools/fit_piano.py measure       a new piano's calibration: fundamentals, stiffness, partials
     .venv/bin/python tools/fit_piano.py tune          each partial's frequency, followed up the recordings' series
     .venv/bin/python tools/fit_piano.py neutral       the analytic strike law and flat tables
     .venv/bin/python tools/fit_piano.py strike        fit each key's strike position from its recordings' notches
     .venv/bin/python tools/fit_piano.py decays        fit each partial's two-stage decay to its recorded envelope
-    .venv/bin/python tools/fit_piano.py spectrum [n]  n rounds (default 3): render, compare, refine the level tables
+    .venv/bin/python tools/fit_piano.py spectrum [n] [resume]
+                                                      n rounds (default 3): render, compare, refine the level tables,
+                                                      from flat tables or, with resume, the header's
     .venv/bin/python tools/fit_piano.py score         each partial's level error, fitting and held-out
 
 Each partial is compared by its level 0.1 s after the strike (a line fitted to its level over 0.05-0.4 s, both
@@ -25,15 +28,18 @@ from pathlib import Path
 
 import numpy as np
 import scipy.sparse as sparse
+from scipy.optimize import least_squares
 from scipy.sparse.linalg import lsqr
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import evaluate_model as ev  # noqa: E402
+from pianos import PIANOS  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-HEADER = ROOT / "src" / "model" / "SpectrumCalibration.hpp"
-TUNING = ROOT / "src" / "model" / "PartialTuning.hpp"
-CACHE = ROOT / "calibration" / "spectrum-reference.npz"
+PIANO = ev.PIANO  # PIANOCRAFT_PIANO (tools/pianos.py)
+HEADER = PIANO.spectrum_header
+TUNING = PIANO.tuning_header
+CACHE = PIANO.cache
 KEYS = list(range(21, 109))
 FIT_LAYERS = (1, 4)  # layer 3 is the reference (0 dB); layer 2 is held out
 TOP = 9000.0         # highest partial compared and synthesized
@@ -42,8 +48,10 @@ PARTIALS = 112
 SPREADS = np.array([0.0005, 0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.008, 0.01])
 
 
-def calibration():
-    blocks = ev.HEADER.read_text().split("CalibrationData{")[1:]
+def calibration_of(piano):
+    if not piano.calibration_header.exists():
+        return {}
+    blocks = piano.calibration_header.read_text().split("CalibrationData{")[1:]
     out = {}
     for midi, block in zip(KEYS, blocks):
         f1, b = (float(v) for v in block.split(",")[:2])
@@ -52,7 +60,7 @@ def calibration():
     return out
 
 
-CAL = calibration()
+CAL = calibration_of(PIANO)
 
 
 def read_tuning():
@@ -126,7 +134,7 @@ def reference():
         ks, fs = partials(midi)
         return item, measure(*ev.reference(midi, layer), fs, CAL[midi][0])
     with ThreadPoolExecutor(8) as pool:
-        data = dict(pool.map(one, [(m, l) for m in KEYS for l in (1, 2, 3, 4)]))
+        data = dict(pool.map(one, [(m, l) for m in KEYS for l in sorted(PIANO.layers) if PIANO.has(m, l)]))
     np.savez(CACHE, data=np.array(data, dtype=object))
     return data
 
@@ -141,7 +149,158 @@ def model(ref):
     for old in ev.SCRATCH.glob("*.wav"):
         old.unlink()
     with ThreadPoolExecutor(8) as pool:
-        return dict(pool.map(one, [(m, l) for m in KEYS for l in (1, 2, 3, 4)]))
+        return dict(pool.map(one, list(ref)))
+
+
+# ---- a new piano's calibration ----------------------------------------------------------------------------------
+
+def measure_key(midi, prior_b):
+    """A key from its recording (mf, else ff, else pp), over 0.05-1.55 s. From C4 up the fundamental dominates: it is
+    the strongest peak within 60 cents of the key, and the partials above are searched +-0.04 f1 about the stiff-string
+    law from it (at prior_b). Below, a wound string's fundamental is weak (A#0's took a peak 180 cents off): the series
+    is followed up from where the law puts it, searched +-0.15 f1, refitted f_k = k F sqrt(1 + B k^2) as partials are
+    found. Either way a partial counts where it is a peak (not its span's edge) 12 dB over that span's median, to the
+    32nd and 16 kHz. Also the fundamental's decay, a line through its power over 0.2-3 s, and the channels' balance over
+    0.05-1.05 s."""
+    layer = next((l for l in (3, 4, 1) if PIANO.has(midi, l)), None)
+    if layer is None:
+        return None
+    rate, x = ev.reference(midi, layer)
+    x = x[ev.onset(x.mean(axis=1)):]
+    mono = x.mean(axis=1)
+    seg = mono[int(0.05 * rate):int(1.55 * rate)]
+    n = 1 << 19
+    s = 10 * np.log10(np.abs(np.fft.rfft(seg * np.hanning(len(seg)), n)) ** 2 + 1e-30)
+    f = np.fft.rfftfreq(n, 1 / rate)
+    nominal = 440.0 * 2 ** ((midi - 69) / 12)
+
+    def peak(guess, width):
+        span = np.flatnonzero(np.abs(f - guess) < width)
+        j = int(np.argmax(s[span]))
+        i = span[j]
+        if s[i] > np.median(s[span]) + 12 and 0 < j < len(span) - 1:
+            left, mid, right = s[i - 1], s[i], s[i + 1]
+            return f[i] + 0.5 * (left - right) / (left - 2 * mid + right) * (f[1] - f[0])
+        return None
+
+    found, b = {}, prior_b
+    if midi >= 60:
+        span = np.flatnonzero(np.abs(1200 * np.log2(np.maximum(f, 1.0) / nominal)) < 60)
+        f1 = f[span[np.argmax(s[span])]]
+        found[1] = peak(f1, 0.04 * nominal) or f1
+        big_f = found[1] / np.sqrt(1 + b)
+        for k in range(2, 33):
+            guess = k * big_f * np.sqrt(1 + b * k * k)
+            if guess > min(16000.0, 0.45 * rate):
+                break
+            hit = peak(guess, 0.04 * found[1])
+            if hit is not None:
+                found[k] = hit
+    else:
+        big_f, misses = nominal / np.sqrt(1 + b), 0
+        for k in range(1, 33):
+            guess = k * big_f * np.sqrt(1 + b * k * k)
+            if guess > min(16000.0, 0.45 * rate):
+                break
+            hit = peak(guess, 0.15 * nominal)
+            if hit is None:
+                misses += 1
+                if misses >= 4 and k > 8:
+                    break
+                continue
+            found[k], misses = hit, 0
+            if len(found) >= 3:
+                ks = np.array(sorted(found), dtype=float)
+                fs = np.array([found[int(j)] for j in ks])
+                fit = least_squares(lambda p: ks * p[0] * np.sqrt(1 + p[1] * ks * ks) - fs, [big_f, b],
+                                    bounds=([0.8 * big_f, 1e-6], [1.2 * big_f, 0.02]), loss="soft_l1", f_scale=1.0)
+                big_f, b = fit.x
+    if not found:
+        return None
+    if len(found) >= 3:
+        ks = np.array(sorted(found), dtype=float)
+        fs = np.array([found[int(j)] for j in ks])
+        b = least_squares(lambda p: ks * p[0] * np.sqrt(1 + p[1] * ks * ks) - fs, [big_f, b],
+                          bounds=([0.8 * big_f, 1e-6], [1.2 * big_f, 0.02]), loss="soft_l1", f_scale=1.0).x[1]
+    f1 = found.get(1, big_f * np.sqrt(1 + b))
+    w = int(max(0.04, 4 / f1) * rate)
+    times = np.arange(0.2, min(3.0, len(mono) / rate - 0.1), 0.05)
+    basis = np.exp(-2j * np.pi * f1 * np.arange(w) / rate) * np.hanning(w)
+    level = np.array([10 * np.log10(sum(np.abs(x[int(t * rate):int(t * rate) + w, c] @ basis) ** 2 for c in (0, 1)) + 1e-30)
+                      for t in times])
+    slope = np.polyfit(times, level, 1)[0] if len(times) >= 6 else -10.0
+    body = x[int(0.05 * rate):int(1.05 * rate)]
+    return {"found": found, "b": b, "decay": float(np.clip(-60.0 / min(slope, -1.0), 0.3, 40.0)),
+            "balance": 10 * np.log10(np.mean(body[:, 0] ** 2) / np.mean(body[:, 1] ** 2))}
+
+
+def fit_calibration():
+    """Each key's calibration for a piano other than Meta's (whose came from tools/calibrate.py), from measure_key():
+    - stiffness B: where 6 partials or more were found and the fit stayed inside its bounds, the median of those keys
+      within +-4; above the last of them (the top octaves' few partials leave B loose: fits there ran from 1e-6 to 0.02
+      between neighbours), the reliable keys' log-linear rise from C4, continued, at most 0.02;
+    - from C4 up the fundamental as found; below, the series' F refitted at that B as the median of
+      f_k / (k sqrt(1 + B k^2)) over its partials 2-16, and the fundamental F sqrt(1 + B); partials 1-8 more than 25
+      cents off the law dropped, the ones above kept as found (the bass's wound strings drift flat of it, as fit_tuning
+      follows); the partials to the last found, the others on the law;
+    - stereo gains that bring the model's pan (InstrumentModel's spaced pair) to the recording's balance, evened over 5
+      keys as the tables are (microphones 8 inches over the strings swing it +-10 dB key to key), split between the
+      channels, within 0.5-1.5;
+    - the Meta piano's register velocity laws (1.27 / 1.627 / 2.195; the fitted velocity tables do the rest).
+    A key without a recording takes its nearest measured neighbour's, moved by equal temperament."""
+    prior = {m: b for m, (_, b, _) in calibration_of(PIANOS["meta"]).items()}
+    with ThreadPoolExecutor(8) as pool:
+        measured = dict(zip(KEYS, pool.map(lambda m: measure_key(m, prior[m]), KEYS)))
+    reliable = {m: k["b"] for m, k in measured.items() if k and len(k["found"]) >= 6 and 2e-6 < k["b"] < 0.0195}
+    rise = np.polyfit([m for m in reliable if m >= 60], np.log([b for m, b in reliable.items() if m >= 60]), 1)
+    top = max(reliable)
+    stiffness = {m: float(min(np.exp(np.polyval(rise, m)), 0.02)) if m > top
+                 else float(np.median([b for n, b in reliable.items() if abs(n - m) <= 4] or [prior[m]])) for m in KEYS}
+    balance = np.array([measured[min((n for n in KEYS if measured[n]), key=lambda n: abs(n - m))]["balance"] for m in KEYS])
+    balance = even(balance[:, None])[:, 0]
+    keys = []
+    for midi in KEYS:
+        near = min((m for m in KEYS if measured[m] is not None), key=lambda m: abs(m - midi))
+        found, b = measured[near]["found"], stiffness[midi]
+        law = lambda k, big_f: k * big_f * np.sqrt(1 + b * k * k)
+        if near >= 60:
+            big_f = found[1] / law(1, 1.0)
+        else:
+            big_f = float(np.median([f / law(k, 1.0) for k, f in found.items() if 2 <= k <= 16] or
+                                    [f / law(k, 1.0) for k, f in found.items()]))
+        kept = {k: f for k, f in found.items() if k > 8 or abs(1200 * np.log2(f / law(k, big_f))) <= 25}
+        kept.setdefault(1, law(1, big_f))
+        ratio = 2 ** ((midi - near) / 12)
+        partial_list = [(k, kept[k] * ratio if k in kept else law(k, big_f) * ratio, k in kept and near == midi)
+                        for k in range(1, max(kept) + 1) if law(k, big_f) * ratio < 16000.0]
+        pan = np.clip((midi - 64.5) / 55.0, -0.55, 0.55)
+        correction = balance[midi - 21] - 10 * np.log10((1 - pan) / (1 + pan))
+        key = {"fundamental": partial_list[0][1], "b": b, "partials": partial_list, "decay": measured[near]["decay"],
+               "left": float(np.clip(10 ** (correction / 40), 0.5, 1.5)), "right": float(np.clip(10 ** (-correction / 40), 0.5, 1.5)),
+               "velocity": 1.27 if midi < 48 else (1.627 if midi < 72 else 2.195), "measured": near == midi}
+        keys.append((midi, key))
+        print(f"{ev.note_name(midi):4s} {'measured' if near == midi else 'from ' + ev.note_name(near):9s} f0 {key['fundamental']:8.3f} Hz "
+              f"({1200 * np.log2(key['fundamental'] / (440 * 2 ** ((midi - 69) / 12))):+5.1f} c) B {b:.6f} "
+              f"(fit {measured[near]['b']:.6f}) {sum(m for _, _, m in partial_list)}/{len(partial_list)} partials, "
+              f"decay {key['decay']:5.1f} s, balance {balance[midi - 21]:+5.1f} dB")
+    return keys
+
+
+def write_calibration(keys):
+    lines = ["#pragma once", "", '#include "model/PianoData.hpp"', "",
+             f"// Generated by tools/fit_piano.py (measure) from {PIANO.title}'s recordings. Do not edit.",
+             f"namespace pianocraft::pianos::{PIANO.name} {{", "",
+             "inline constexpr BodyCalibration soundboardCalibration{", "    {{1, 1, 1}},", "    {{1, 1, 1}},", "    {{0, 0, 0}},", "};", "",
+             "inline constexpr std::array<CalibrationData, 88> measuredCalibration{{"]
+    for midi, key in keys:
+        scalars = [key["fundamental"], key["b"], key["decay"], 1.0, 60000, key["velocity"], 0, 1, key["left"], key["right"]]
+        lines.append("    CalibrationData{" + ", ".join(format(v, ".12g") for v in scalars) + f", {len(key['partials'])}, {{{{")
+        for k, f, measured in key["partials"]:
+            lines.append(f"        PartialCalibration{{{k}, {f:.12g}, {key['decay']:.12g}, 0, 0, 0, {'true' if measured else 'false'}, false, false}},")
+        lines.append(f"    }}}}}}, // MIDI {midi} {ev.note_name(midi)}{'' if key['measured'] else ' (from a neighbour)'}")
+    lines += ["}};", "", f"}} // namespace pianocraft::pianos::{PIANO.name}", ""]
+    PIANO.folder.mkdir(parents=True, exist_ok=True)
+    PIANO.calibration_header.write_text("\n".join(lines))
 
 
 # ---- the header -------------------------------------------------------------------------------------------------
@@ -202,7 +361,7 @@ def fit_tuning():
     held above its 16th-or-so measured partial: D1 -20 cents at its 20th partial, -77 at the 30th, -214 at the
     50th (a stiff beam's shear and rotary inertia, which the law leaves out)."""
     table = np.zeros((88, PARTIALS))
-    for midi in KEYS:
+    for midi in [m for m in KEYS if PIANO.has(m, 3) and PIANO.has(m, 4)]:
         late, early = track(midi, (1.0, 3.0)), track(midi, (0.05, 1.55))
         found = late if len(late) >= 8 else early
         if len(found) < 2:
@@ -262,18 +421,16 @@ def write_tuning(table):
     TUNING.write_text(f"""#pragma once
 
 // Generated by tools/fit_piano.py (tune). Do not edit.
-#include <array>
-#include <cstddef>
+#include "model/PianoData.hpp"
 
-namespace pianocraft {{
+namespace pianocraft::pianos::{PIANO.name} {{
 
 // Each key's partials 1-{PARTIALS}, cents on the series the model would otherwise play (its calibrated partials, then
 // the stiff-string law), where the recordings hold them. A partial past the table keeps the last one's.
-inline constexpr std::size_t tuningPartials = {PARTIALS};
 inline constexpr std::array<std::array<float, tuningPartials>, 88> partialCents{{{{
 {rows}}}}};
 
-}} // namespace pianocraft
+}} // namespace pianocraft::pianos::{PIANO.name}
 """)
 
 
@@ -309,15 +466,9 @@ def write_header(strike, spread, radiation, partial, velocity, brightening, prom
     text = f"""#pragma once
 
 // Generated by tools/fit_piano.py ({note}). Do not edit.
-#include <array>
-#include <cstddef>
+#include "model/PianoData.hpp"
 
-namespace pianocraft {{
-
-// The tables' frequencies: band b is {LOWEST:g} Hz x 2^(b / {BANDS_PER_OCTAVE}).
-inline constexpr double spectrumLowest = {LOWEST};
-inline constexpr double spectrumBandsPerOctave = {BANDS_PER_OCTAVE};
-inline constexpr std::size_t spectrumBands = {BANDS};
+namespace pianocraft::pianos::{PIANO.name} {{
 
 // Each key's strike position, as a fraction of its speaking length, A0 first, and how far strikes spread about
 // it (one standard deviation, the same fraction): a unison's strings and the felt's contact don't meet at a point.
@@ -331,7 +482,6 @@ inline constexpr std::array<std::array<float, spectrumBands>, 88> radiationDb{{{
 
 // Each key's own partials, dB on top of the radiation, for partials 1-{PARTIALS}: what the recording holds that a
 // smooth law can't (its board's resonances and the comb's detail), measured at velocity 80.
-inline constexpr std::size_t spectrumPartials = {PARTIALS};
 inline constexpr std::array<std::array<float, spectrumPartials>, 88> partialDb{{{{
 {rows(partial)}}}}};
 
@@ -354,7 +504,7 @@ inline constexpr std::array<std::array<float, spectrumPartials>, 88> aftersoundD
 inline constexpr std::array<std::array<float, spectrumPartials>, 88> aftersoundLevelDb{{{{
 {rows(knee)}}}}};
 
-}} // namespace pianocraft
+}} // namespace pianocraft::pianos::{PIANO.name}
 """
     HEADER.write_text(text)
     subprocess.run(["cmake", "--build", str(ROOT / "build"), "--target", "pianocraft-render"], check=True,
@@ -382,7 +532,7 @@ def fit_strike():
     def detrend(y):
         return y - median_filter(y, size=5, mode="nearest")
     found = {}
-    for midi in KEYS:
+    for midi in [m for m in KEYS if all(PIANO.has(m, layer) for layer in (1, 3, 4))]:
         ks, fs = partials(midi)
         held = np.all([lv[midi, layer] > fl[midi, layer] + 10 for layer in (1, 3, 4)], axis=0) & (ks <= 30)
         n = int(np.argmin(held)) if not held.all() else len(held)
@@ -497,6 +647,8 @@ def fit_decays():
 
     def one(midi):
         ks, fs = partials(midi)
+        if not PIANO.has(midi, 3):
+            return midi, [None] * len(ks)
         f1 = CAL[midi][0]
         rate, stereo = ev.reference(midi, 3)
         win = max(0.04, 4.0 / f1)
@@ -568,7 +720,7 @@ def fit_decays():
     return np.clip(tables[0], -3, 3), np.clip(tables[1], -3, 3), np.clip(tables[2], -20, 15)
 
 
-def fit_spectrum(rounds):
+def fit_spectrum(rounds, resume=False):
     """From flat tables (keeping the strike positions), each round renders every key and layer and refines:
     - the radiation: a smooth surface (knots every 6 keys, 1/6 octave) through layer 3's level differences,
       recording minus model, less their median, so the instrument's loudness stays the engine's. Each partial weighs
@@ -583,8 +735,9 @@ def fit_spectrum(rounds):
     smooth fits use the keys outside the split; every key takes its own partials (measured, as their frequencies
     are). The brightening table is the recordings' own: the velocity surfaces through each partial's level change
     from layer 3, re its key's fundamental."""
-    strike, spread, *_, prompt, aftersound, knee = read_header()
-    radiation, partial, velocity, brightening, *_ = flat()
+    strike, spread, *tables, prompt, aftersound, knee = read_header()
+    # From flat tables, or with resume from the header's (more rounds where a layer is still converging).
+    radiation, partial, velocity, brightening = tables if resume else flat()[:4]
     ref = reference()
     lv, fl = split(ref, "level"), split(ref, "floor")
     key_knots, band_knots, vk = np.arange(21, 115, 6.0), np.arange(0, BANDS + 2, 2.0), np.arange(21, 121, 12.0)
@@ -594,7 +747,7 @@ def fit_spectrum(rounds):
 
     for i, layer in enumerate(FIT_LAYERS):
         rows = []
-        for midi in ev.FIT_KEYS:
+        for midi in [m for m in ev.FIT_KEYS if (m, layer) in lv]:
             ks, fs = partials(midi)
             ok = held(midi, layer) & held(midi, 3)
             change = lv[midi, layer] - lv[midi, 3]
@@ -607,7 +760,7 @@ def fit_spectrum(rounds):
                      f"spectrum, round {round_}" if round_ else "spectrum, flat")
         result = model(ref)
         mv = split(result, "level")
-        diff = {(m, l): lv[m, l] - mv[m, l] for m in KEYS for l in (1, 3, 4)}
+        diff = {item: lv[item] - mv[item] for item in lv if item[1] in (1, 3, 4)}
         for (m_, l_), d_ in diff.items():
             over = ~held(m_, l_) & (mv[m_, l_] > fl[m_, l_])
             d_[over] = np.minimum(fl[m_, l_][over] - mv[m_, l_][over], 0)
@@ -622,7 +775,7 @@ def fit_spectrum(rounds):
         offset = np.median(d)
         coef, grid = smooth_fit(m, f, d - offset, w, key_knots, band_knots, 2.0)
         radiation += grid
-        for midi in KEYS:
+        for midi in [m for m in KEYS if (m, 3) in diff]:
             ks, fs = partials(midi)
             surface = bilinear(np.full(len(fs), midi), fs, key_knots, band_knots) @ coef
             trust = np.clip((lv[midi, 3] - fl[midi, 3] - 6) / 4, 0, 1)
@@ -634,7 +787,7 @@ def fit_spectrum(rounds):
         # The velocity law, layers 1 and 4.
         for i, layer in enumerate(FIT_LAYERS):
             rows = []
-            for midi in ev.FIT_KEYS:
+            for midi in [m for m in ev.FIT_KEYS if (m, layer) in diff]:
                 ks, fs = partials(midi)
                 ok = (held(midi, layer) | (mv[midi, layer] > fl[midi, layer])) & held(midi, 3)
                 rows += [(midi, f, d, 1.0) for f, d in zip(fs[ok], (diff[midi, layer] - diff[midi, 3])[ok])]
@@ -652,9 +805,9 @@ def score(result=None, quiet=False):
     result = result or model(ref)
     out = []
     for name, keys in (("fit", ev.FIT_KEYS), ("split", sorted(ev.HELD_OUT_KEYS))):
-        for layer in (1, 2, 3, 4):
+        for layer in sorted(PIANO.layers):
             errors, early, late, knees = [], [], [], []
-            for midi in keys:
+            for midi in [m for m in keys if (m, layer) in ref]:
                 r, mm = ref[midi, layer], result[midi, layer]
                 ok = r["level"] > r["floor"] + 10
                 e = mm["level"][ok] - r["level"][ok]
@@ -682,6 +835,8 @@ if __name__ == "__main__":
         CACHE.unlink(missing_ok=True)  # measured at the old frequencies
         subprocess.run(["cmake", "--build", str(ROOT / "build"), "--target", "pianocraft-render"], check=True,
                        capture_output=True)
+    elif command == "measure":
+        write_calibration(fit_calibration())
     elif command == "neutral":
         write_header([analytic_strike(m) for m in KEYS], 0.0, *flat(), "neutral")
     elif command == "strike":
@@ -690,7 +845,7 @@ if __name__ == "__main__":
         strike, spread, radiation, partial, velocity, brightening, *_ = read_header()
         write_header(strike, spread, radiation, partial, velocity, brightening, *fit_decays(), "decays")
     elif command == "spectrum":
-        fit_spectrum(int(args[0]) if args else 3)
+        fit_spectrum(int(args[0]) if args else 3, resume="resume" in args)
     elif command == "score":
         score()
     else:

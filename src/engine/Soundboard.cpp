@@ -1,6 +1,6 @@
 #include "engine/Soundboard.hpp"
 
-#include "model/CalibrationData.hpp"
+#include "model/PianoData.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -9,7 +9,8 @@
 
 namespace pianocraft {
 
-void Soundboard::prepare(double sampleRate) {
+void Soundboard::prepare(double sampleRate, const BodyCalibration& soundboardCalibration) {
+    directGain_ = soundboardCalibration.directGain;
     constexpr double pi = 3.141592653589793238462643383279502884;
     for (std::size_t region = 0; region < regionCount; ++region) {
         const double direct = soundboardCalibration.directGain[region];
@@ -102,7 +103,7 @@ void Soundboard::process(const std::array<double, 3>& directLeft,
     outputRight = bodyRight * bodyLevel;
     outputCentre = outputLeft;
     for (std::size_t region = 0; region < regionCount; ++region) {
-        const double direct = 0.72 * soundboardCalibration.directGain[region];
+        const double direct = 0.72 * directGain_[region];
         outputLeft += directLeft[region] * direct;
         outputRight += directRight[region] * direct;
         outputCentre += directCentre[region] * direct;

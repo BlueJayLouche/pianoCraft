@@ -138,15 +138,16 @@ int main(int argc, char** argv) {
                                                                 file.path().string().c_str(), &receiver);
     }
     const auto presetsFor = [&](const char* id) { return std::count(discovered.pluginIds.begin(), discovered.pluginIds.end(), id); };
-    check(everyFileRead && discovered.names.size() == 40 && discovered.pluginIds.size() == 40 && !discovered.keyed &&
-          presetsFor("com.pianocraft.upright") == 5 && presetsFor("com.pianocraft.harp") == 4 &&
+    check(everyFileRead && discovered.names.size() == 43 && discovered.pluginIds.size() == 43 && !discovered.keyed &&
+          presetsFor("com.pianocraft.upright") == 5 && presetsFor("com.pianocraft.grand") == 3 &&
+          presetsFor("com.pianocraft.harp") == 4 &&
           presetsFor("com.pianocraft.flute") == 2 && presetsFor("com.pianocraft.strings") == 7 &&
           presetsFor("com.pianocraft.horn") == 3 && presetsFor("com.pianocraft.trumpet") == 2 &&
           presetsFor("com.pianocraft.trombone") == 2 && presetsFor("com.pianocraft.tuba") == 2 &&
           presetsFor("com.pianocraft.oboe") == 2 && presetsFor("com.pianocraft.clarinet") == 2 &&
           presetsFor("com.pianocraft.celesta") == 2 && presetsFor("com.pianocraft.crotales") == 2 &&
           presetsFor("com.pianocraft.vibraphone") == 3 && presetsFor("com.pianocraft.handpan") == 2,
-          "40 preset files, one unkeyed preset each: 5 piano, 4 harp, 2 flute, 7 strings, 3 horn, 2 trumpet, 2 trombone, "
+          "43 preset files, one unkeyed preset each: 5 piano, 3 grand, 4 harp, 2 flute, 7 strings, 3 horn, 2 trumpet, 2 trombone, "
           "2 tuba, 2 oboe, 2 clarinet, 2 celesta, 2 crotales, 3 vibraphone, 2 handpan");
     provider->destroy(provider);
     auto* presetLoad = static_cast<const clap_plugin_preset_load_t*>(plugin->get_extension(plugin, CLAP_EXT_PRESET_LOAD));
@@ -233,11 +234,12 @@ int main(int argc, char** argv) {
     plugin->destroy(plugin);
 
     // The other voices: state round trip, a preset over defaults, choice text, and NOTE_END.
-    check(factory->get_plugin_count(factory) == 14,
-          "the bundle holds piano, harp, flute, strings, horn, trumpet, trombone, tuba, oboe, clarinet, celesta, crotales, "
-          "vibraphone and handpan");
+    check(factory->get_plugin_count(factory) == 15,
+          "the bundle holds piano, grand, harp, flute, strings, horn, trumpet, trombone, tuba, oboe, clarinet, celesta, "
+          "crotales, vibraphone and handpan");
     struct Other { const char* id; const char* preset; clap_id changed; double expected; clap_id choice; const char* choiceText; int16_t key = 60; };
-    for (const Other& other : {Other{"com.pianocraft.harp", "/harp-harmonics-mono.pianocraft", 4, 1.0, 4, "On"},
+    for (const Other& other : {Other{"com.pianocraft.grand", "/grand-mono.pianocraft", 6, 0.0, CLAP_INVALID_ID, nullptr},
+                               Other{"com.pianocraft.harp", "/harp-harmonics-mono.pianocraft", 4, 1.0, 4, "On"},
                                Other{"com.pianocraft.flute", "/flute-veiled.pianocraft", 2, 1.8, CLAP_INVALID_ID, nullptr},
                                Other{"com.pianocraft.strings", "/strings-harmonics-mono.pianocraft", 6, 1.0, 6, "On"},
                                Other{"com.pianocraft.horn", "/horn-stopped-mono.pianocraft", 2, 1.0, 2, "On"},
@@ -281,7 +283,7 @@ int main(int argc, char** argv) {
         clap_input_events_t otherIn{&otherInput, eventsSize, eventsGet};
         clap_output_events_t otherOut{&otherOutput, eventsPush};
         float peak = 0.0F;
-        for (int block = 0; block < 5; ++block) {
+        for (int block = 0; block < 48; ++block) { // to 0.5 s: a piano's choke fades over ~0.4 s
             clap_process_t process{};
             process.steady_time = block * 512LL; process.frames_count = 512;
             process.audio_outputs = &audio; process.audio_outputs_count = 1;

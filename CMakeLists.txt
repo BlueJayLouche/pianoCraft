@@ -38,6 +38,7 @@ set(PIANOCRAFT_ENGINE_SOURCES
     src/engine/Soundboard.cpp
     src/engine/SympatheticBank.cpp
     src/model/InstrumentModel.cpp
+    src/model/Pianos.cpp
 )
 
 add_library(pianocraft MODULE

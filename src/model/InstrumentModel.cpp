@@ -1,13 +1,11 @@
 #include "model/InstrumentModel.hpp"
-#include "model/CalibrationData.hpp"
-#include "model/PartialTuning.hpp"
-#include "model/SpectrumCalibration.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <complex>
 #include <cstdint>
 #include <stdexcept>
+#include <tuple>
 
 namespace pianocraft {
 namespace {
@@ -76,9 +74,6 @@ NormalModes unisonModes(double damping, double reactance, double mistuning) {
 // phantom f6 + f7 at 532 Hz, 16 dB above partial 13 beside it: a longitudinal resonance at 13.06 f0.
 // No other key shows one clearly, so the ratio is held across the keyboard (Analytic).
 constexpr double longitudinalRatio = 13.06;
-// Share of the longitudinal bridge force the board radiates: it pushes along the string, in the
-// board's plane. Selected on the phantom partials' level (docs/model-laws.md).
-constexpr double longitudinalCoupling = 0.03;
 
 // ponytail: a fixed per-key, per-aspect hash (0-1) stands in for one particular old piano's wear,
 // so the same Age gives the same piano on every render. Measure it from Lola's tape or Andrew's
@@ -118,20 +113,19 @@ double aftersoundDecaySeconds(double frequency) {
 
 } // namespace
 
-InstrumentModel::InstrumentModel(double sampleRate) {
+InstrumentModel::InstrumentModel(double sampleRate, const PianoData& piano) : piano_(&piano) {
     if (!std::isfinite(sampleRate) || sampleRate < 1000.0 || sampleRate > 768000.0) {
         throw std::invalid_argument("Unsupported sample rate");
     }
     sampleRate_ = sampleRate;
 
-    static_assert(hasMeasuredCalibration);
-    static_assert(measuredCalibration.size() == instrumentKeyCount);
+    static_assert(std::tuple_size<KeyCalibration>::value == instrumentKeyCount);
     // Headroom for tuning up to +8% (466 Hz master tune with double stretch) below Nyquist.
     const double maximumFrequency = std::min(18000.0, sampleRate * 0.45);
-    measuredA4_ = measuredCalibration[69 - 21].fundamental;
+    measuredA4_ = piano_->calibration[69 - 21].fundamental;
     for (std::size_t index = 0; index < keys_.size(); ++index) {
         auto& key = keys_[index];
-        const auto& calibration = measuredCalibration[index];
+        const auto& calibration = piano_->calibration[index];
         if (!std::isfinite(calibration.fundamental) || calibration.fundamental <= 0.0 ||
             !std::isfinite(calibration.inharmonicity) || calibration.inharmonicity < 0.0 ||
             !std::isfinite(calibration.decaySeconds) || calibration.decaySeconds <= 0.0 ||
@@ -149,7 +143,7 @@ InstrumentModel::InstrumentModel(double sampleRate) {
         key.stretchOctaves = std::log2(calibration.fundamental / measuredA4_) - (key.midi - 69) / 12.0;
         key.inharmonicity = calibration.inharmonicity;
         // Fitted to the comb of each key's recorded partials (tools/fit_piano.py strike).
-        key.strikePosition = strikePositions[index];
+        key.strikePosition = piano_->strikePositions[index];
         key.velocityGainExponent = calibration.velocityGainExponent;
         // Stulov's measured hammer set (Acta Acustica 91, 2005, as fitted in Stulov & Kartofelev,
         // Acoustics High Tatras 2009, eq. 9) for hammer n = 1-88: mass, felt exponent p and static
@@ -175,8 +169,8 @@ InstrumentModel::InstrumentModel(double sampleRate) {
         const double modalMass = 0.5 * tension / (4.0 * length * calibration.fundamental * calibration.fundamental);
         // Bridge force alone leaves the treble above D4 quieter than the recordings; this power law,
         // fitted against the reference corpus at pp/mf/ff, restores the key-to-key balance. The
-        // 0.018 keeps a single velocity-127 note peaking near -12 dBFS at the default output gain (0.04
-        // before the fitted spectrum tables, which raised the strings ~7 dB).
+        // 0.018 is the calibration level the fits and scores use (a velocity-127 C4 peaking near -26 dBFS at the default
+        // output gain); the plugin plays 8 dB over it (PianoEngine::playbackLevel).
         const double levelLaw = std::pow(std::max(1.0, key.fundamental / 302.3), 1.042) * calibration.loudness;
         key.outputGain = 0.018 * levelLaw;
         // The law corrects radiated level, not the force on the bridge, so sympathetic strings get
@@ -233,7 +227,7 @@ InstrumentModel::InstrumentModel(double sampleRate) {
         // The strike's comb, sin(k pi x) averaged in power over strikes spread about x: the notches fill in up
         // the series, as the recordings' do (tools/fit_piano.py).
         const auto strikeShape = [&](double k) {
-            const double spread = std::exp(-2.0 * std::pow(pi * k * strikeSpread, 2.0));
+            const double spread = std::exp(-2.0 * std::pow(pi * k * piano_->strikeSpread, 2.0));
             const double power = 0.5 * (1.0 - std::cos(2.0 * pi * k * key.strikePosition) * spread);
             return std::copysign(std::sqrt(std::max(power, 0.0)), std::sin(k * pi * key.strikePosition));
         };
@@ -256,7 +250,7 @@ InstrumentModel::InstrumentModel(double sampleRate) {
             mode.baseFrequency = frequency;
             // The prompt law, by each partial's fitted factor (tools/fit_piano.py).
             mode.baseDecaySeconds = promptDecaySeconds(frequency) *
-                (k <= spectrumPartials ? std::exp2(promptDecayLog2[index][static_cast<std::size_t>(k) - 1]) : 1.0);
+                (k <= spectrumPartials ? std::exp2(piano_->promptDecayLog2[index][static_cast<std::size_t>(k) - 1]) : 1.0);
             mode.baseReleaseSeconds = releaseSeconds(k);
             const double strikeWeight = strikeShape(k);
             const double finiteHammerWidth = std::exp(-0.00045 * k * k);
@@ -269,10 +263,10 @@ InstrumentModel::InstrumentModel(double sampleRate) {
             // selected at 500 Hz on octave-band spectra.
             // The fitted radiation (board and microphones) then weights each frequency of each key, and the
             // key's own measured partials what a smooth law leaves.
-            const double own = k <= spectrumPartials ? partialDb[index][static_cast<std::size_t>(k) - 1] : 0.0;
+            const double own = k <= spectrumPartials ? piano_->partialDb[index][static_cast<std::size_t>(k) - 1] : 0.0;
             mode.drive = 4.0 * key.fundamental * std::sin(2.0 * pi * frequency / sampleRate) /
                 (normalization * sampleRate) / (1.0 + frequency / 500.0);
-            const double fitted = std::pow(10.0, (band(radiationDb[index], frequency) + own) / 20.0);
+            const double fitted = std::pow(10.0, (band(piano_->radiationDb[index], frequency) + own) / 20.0);
             mode.output = mode.drive * fitted;
             // Where a key's own table cuts a partial, the string has less of it, and the board and the sympathetic strings
             // feel less too. Uncut, the board rang what the fit had taken out of the direct sound: D1's 49th partial, at
@@ -280,10 +274,10 @@ InstrumentModel::InstrumentModel(double sampleRate) {
             // partials at 2-4 kHz than Meta's.
             mode.drive *= std::min(1.0, std::pow(10.0, own / 20.0));
             mode.boost = std::max(0.0, 1.0 - 1.0 / fitted);
-            mode.softDb = band(velocityDb[index][0], frequency);
-            mode.loudDb = band(velocityDb[index][1], frequency);
-            mode.softBrighteningDb = band(brighteningDb[index][0], frequency);
-            mode.loudBrighteningDb = band(brighteningDb[index][1], frequency);
+            mode.softDb = band(piano_->velocityDb[index][0], frequency);
+            mode.loudDb = band(piano_->velocityDb[index][1], frequency);
+            mode.softBrighteningDb = band(piano_->brighteningDb[index][0], frequency);
+            mode.loudBrighteningDb = band(piano_->brighteningDb[index][1], frequency);
             mode.secondary = false;
             ++key.primaryModeCount;
         };
@@ -292,7 +286,7 @@ InstrumentModel::InstrumentModel(double sampleRate) {
         // only to about its 16th and the stiff-string law above ran sharp, D1's 50th partial by 214 cents.
         const auto tuned = [&](double k, double frequency) {
             const auto partial = std::min(static_cast<std::size_t>(k), tuningPartials);
-            return frequency * std::exp2(partialCents[index][partial - 1] / 1200.0);
+            return frequency * std::exp2(piano_->partialCents[index][partial - 1] / 1200.0);
         };
         double highestPartial = 0.0;
         for (std::size_t partialIndex = 0; partialIndex < calibration.partialCount; ++partialIndex) {
@@ -339,9 +333,9 @@ InstrumentModel::InstrumentModel(double sampleRate) {
                 auto& longitudinal = key.longitudinal[key.longitudinalCount++];
                 longitudinal.baseFrequency = frequency;
                 longitudinal.inverseMass = 1.0 / modalMass;
-                longitudinal.drive = longitudinalCoupling * stiffness * pi / length * n * (n % 2 == 0 ? 1.0 : -1.0) /
+                longitudinal.drive = piano_->phantomCoupling * stiffness * pi / length * n * (n % 2 == 0 ? 1.0 : -1.0) /
                     (1.0 + frequency / 500.0);
-                longitudinal.output = longitudinal.drive * std::pow(10.0, band(radiationDb[index], frequency) / 20.0);
+                longitudinal.output = longitudinal.drive * std::pow(10.0, band(piano_->radiationDb[index], frequency) / 20.0);
             }
         }
 
@@ -392,7 +386,7 @@ InstrumentModel::InstrumentModel(double sampleRate) {
             const double k = static_cast<double>(calibrated.partial);
             // The slow mode's level, by each partial's fitted offset (tools/fit_piano.py), at most -3 dB.
             const double partnerGain = std::pow(10.0, std::min(partnerDb + (k <= spectrumPartials
-                ? aftersoundLevelDb[index][static_cast<std::size_t>(k) - 1] : 0.0), -3.0) / 20.0);
+                ? piano_->aftersoundLevelDb[index][static_cast<std::size_t>(k) - 1] : 0.0), -3.0) / 20.0);
             // ponytail: golden-ratio hash for per-partial beat spread; deterministic, no RNG state.
             const double spread = std::fmod(k * 0.6180339887 + key.midi * 0.7548776662, 1.0);
             const double beatHz = (0.18 + 0.0006 * calibrated.frequency) * (0.6 + 0.8 * spread);
@@ -405,7 +399,7 @@ InstrumentModel::InstrumentModel(double sampleRate) {
             // follows from w^2 = coupling^2 + delta^2 / 4. The slow share grows with eta; bisect it.
             const double fastRate = ln1000 / primary.baseDecaySeconds;
             const double aftersound = aftersoundDecaySeconds(calibrated.frequency) *
-                (k <= spectrumPartials ? std::exp2(aftersoundDecayLog2[index][static_cast<std::size_t>(k) - 1]) : 1.0);
+                (k <= spectrumPartials ? std::exp2(piano_->aftersoundDecayLog2[index][static_cast<std::size_t>(k) - 1]) : 1.0);
             const double slowRate = ln1000 / std::max(aftersound, primary.baseDecaySeconds);
             const double halfSplit = (fastRate - slowRate) / 2.0;
             const std::complex<double> split(pi * beatHz, halfSplit);
@@ -471,7 +465,7 @@ void InstrumentModel::setVoicing(const Voicing& voicing) {
         // Every partial of a key moves together, so inharmonicity is kept.
         const double tuning = std::exp2((voicing.stretch - 1.0) * key.stretchOctaves + sag / 1200.0) *
             voicing.masterTune / measuredA4_;
-        key.fundamental = measuredCalibration[keyIndex].fundamental * tuning;
+        key.fundamental = piano_->calibration[keyIndex].fundamental * tuning;
         for (std::size_t index = 0; index < key.modeCount; ++index) {
             auto& mode = key.modes[index];
             setPole(mode, mode.baseFrequency * tuning, mode.baseDecaySeconds * voicing.sustain,
@@ -519,7 +513,7 @@ void InstrumentModel::setMicPosition(MicPosition position) {
     micPosition_ = position;
     for (std::size_t index = 0; index < keys_.size(); ++index) {
         auto& key = keys_[index];
-        const auto& calibration = measuredCalibration[index];
+        const auto& calibration = piano_->calibration[index];
         // The spaced pair keeps the calibrated pan; the coincident pair, the player's ears and the close pair hear the
         // keyboard spread wider, bass left and treble right.
         const double width = position == MicPosition::spacedPair ? 0.55 : 0.9;

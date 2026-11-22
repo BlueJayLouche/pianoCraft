@@ -147,8 +147,30 @@ struct Piano {
     {"Most Worn (Mono)", "most-worn-mono", "Age 1, mono-safe for a single emitter",
      {{{pid(ParameterId::stereoWidth), 0.0}, {pid(ParameterId::age), 1.0}}}},
     {"Close and Bright", "close-bright", "Close microphones, louder, a little more sustain: a starting point to voice by ear",
-     {{{pid(ParameterId::micPosition), 3.0}, {pid(ParameterId::outputGain), 1.4}, {pid(ParameterId::sustainLength), 1.25},
+     {{{pid(ParameterId::micPosition), 3.0}, {pid(ParameterId::outputGain), 0.9}, {pid(ParameterId::sustainLength), 1.25},
        {pid(ParameterId::stereoWidth), 1.0}}}},
+}};
+};
+
+// The same engine with the Grand selected: a Steinway & Sons model B, fitted to the University of Iowa's recordings
+// as the Upright is to Meta's (src/model/pianos/steinway, tools/pianos.py). The Upright's parameters and pages.
+struct GrandPianoEngine : PianoEngine {
+    GrandPianoEngine() { setParameter(ParameterId::piano, 1.0); }
+};
+
+struct Grand : Piano {
+    using Engine = GrandPianoEngine;
+    static constexpr const char* id = "com.pianocraft.grand";
+    static constexpr const char* name = "PianoCraft Grand";
+    static constexpr const char* description = "Original grand piano instrument";
+    static constexpr const char* section = "Grand";
+    static constexpr std::array<Preset, 3> presets{{
+    {"Calibrated Grand", "grand-calibrated", "The recorded Steinway B as measured, spaced pair, stereo",
+     {{{pid(ParameterId::stereoWidth), 1.0}, {pid(ParameterId::age), 0.0}}}},
+    {"Grand (Mono)", "grand-mono", "Mono-safe for a single emitter",
+     {{{pid(ParameterId::stereoWidth), 0.0}, {pid(ParameterId::age), 0.0}}}},
+    {"Close Grand", "grand-close", "Close microphones, louder: a starting point to voice by ear",
+     {{{pid(ParameterId::micPosition), 3.0}, {pid(ParameterId::outputGain), 0.9}, {pid(ParameterId::stereoWidth), 1.0}}}},
 }};
 };
 
@@ -1515,8 +1537,8 @@ const clap_plugin_preset_load_t Adapter<I>::presetLoad_ = {
     &Adapter<I>::presetLoad,
 };
 
-const std::array<const clap_plugin_descriptor_t*, 14> descriptors{
-    Adapter<Piano>::descriptor(), Adapter<Harp>::descriptor(), Adapter<Flute>::descriptor(),
+const std::array<const clap_plugin_descriptor_t*, 15> descriptors{
+    Adapter<Piano>::descriptor(), Adapter<Grand>::descriptor(), Adapter<Harp>::descriptor(), Adapter<Flute>::descriptor(),
     Adapter<Strings>::descriptor(), Adapter<Horn>::descriptor(), Adapter<Trumpet>::descriptor(),
     Adapter<Trombone>::descriptor(), Adapter<Tuba>::descriptor(), Adapter<Oboe>::descriptor(),
     Adapter<Clarinet>::descriptor(), Adapter<Celesta>::descriptor(), Adapter<Crotales>::descriptor(),
@@ -1551,6 +1573,9 @@ const clap_plugin_t* createPlugin(const clap_plugin_factory_t*, const clap_host_
     }
     if (std::strcmp(pluginId, Piano::id) == 0) {
         return create<Piano>(host);
+    }
+    if (std::strcmp(pluginId, Grand::id) == 0) {
+        return create<Grand>(host);
     }
     if (std::strcmp(pluginId, Harp::id) == 0) {
         return create<Harp>(host);
@@ -1643,6 +1668,7 @@ bool presetProviderGetMetadata(const clap_preset_discovery_provider_t*, std::uin
                                const char* location, const clap_preset_discovery_metadata_receiver_t* receiver) noexcept
 {
     return receiver != nullptr && (describePreset<Piano>(locationKind, location, receiver) ||
+                                   describePreset<Grand>(locationKind, location, receiver) ||
                                    describePreset<Harp>(locationKind, location, receiver) ||
                                    describePreset<Flute>(locationKind, location, receiver) ||
                                    describePreset<Strings>(locationKind, location, receiver) ||

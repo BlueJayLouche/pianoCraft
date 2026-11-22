@@ -9,7 +9,8 @@ namespace pianocraft {
 
 class Soundboard {
 public:
-    void prepare(double sampleRate);
+    // The board of one piano (its BodyCalibration, model/PianoData.hpp).
+    void prepare(double sampleRate, const BodyCalibration& calibration);
     void reset();
     void setMicPosition(MicPosition position);
     // The centre output is one coherent microphone (the left one's view of the board), for mono.
@@ -38,6 +39,7 @@ private:
 
     std::array<Mode, modeLimit> modes_{};
     std::size_t modeCount_ = 0;
+    std::array<double, regionCount> directGain_{};
 };
 
 } // namespace pianocraft
