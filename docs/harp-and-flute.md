@@ -5,10 +5,14 @@ their own in the PianoCraft bundle: PianoCraft Harp and PianoCraft Flute. Both f
 orchestral-library conventions there: CC11 trims the output, pitch bend is ±2 semitones, there are
 no keyswitches, and articulations are parameters and presets.
 
-Neither has a reference corpus yet, so every law below is analytic: published physics, with
-constants set by ear and by `tests/orchestra_tests.cpp`. `tools/evaluate_model.py` scores only the
-piano. The clean-room policy applies unchanged: a calibration corpus for either needs a licence
-that permits analysis and derived-data distribution, recorded in `model/provenance.json`.
+The harp's decay law is fitted to VCSL's concert harp (CC0, one take per note, E1-F7 at mf and f;
+`tools/fit_harp.py`). Its other laws, and the flute's before the Iowa fit below, are analytic: published physics,
+with constants set by ear and by `tests/orchestra_tests.cpp`. The harp recordings' partial levels were measured
+but not fitted: single takes through one room colour each note on its own (a recording's 2nd and 3rd partials stand
+10-40 dB over its fundamental in the bass, and +10 dB at A4), and laws fitted to them improved the fitting notes
+(16.6 to 12 dB rms) but not the held-out ones (17.7 to 16). `tools/evaluate_model.py` scores only the
+piano. The clean-room policy applies unchanged: a calibration corpus needs a licence that permits analysis and
+derived-data distribution, recorded beside the others (`model/vcsl-provenance.json`, `model/iowa-provenance.json`).
 
 ## Harp
 
@@ -23,8 +27,8 @@ a quarter of its motion.
 | Fingertip: -12 dB/octave above 3 kHz x Brightness x (0.55 + 0.65 velocity) | Chosen by ear | A Gaussian corner left the top octave nearly a sine (C7's second harmonic -43 dB). |
 | Près de la table: pluck point moves to 0.06, corner x2.5, level -3 dB | Chosen by ear | Thin and guitar-like, as the articulation is described. |
 | Harmonics: the string an octave down, touched at its middle; only its even partials ring (odd ones at 6% for 50 ms) | Analytic | The key names the sounding pitch. Test: the string's own fundamental is >40 dB below the sounding one. |
-| Decay T60 = 5 s (f / 440 Hz)^-0.7 x Sustain Length | Chosen by ear | About 7 s at C4, 1.7 s at C7. f^-0.85 killed upper partials of mid strings within 2 s. |
-| Wire-wound bass strings lose more: a loss factor 2e-3 below E2, fading out by C4 (T60 = ln 1000 / (pi f eta)) | Chosen by ear | The bass sounded synthetic: a steady sawtooth, C2's 4th to 10th partials only 10-25 dB down after a second. Now 22-62 dB down. |
+| Decay T60 = 5.63 s (f / 440 Hz)^-0.922 x 2^(-0.256 (key - 60) / 12) x Sustain Length | Fitted | VCSL's concert harp (CC0, `model/vcsl-provenance.json`; `tools/fit_harp.py`): 405 partials' decays over their first 1-2 s, 23 keys at mf and f. A lighter string loses more to the soundboard at the same frequency, so the key term: a C4 fundamental 10 s, C7 1 s, G1's 35 s (the clamp). Mean error a factor of 1.5 (log2 0.58); fitted on even keys, the odd ones score 0.63. The old law with its wire loss was off by a factor of 3 (1.57). |
+| No extra wire loss | Fitted | The by-ear loss factor (2e-3 below E2, fading by C4) made the bass's partials die 3-8x faster than the recording's: G1's partials 2-16 at 14-41 dB/s, the recording's 3.5-8.5 (now 2.7-8.0). It was added because the bass 'sounded synthetic: a steady sawtooth'; the recording rings that long, so if it sounds synthetic again the cause is elsewhere (levels, beating). |
 | Pluck from rest: the modes start at full swing, so the string's static load on the board, their first sample, is taken off as the board springs back over a period | Analytic | The output starts at zero and steps when the kink reaches the bridge (about 0.7 ms at C4), a plucked string's square-wave force. Before, every note jumped to full level on its first sample, like a hammer. |
 | Tension modulation: a hard pluck stretches a low string, up to 8 cents x velocity^2 sharp, fading as its swing squared (half its T60 in time), C2 and below to nothing above E5 | Chosen by ear | The plucked string's twang. C2 ff: +6.5 cents at the pluck, under 1 cent by 2.4 s. |
 | Inharmonicity 1.5e-5 x 2^((key - 60) / 24) | Analytic | Gut and nylon are nearly harmonic; short treble strings stiffer. |
@@ -66,6 +70,6 @@ only if trills need it. Timbre moves Brightness continuously; it is a sustained 
 
 ## Next
 
-- A calibration corpus: recordings whose licence permits derived-data distribution, or Andrew's
-  own. Spectra by dynamic, decay times and the flute's noise level are the first things to fit.
+- The harp's partial levels: several takes per note (or a second corpus) to average the room out of them; VCSL's
+  single takes fit the decays but not the levels.
 - By ear first: the harp's soundbox, the flute's breath level, and its top octave.

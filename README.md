@@ -121,7 +121,8 @@ from a `.dawproject`. Their physics and what is still set by ear are in
 `docs/harp-and-flute.md`, `docs/oboe-and-clarinet.md`, `docs/strings-and-horn.md` and
 `docs/brass.md`, `docs/celesta-and-crotales.md` and `docs/vibraphone-and-handpan.md`. The brass, woodwinds, strings,
 crotales and vibraphone are calibrated against the University of Iowa's recordings (`tools/iowa_calibration.py`),
-and the celesta's bars against its orchestra bells; the harp and handpan have no reference corpus yet.
+and the celesta's bars against its orchestra bells. The harp's decays are fitted to VCSL's concert harp
+(`tools/fit_harp.py`); the handpan has no reference corpus yet.
 
 - **Harp:** one string per key (B0-G#7). Strings ring after note-off, so glissandi keep sounding.
   The strings the pedals sound (set by what you play) ring in sympathy. Controls: Pluck Position,

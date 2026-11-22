@@ -40,16 +40,17 @@ double radiusFor(double t60, double sampleRate) {
 }
 
 // Partial n of a string at A4 = 440 Hz: its frequency (gut and nylon nearly harmonic, short treble
-// strings stiffer) and its T60 x Sustain Length. The wire-wound bass strings' own losses, a loss
-// factor eta (T60 = ln 1000 / (pi f eta)), fade out by C4 where gut takes over: the bass loses its
-// upper partials soonest.
+// strings stiffer) and its T60 x Sustain Length. Fitted to VCSL's concert harp (tools/fit_harp.py): T60 falls
+// as (f / 440)^-0.92, and a lighter string loses more to the soundboard at the same frequency, 2^(0.26 / octave)
+// faster up the compass (its impedance falls). The wound bass strings are the slowest; the old by-ear wire loss
+// made them die 3-8x too fast.
 std::pair<double, double> partial(int stringKey, int n, double sustain) {
     const double fundamental = 440.0 * std::pow(2.0, (stringKey - 69) / 12.0);
     const double inharmonicity = 1.5e-5 * std::pow(2.0, (stringKey - 60) / 24.0);
-    const double eta = 2.0e-3 * std::clamp((60.0 - stringKey) / 20.0, 0.0, 1.0);
     const double k = static_cast<double>(n);
     const double frequency = k * fundamental * std::sqrt((1.0 + inharmonicity * k * k) / (1.0 + inharmonicity));
-    const double t60 = std::clamp(sustain / (1.0 / (5.0 * std::pow(frequency / 440.0, -0.7)) + pi * frequency * eta / ln1000), 0.08, 35.0);
+    const double t60 = std::clamp(sustain * 5.63 * std::pow(frequency / 440.0, -0.922) *
+                                      std::exp2(-0.256 * (stringKey - 60) / 12.0), 0.08, 35.0);
     return {frequency, t60};
 }
 
