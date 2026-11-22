@@ -464,14 +464,34 @@ def partner_db(midi):
     return -18.0 if midi < 85 else -18.0 - 17.0 * min(1.0, (midi - 85) / 15.0)
 
 
+def even(table):
+    """Each partial's per-key values, the running median of 5 keys and then their running mean over 5: a regulated piano.
+    Taken note by note, Meta's piano is uneven (E5's octave 7-10 dB over any neighbour's at every velocity, its fundamental
+    dropping to a hum where F5's fades; D#5 5 dB loud), and beats left single keys' decay fits far off. The median drops
+    one key's quirk; alone, it kept the edge between registers as a step (C#5-E5's octaves 17 dB over F5-G5's, between
+    E5 and F5), which the mean ramps. Age adds unevenness on purpose."""
+    from scipy.ndimage import median_filter, uniform_filter1d
+    return uniform_filter1d(median_filter(table, size=(5, 1), mode="nearest"), 5, axis=0, mode="nearest")
+
+
+def beats(power):
+    """Power averaged over 0.3 s (15 steps of 0.02 s), along the first axis: the envelope through a unison's beats.
+    Fitted in dB unaveraged, beats' dips pulled a decay fast and its aftersound low (C6's fundamental: -60 dB/s and
+    -19 dB, where its beat-averaged level falls at -21 and holds at -16), or failed it (G#7's, 7.8 dB rms, so the top
+    treble took the law: twice too fast). Data and curve are averaged alike."""
+    from scipy.ndimage import uniform_filter1d
+    return uniform_filter1d(power, 15, axis=0, mode="nearest")
+
+
 def fit_decays():
-    """Each partial's envelope at layer 3, fitted directly: its power, averaged over beats, as
+    """Each partial's envelope at layer 3, fitted directly: its power, averaged over beats (beats()), as
     A e^-2at + B e^-2bt over its own floor, from 0.03 s (or half the analysis window) to 5 s, in dB with a soft
     loss. A calibrated partial is a coupled unison: a its prompt decay, b its aftersound, B/A its slow mode's level.
     An extended partial is one string mode: one exponential. A fit counts where the partial rises 10 dB over its
     floor (at 20, the bass's upper partials, which ring on 15-20 dB over it for seconds, all took the surface and
     died 30 dB early by 1.6 s) and the fit stays within 4 dB rms; the others take a smooth surface through the counted ones (keys outside
-    the split, knots every 6 keys and 1/2 octave). Returns the three tables, as in the header."""
+    the split, knots every 6 keys and 1/2 octave). Then each partial is evened over 5 keys (even()). Returns the
+    three tables, as in the header."""
     from scipy.optimize import least_squares
     ref = reference()
 
@@ -487,7 +507,7 @@ def fit_decays():
         t = np.arange(max(win / 2, 0.03), min(5.0, len(x) / rate - win), 0.02)
         idx = (t * rate).astype(int)[:, None] - n // 2 + np.arange(n)[None, :]
         z = np.stack([x[idx, c] @ basis for c in (0, 1)])
-        db = 10 * np.log10(np.sum(np.abs(z) ** 2, axis=0) + 1e-24)
+        db = 10 * np.log10(beats(np.sum(np.abs(z) ** 2, axis=0)) + 1e-24)
         floor = ref[midi, 3]["floor"]
         rows = []
         for i, (k, f) in enumerate(zip(ks, fs)):
@@ -506,14 +526,14 @@ def fit_decays():
             if pair:
                 def curve(p):
                     a, b, l0, rdb = p
-                    return 10 * np.log10(10 ** (l0 / 10) * np.exp(-2 * a * t) +
-                                         10 ** ((l0 + rdb) / 10) * np.exp(-2 * min(a, b) * t) + noise)
+                    return 10 * np.log10(beats(10 ** (l0 / 10) * np.exp(-2 * a * t) +
+                                               10 ** ((l0 + rdb) / 10) * np.exp(-2 * min(a, b) * t)) + noise)
                 start = [a0, max(least_after, 0.2 * a0), level0, -20.0]
                 bounds = ([slow, least_after, level0 - 40, -60.0], [fast, fast, level0 + 40, -3.0])
             else:
                 def curve(p):
                     a, l0 = p
-                    return 10 * np.log10(10 ** (l0 / 10) * np.exp(-2 * a * t) + noise)
+                    return 10 * np.log10(beats(10 ** (l0 / 10) * np.exp(-2 * a * t)) + noise)
                 start, bounds = [a0, level0], ([slow, level0 - 40], [fast, level0 + 40])
             fit = least_squares(lambda p: curve(p) - y, np.clip(start, *bounds), bounds=bounds, loss="soft_l1", f_scale=3.0)
             rms = np.sqrt(np.mean((curve(fit.x) - y)[y > floor[i] + 6] ** 2))
@@ -544,6 +564,7 @@ def fit_decays():
                     table[m - 21, k - 1] = r[column] if r is not None and np.isfinite(r[column]) else v
         print(f"{['prompt', 'aftersound', 'aftersound level'][column]}: {len(rows)} partials fitted on fitting keys, "
               f"median {np.median([r[2] for r in rows]):+.2f}{'' if column == 2 else ' (log2)'}")
+    tables = [even(t) for t in tables]
     return np.clip(tables[0], -3, 3), np.clip(tables[1], -3, 3), np.clip(tables[2], -20, 15)
 
 
@@ -553,9 +574,9 @@ def fit_spectrum(rounds):
       recording minus model, less their median, so the instrument's loudness stays the engine's. Each partial weighs
       by the square root of its amplitude re the note's strongest (at least 0.05);
     - each key's partials: what is left of its own differences, in full where the recording holds the partial 10 dB
-      over its floor (the floor then biases its level by 0.4 dB), fading to none at 6 dB, within +-40 dB. At 20 dB and
-      +-25 the low bass's partials above 2 kHz, 14-19 dB over the floor and needing ~30 dB over the smooth surface,
-      stayed 7-14 dB weak at every velocity;
+      over its floor (the floor then biases its level by 0.4 dB), fading to none at 6 dB, within +-40 dB, then the
+      evened over 5 keys (even()). At 20 dB and +-25 the low bass's partials above 2 kHz, 14-19 dB over the floor and
+      needing ~30 dB over the smooth surface, stayed 7-14 dB weak at every velocity;
     - the velocity law: smooth surfaces (knots every 12 keys, uniform weights) through each partial's difference at
       layers 1 and 4 less its difference at layer 3;
     A partial the recording doesn't hold over its floor mustn't sound over that floor: it pulls down to it. The
@@ -609,6 +630,7 @@ def fit_spectrum(rounds):
             for k, v in zip(ks, left):
                 if k <= PARTIALS:
                     partial[midi - 21, k - 1] = np.clip(partial[midi - 21, k - 1] + v, -40, 40)
+        partial = even(partial)
         # The velocity law, layers 1 and 4.
         for i, layer in enumerate(FIT_LAYERS):
             rows = []

@@ -106,6 +106,12 @@ double band(const Row& row, double frequency) {
 // Selected on octave-band spectra: 0.25 scored better than 0 and 0.5 (docs/model-laws.md).
 constexpr double feltHysteresis = 0.25;
 
+// The board's modal Q as it builds a partial's radiation (setMicPosition). Meta's partials rise over a near-constant
+// 10-14 ms to ~3 kHz (Q = pi f tau: 20 at 300-600 Hz, 60 at 1.2-3 kHz). Selected on Meta's attacks: first 10 ms over
+// the body, the 1 ms peak and the rise time by register at velocity 40 and 120, and the attack's 2-8 kHz share. Q 30
+// built 2-3 kHz three times too fast, the attack 2 dB too bright; 300 scored as 100.
+constexpr double boardBuildQ = 100.0;
+
 double aftersoundDecaySeconds(double frequency) {
     return 16.87 * std::pow(frequency / 440.0, -0.444);
 }
@@ -268,6 +274,11 @@ InstrumentModel::InstrumentModel(double sampleRate) {
                 (normalization * sampleRate) / (1.0 + frequency / 500.0);
             const double fitted = std::pow(10.0, (band(radiationDb[index], frequency) + own) / 20.0);
             mode.output = mode.drive * fitted;
+            // Where a key's own table cuts a partial, the string has less of it, and the board and the sympathetic strings
+            // feel less too. Uncut, the board rang what the fit had taken out of the direct sound: D1's 49th partial, at
+            // -40 dB there, came back as loud as its neighbours, and forte bass notes held 7-11 dB more between their
+            // partials at 2-4 kHz than Meta's.
+            mode.drive *= std::min(1.0, std::pow(10.0, own / 20.0));
             mode.boost = std::max(0.0, 1.0 - 1.0 / fitted);
             mode.softDb = band(velocityDb[index][0], frequency);
             mode.loudDb = band(velocityDb[index][1], frequency);
@@ -314,10 +325,8 @@ InstrumentModel::InstrumentModel(double sampleRate) {
         key.residualCompliance = std::max(0.0, key.residualCompliance);
 
         // Longitudinal motion (Bank & Sujbert 2005): mode n feels -ES (n pi / L) / 2 times the
-        // cosine projection of the squared slope, which pairs partials j, k with j + k = n or
-        // |j - k| = n. Their simplification drives every longitudinal resonator with one odd and
-        // one even mode's input; modes 1 and 2 give all phantoms from adjacent and next-but-one
-        // partials: 2 sum(p_k p_k+1) + 2 (p_1^2 + 2 sum(p_k p_k+2)) with p_k = k q_k and the constant
+        // cosine projection of the squared slope. The engine drives every longitudinal resonator with the squared
+        // slope at the bridge, (sum p_k)^2 with p_k = k q_k, which pairs every two partials, times the constant
         // ES pi^3 / (8 L^2), ES = ratio^2 T. Each mode's bridge force is ES (pi / L) n a_n.
         {
             const double stiffness = longitudinalRatio * longitudinalRatio * tension;
@@ -533,7 +542,9 @@ void InstrumentModel::setMicPosition(MicPosition position) {
         //   nearer the commercial models', which sound brighter, leaner and more focused than the recordings).
         for (std::size_t modeIndex = 0; modeIndex < key.modeCount; ++modeIndex) {
             auto& mode = key.modes[modeIndex];
-            const double spread = std::fmod(modeIndex * 0.7548776662 + key.midi * 0.5698402910, 1.0) - 0.5;
+            // Per partial, so its two coupled modes share it. Hashed per mode, C6's slow mode sat at 160 degrees
+            // between the channels and its prompt at 132: in mono the aftersound fell 7 dB further than the prompt.
+            const double spread = std::fmod(mode.baseFrequency * 0.7548776662 + key.midi * 0.5698402910, 1.0) - 0.5;
             double phase = 0.0;
             if (position == MicPosition::spacedPair) {
                 phase = 2.0 * pi * spread * std::clamp((mode.frequency - 100.0) / 900.0, 0.0, 1.0);
@@ -550,6 +561,11 @@ void InstrumentModel::setMicPosition(MicPosition position) {
             // so the board's share of each partial keeps its phase to the direct one (rotating the direct sound alone
             // put them at random phases, and the octave spectra 0.7 dB further from the recordings).
             const double dispersion = 2.0 * pi * (std::fmod(mode.baseFrequency * 4.2360679775, 1.0) - 0.5);
+            // The board builds each partial's radiation as its modes ring up, over Q / (pi f), at most 10 ms: Meta's
+            // fundamentals rise over 10-40 ms (C4's from -14 dB at 80 ms's level, C6's over ~10). Struck at full level,
+            // the treble's first 10 ms stood 8-11 dB hotter over its body than Meta's and peaked 7-11 ms early. Uncapped
+            // (C3's fundamental over 70 ms) the bass's first 10 ms fell 20 dB short.
+            mode.build = std::exp(-1.0 / (std::min(boardBuildQ / (pi * mode.frequency), 0.010) * sampleRate_));
             // A phase shift is a mix of the current and previous outputs.
             const double omega = 2.0 * pi * mode.frequency / sampleRate_;
             const auto rotate = [&](double weight, double shift, double& current, double& previous) {

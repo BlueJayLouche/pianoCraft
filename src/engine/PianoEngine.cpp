@@ -62,7 +62,8 @@ struct Voice {
     const KeyModel* key = nullptr;
     NoteAddress address{};
     std::array<ModeState, modeLimit> modes{};
-    // While the hammer is on, the part of each mode's motion this strike put there: what the hammer meets.
+    // While the hammer is on (and the board builds its sound), the part of each mode's motion this strike put there:
+    // what the hammer meets.
     // A restruck string's ringing is rescaled to the new strike's gain (strike()), up to 100x for a soft
     // strike on a loud note, and read through the new strike's shares; met by the hammer, it threw it hard
     // enough to peak 36 dB over the loud note, and repeated restrikes grew without bound. The hammer now
@@ -71,6 +72,7 @@ struct Voice {
     // How far the fitted boosts reach that motion: 0 while the hammer is on, rising to 1 once it has left (see the
     // mode loop). Kept running until then.
     double ringBlend = 1.0;
+    std::array<double, modeLimit> unbuilt{}; // the share of this strike's sound the board has yet to build, per mode
     std::array<ModeState, longitudinalLimit> longitudinal{};
     HammerState hammer{};
     std::uint64_t age = 0;
@@ -132,6 +134,7 @@ struct Voice {
         modes = {};
         struckModes = {};
         ringBlend = 1.0;
+        unbuilt = {};
         longitudinal = {};
         hammer = {};
         age = 0;
@@ -557,6 +560,7 @@ struct PianoEngine::Impl {
             std::min({16.0 * voice.key->fundamental, 4000.0, 0.45 * sampleRate}) / sampleRate);
         voice.struckModes = {};
         voice.ringBlend = 0.0;
+        voice.unbuilt.fill(1.0);
         voice.hammer.position = voice.displacement - 0.004;
         voice.hammer.velocity = hammerSpeed(velocity);
         voice.hammer.mass = voice.key->hammerMass;
@@ -568,6 +572,10 @@ struct PianoEngine::Impl {
         // Below mf the knock falls 10 dB per halving of velocity, all of it (by force alone a soft note's first 16 ms
         // stood 5-7 dB hotter over its body than Meta's; 10 dB brings them within 1-3, 14 hardly further).
         voice.knockGain *= octaves < 0.0 ? std::exp2(octaves * 10.0 / 6.0206) : 1.0;
+        // Below mf it also falls 6 dB an octave above C4, all of it at velocity 40: there the treble's knock was most of
+        // its notes' first 10 ms, 4 dB hotter over their body than Meta's. At mf and above it stays: the top octave's
+        // level rests on it (falling at every velocity, G#7-B7 played 10-12 dB quiet).
+        voice.knockGain *= std::exp2(-std::max(0.0, (address.key - 60) / 12.0) * std::clamp(-octaves, 0.0, 1.0));
         voice.knockShelf = highShelf(std::min(1000.0, 0.45 * sampleRate), (octaves < 0.0 ? 20.0 : 8.0) * octaves *
                                      parameters[parameterIndex(ParameterId::velocityBrightness)], sampleRate);
     }
@@ -655,8 +663,8 @@ struct PianoEngine::Impl {
         // too little. While the hammer is on the string those modes follow its push, and lifted with them that push
         // was a burst: a note's first 4 ms stood 16-25 dB over its body (G4, C6), Meta's 5-9, rising from silence in
         // under 1 ms. This strike's own motion radiates without the lifts while the hammer is on, and they come in
-        // over 8 ms once it has left, as Meta's attacks build (2 and 4 ms left the peak 1.5-2 dB higher). A restruck
-        // string's ringing keeps them throughout.
+        // over 8 ms once it has left, as Meta's attacks build (2 and 4 ms left the peak 1.5-2 dB higher). The same motion
+        // rises as the board builds it (ModeCoefficients::build). A restruck string's ringing keeps both throughout.
         if (!struck && voice.ringBlend < 1.0) {
             voice.ringBlend = std::min(1.0, voice.ringBlend + ringStep);
         }
@@ -683,7 +691,8 @@ struct PianoEngine::Impl {
             bridge += state.y1 * coefficients.outputLeft + state.y2 * coefficients.outputLeftPrevious;
             drive += state.y1 * coefficients.driveCurrent + state.y2 * coefficients.drivePrevious;
             bridgeRight += state.y1 * coefficients.outputRight + state.y2 * coefficients.outputRightPrevious;
-            if (struck || unlifted > 0.0) {
+            if (struck || unlifted > 0.0 || voice.unbuilt[index] > 1.0e-4) {
+                voice.unbuilt[index] *= coefficients.build;
                 auto& own = voice.struckModes[index];
                 const double moved = input + a1 * own.y1 - a2 * own.y2;
                 own.y2 = own.y1;
@@ -691,7 +700,7 @@ struct PianoEngine::Impl {
                 if (struck) {
                     displacement += coefficients.strike * voice.unweight[index] * (a1 * own.y1 - a2 * own.y2);
                 }
-                const double cut = coefficients.boost * unlifted;
+                const double cut = 1.0 - (1.0 - coefficients.boost * unlifted) * (1.0 - voice.unbuilt[index]);
                 bridge -= cut * (own.y1 * coefficients.outputLeft + own.y2 * coefficients.outputLeftPrevious);
                 bridgeRight -= cut * (own.y1 * coefficients.outputRight + own.y2 * coefficients.outputRightPrevious);
             }
@@ -699,26 +708,18 @@ struct PianoEngine::Impl {
         voice.displacement = displacement;
         ++voice.age;
 
-        // Phantom partials: the squared string slope drives the longitudinal modes, whose force
-        // on the bridge carries sums of partial frequencies (Bank & Sujbert).
-        // ponytail: neighbouring primaries stand for partials k, k+1; a calibrated partial missing
-        // from the series pairs non-neighbours there. Pair by partial number if that is audible.
+        // Phantom partials: the squared string slope at the bridge drives the longitudinal modes, whose force on the
+        // bridge carries sums of partial frequencies (Bank & Sujbert): every pair of partials, f_j + f_k. Paired only
+        // with their neighbours (k with k+1 and k+2), each order had one phantom where Meta's forte bass has a cluster
+        // spread by inharmonicity: A#0-A#1's energy between their partials (0.4-4 kHz, 0.03-0.33 s) sat at -31 / -30 dB
+        // re the partials at velocity 40 / 120, Meta's -22 / -13; now -23 / -14, the 150-700 Hz phantoms +3.4 dB (were +0.1).
         if (key.longitudinalCount > 0) {
-            double adjacent = 0.0;
-            double skip = 0.0;
-            double previous = 0.0;
-            double beforePrevious = 0.0;
+            double slope = 0.0;
             for (std::size_t index = 0; index < key.primaryModeCount; ++index) {
-                const double slope = voice.modes[index].y1 * key.modes[index].slope;
-                adjacent += slope * previous;
-                skip += slope * beforePrevious;
-                beforePrevious = previous;
-                previous = slope;
+                slope += voice.modes[index].y1 * key.modes[index].slope;
             }
-            const double first = voice.modes[0].y1 * key.modes[0].slope;
             voice.phantomScale += phantomGlide * (voice.phantomTarget - voice.phantomScale);
-            const double excitation =
-                2.0 * key.longitudinalDrive * voice.phantomScale * (adjacent + first * first + 2.0 * skip);
+            const double excitation = key.longitudinalDrive * voice.phantomScale * slope * slope;
             double longitudinalForce = 0.0;
             double longitudinalDrive = 0.0;
             for (std::size_t index = 0; index < key.longitudinalCount; ++index) {

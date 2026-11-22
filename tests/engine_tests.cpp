@@ -441,20 +441,20 @@ void micPositionsAndWidth() {
             std::to_string(player));
     require(play(1.0, 1.0, true) == play(1.0, 1.0, false), "Mic change after prepare differs from before");
     // The close pair hears the strings' upper partials more directly: C3 brighter than through the spaced pair, by a
-    // third difference (18 dB an octave, weighting the top).
+    // second difference (12 dB an octave; a third weighted the top past 9 kHz, the sheen and the board, which the
+    // close pair's tilt doesn't reach, and moved 1 dB with the fitted tables).
     const auto top = [](double mic) {
         pianocraft::PianoEngine engine;
         engine.setParameter(pianocraft::ParameterId::micPosition, mic);
         engine.prepare(48000.0);
         engine.noteOn(note(48), 0.63);
         const auto x = render(engine, 24000, 64);
-        double high = 0.0, all = 0.0, d1 = 0.0, d2 = 0.0, previous = 0.0;
+        double high = 0.0, all = 0.0, d1 = 0.0, previous = 0.0;
         for (std::size_t i = 0; i < x.size(); i += 2) {
-            const double a = x[i] - previous, b = a - d1, c = b - d2;
+            const double a = x[i] - previous, b = a - d1;
             previous = x[i];
             d1 = a;
-            d2 = b;
-            high += c * c;
+            high += b * b;
             all += static_cast<double>(x[i]) * x[i];
         }
         return 10.0 * std::log10(high / all);
@@ -958,6 +958,78 @@ void strikesBuild() {
     }
 }
 
+// The board builds a strike's sound as its modes ring up (ModeCoefficients::build): C6's first 2 ms stand 14 dB under
+// its 10-14 ms, 10 without. Only the strike's own motion builds: a soft restrike of a ringing C4 doesn't dip (built
+// on the whole string, it dipped 17 dB).
+void boardBuilds() {
+    const auto power = [](const std::vector<float>& x, std::size_t from, std::size_t to) {
+        double sum = 0.0;
+        for (std::size_t i = 2 * from; i < 2 * to; ++i) {
+            sum += static_cast<double>(x[i]) * x[i];
+        }
+        return sum / (2.0 * (to - from)) + 1.0e-30;
+    };
+    {
+        pianocraft::PianoEngine engine; // the strings alone: the knock, into the board, starts at once
+        engine.setParameter(pianocraft::ParameterId::hammerNoise, 0.0);
+        engine.prepare(48000.0);
+        engine.noteOn(note(84, 1), 0.63);
+        const auto x = render(engine, 4800, 64);
+        const double top = peak(x);
+        std::size_t onset = 0;
+        while (std::abs(x[2 * onset]) < 0.01 * top && std::abs(x[2 * onset + 1]) < 0.01 * top) {
+            ++onset;
+        }
+        const double rise = 10.0 * std::log10(power(x, onset, onset + 96) / power(x, onset + 480, onset + 672));
+        require(rise < -12.0, "C6 doesn't build: its first 2 ms " + std::to_string(rise) + " dB re 10-14 ms");
+    }
+    {
+        pianocraft::PianoEngine engine;
+        engine.prepare(48000.0);
+        engine.setSustain(0, 1.0);
+        engine.noteOn(note(60, 1), 0.8);
+        render(engine, 24000, 64);
+        engine.noteOff(note(60, 1), 0.0);
+        const auto before = render(engine, 24000, 64);
+        engine.noteOn(note(60, 2), 0.3);
+        const auto after = render(engine, 4800, 64);
+        double lowest = 1.0e30;
+        for (std::size_t frame = 0; frame < 20; ++frame) {
+            lowest = std::min(lowest, power(after, frame * 48, frame * 48 + 96));
+        }
+        const double dip = 10.0 * std::log10(lowest / power(before, 24000 - 96, 24000));
+        require(dip > -1.0, "A soft restrike of a ringing C4 dips " + std::to_string(dip) + " dB");
+    }
+}
+
+// A unison's two modes are one partial: they reach the microphones with one phase between the channels. Hashed per
+// mode, C6's slow mode sat at 160 degrees and its prompt at 132, and in mono its aftersound fell 7 dB further.
+void unisonsShareTheirImage() {
+    const pianocraft::InstrumentModel model(48000.0);
+    for (int midi = 21; midi <= 108; ++midi) {
+        const auto& key = model.key(midi);
+        const auto between = [](const pianocraft::ModeCoefficients& mode) {
+            const std::complex<double> delay = std::polar(1.0, -2.0 * 3.141592653589793 * mode.frequency / 48000.0);
+            return std::arg((mode.outputRight + mode.outputRightPrevious * delay) /
+                            (mode.outputLeft + mode.outputLeftPrevious * delay));
+        };
+        for (std::size_t index = 0; index < key.modeCount; ++index) {
+            const auto& partner = key.modes[index];
+            if (!partner.secondary) {
+                continue;
+            }
+            for (std::size_t other = 0; other < key.modeCount; ++other) {
+                const auto& prompt = key.modes[other];
+                if (!prompt.secondary && prompt.baseFrequency == partner.baseFrequency) {
+                    const double difference = std::remainder(between(partner) - between(prompt), 2.0 * 3.141592653589793);
+                    require(std::abs(difference) < 0.01, "Key " + std::to_string(midi) + "'s unison splits its image by " +
+                                                                std::to_string(difference) + " rad");
+                }
+            }
+        }
+    }
+}
+
 int main() {
     try {
         modelIsStable();
@@ -984,6 +1056,8 @@ int main() {
         dampersLeaveAResidual();
         releasesThump();
         strikesBuild();
+        boardBuilds();
+        unisonsShareTheirImage();
         std::cout << "All engine tests passed\n";
         return 0;
     } catch (const std::exception& error) {

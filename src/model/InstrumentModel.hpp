@@ -21,6 +21,7 @@ struct ModeCoefficients {
     double excitation = 0.0;
     double output = 0.0; // radiation weight; the channels below add the mode's phase to it
     double boost = 0.0;  // the share of output the fitted tables added (1 - 1 / their gain; 0 where they cut)
+    double build = 0.0;  // per sample, the share of a new strike's radiation the board has yet to build
     double outputLeft = 0.0;
     double outputLeftPrevious = 0.0;
     double outputRight = 0.0;
