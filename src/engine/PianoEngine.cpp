@@ -955,7 +955,8 @@ void PianoEngine::prepare(double sampleRate) {
     for (std::size_t index = 0; index < pianoCount(); ++index) {
         impl_->models.push_back(std::make_unique<InstrumentModel>(sampleRate, piano(index)));
     }
-    impl_->pianoBanks.assign(pianoCount(), {});
+    impl_->pianoBanks.clear();
+    impl_->pianoBanks.resize(pianoCount()); // in place: a temporary of 88 banks overflows MSVC's 1 MB stack
     impl_->sampleRate = sampleRate;
     impl_->highpassCoefficient = 1.0 / (1.0 + 2.0 * 3.141592653589793 * 100.0 / sampleRate);
     impl_->phantomGlide = 1.0 - std::exp(-1.0 / (0.001 * sampleRate));
