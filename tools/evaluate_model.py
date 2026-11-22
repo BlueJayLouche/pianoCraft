@@ -31,15 +31,24 @@ from scipy.signal import butter, hilbert, sosfilt, sosfiltfilt
 
 warnings.filterwarnings("ignore", category=WavFileWarning)
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pianos import PIANO  # noqa: E402  PIANOCRAFT_PIANO picks which piano (tools/pianos.py)
+
 ROOT = Path(__file__).resolve().parents[1]
-AUDIO = ROOT / "calibration" / "meta-piano"
 RENDERER = Path(os.environ.get("PIANOCRAFT_RENDERER", ROOT / "build" / "pianocraft-render"))
-HEADER = ROOT / "src" / "model" / "CalibrationData.hpp"
-VELOCITY = {1: 40 / 127, 2: 60 / 127, 3: 80 / 127, 4: 120 / 127}
+HEADER = PIANO.calibration_header
+VELOCITY = PIANO.layers
 NAMES = ("C", "Cs", "D", "Ds", "E", "F", "Fs", "G", "Gs", "A", "As", "B")
 SCRATCH = Path(tempfile.mkdtemp(prefix="pianocraft-eval-"))
-HELD_OUT_KEYS = set(json.loads((ROOT / "model" / "provenance.json").read_text())["calibration"]["held_out_midi_notes"])
-FIT_KEYS = [midi for midi in range(21, 109) if midi not in HELD_OUT_KEYS]
+RECORDED_KEYS = PIANO.keys(3)
+HELD_OUT_KEYS = {midi for midi in json.loads((ROOT / "model" / "provenance.json").read_text())["calibration"]["held_out_midi_notes"]
+                 if midi in RECORDED_KEYS}
+FIT_KEYS = [midi for midi in RECORDED_KEYS if midi not in HELD_OUT_KEYS]
+
+
+def recorded(items):
+    """The keys, or (key, layer) pairs, the piano's recordings have (layer 3 for a bare key)."""
+    return [item for item in items if (PIANO.has(*item) if isinstance(item, tuple) else PIANO.has(item, 3))]
 
 
 def note_name(midi: int) -> str:
@@ -51,6 +60,8 @@ def fundamental(midi: int) -> float:
 
 
 def calibrated_partials() -> dict[int, list[float]]:
+    if not HEADER.exists():  # a piano not yet measured (tools/fit_piano.py measure)
+        return {}
     blocks = HEADER.read_text().split("CalibrationData{")[1:]
     return {21 + i: [float(f) for f in re.findall(r"PartialCalibration\{\d+, ([\d.e-]+)", block)]
             for i, block in enumerate(blocks)}
@@ -60,12 +71,12 @@ PARTIALS = calibrated_partials()
 
 
 def read(path: Path) -> tuple[int, np.ndarray]:
-    rate, data = wavfile.read(path)
-    return rate, data.astype(float) / 2**31
+    rate, data = wavfile.read(path)  # 24-bit files read as left-justified int32
+    return rate, data.astype(float) / {np.dtype("int16"): 2**15, np.dtype("int32"): 2**31}.get(data.dtype, 1)
 
 
 def reference(midi: int, layer: int) -> tuple[int, np.ndarray]:
-    return read(AUDIO / f"INSPiano_Vel0{layer}_{note_name(midi)}_01.wav")
+    return read(PIANO.path(midi, layer))
 
 
 def render(midi: int, layer: int, seconds: float, pedal: int = 0, body: float = 1.0,
@@ -73,12 +84,21 @@ def render(midi: int, layer: int, seconds: float, pedal: int = 0, body: float = 
     out = SCRATCH / f"{midi}-{layer}-{seconds}-{pedal}-{body}-{sympathy}.wav"
     if not out.exists():
         subprocess.run([str(RENDERER), str(out), str(midi), repr(VELOCITY[layer]), str(seconds), str(pedal),
-                        str(body), str(sympathy)], check=True)
+                        str(body), str(sympathy)] + (["0", f"18={PIANO.index}"] if PIANO.index else []), check=True)
     return read(out)
 
 
 def onset(mono: np.ndarray, fraction: float = 0.05) -> int:
-    return int(np.argmax(np.abs(mono) > fraction * np.abs(mono).max()))
+    """The first sample over fraction of the peak. For a corpus recorded over a room's noise (PIANO.room), also 20 dB
+    over the file's floor, its quietest 5% of 5 ms frames: Iowa's Steinway carries the hall's rumble at about
+    -67 dBFS, within reach of a pp note's 5% threshold, which found C4's onset 0.4 s before its attack and put every
+    soft note's measurements in the rumble. Meta's onsets keep the plain threshold its fits were made with (40 of its
+    files would move, by up to 12 ms). A render has no floor, so its onset never moves."""
+    threshold = fraction * np.abs(mono).max()
+    if PIANO.room and len(mono) >= 240:
+        frames = mono[:len(mono) // 240 * 240].reshape(-1, 240)
+        threshold = max(threshold, 10.0 * np.percentile(np.sqrt(np.mean(frames ** 2, axis=1)), 5))
+    return int(np.argmax(np.abs(mono) > threshold))
 
 
 def parallel(function, items):
@@ -123,7 +143,7 @@ def spectrum_error(layers: list[int]) -> float:
         audible = ref > floor + 6
         above = np.array([hi > fundamental(midi) for hi in BANDS[1:]])
         return np.where(above & audible, model - ref, np.maximum(model - np.where(audible, ref, floor), 0.0))
-    errors = np.concatenate(parallel(one, [(m, l) for m in (28, 36, 48, 60, 72, 84, 96) for l in layers]))
+    errors = np.concatenate(parallel(one, recorded([(m, l) for m in (28, 36, 48, 60, 72, 84, 96) for l in layers])))
     return float(np.sqrt(np.mean(np.clip(errors, -40, 40) ** 2)))
 
 
@@ -137,8 +157,9 @@ def key_level_errors(layer: int) -> np.ndarray:
     """Per-key RMS level (first 0.5 s) relative to MIDI 48, model minus reference."""
     def one(midi):
         return rms_level(*render(midi, layer, 1.5)) - rms_level(*reference(midi, layer))
-    errors = np.array(parallel(one, range(21, 109)))
-    return errors - errors[48 - 21]
+    keys = recorded(range(21, 109))
+    errors = dict(zip(keys, parallel(one, keys)))
+    return {midi: error - errors[48] for midi, error in errors.items()}
 
 
 def sustain_errors() -> dict[int, float]:
@@ -156,7 +177,7 @@ def sustain_errors() -> dict[int, float]:
     def one(midi):
         diff = curve(*render(midi, 3, 6.0, pedal=1, sympathy=0.0)) - curve(*reference(midi, 3))
         return float(np.sqrt(np.mean(np.clip(diff[np.isfinite(diff)], -30, 30) ** 2)))
-    keys = range(24, 109, 4)
+    keys = recorded(range(24, 109, 4))
     return dict(zip(keys, parallel(one, keys)))
 
 
@@ -166,7 +187,7 @@ def correlations(source) -> np.ndarray:
         start = int(np.argmax(np.abs(stereo).max(axis=1) > 0.05 * np.abs(stereo).max()))
         window = stereo[start + int(0.05 * rate):start + int(1.5 * rate)]
         return np.corrcoef(window[:, 0], window[:, 1])[0, 1]
-    return np.array(parallel(one, range(24, 106, 3)))
+    return np.array(parallel(one, recorded(range(24, 106, 3))))
 
 
 def halo(rate: int, stereo: np.ndarray, midi: int,
@@ -197,7 +218,7 @@ def halo_error() -> np.ndarray:
     notes = (36, 48, 57, 64, 69, 76, 84, 91)
     def one(midi):
         return halo(*render(midi, 3, 3.0, pedal=1), midi) - halo(*reference(midi, 3), midi)
-    return np.array(parallel(one, notes))
+    return np.array(parallel(one, recorded(notes)))
 
 
 def knock_error() -> float:
@@ -207,7 +228,7 @@ def knock_error() -> float:
     def one(midi):
         window = ((0.02, 0.1),)
         return (halo(*render(midi, 3, 1.0), midi, window) - halo(*reference(midi, 3), midi, window))[0]
-    return float(np.mean(parallel(one, notes)))
+    return float(np.mean(parallel(one, recorded(notes))))
 
 
 def phantom_level(rate: int, stereo: np.ndarray, midi: int) -> float:
@@ -235,7 +256,7 @@ def phantom_error() -> float:
     def one(item):
         midi, layer = item
         return phantom_level(*render(midi, layer, 1.5), midi) - phantom_level(*reference(midi, layer), midi)
-    return float(np.mean(parallel(one, items)))
+    return float(np.mean(parallel(one, recorded(items))))
 
 
 def velocity_span() -> tuple[float, float]:
@@ -243,7 +264,7 @@ def velocity_span() -> tuple[float, float]:
     def one(midi):
         rise = lambda source: rms_level(*source(midi, 4)) - rms_level(*source(midi, 1))
         return rise(lambda m, l: render(m, l, 1.5)) - rise(reference)
-    errors = np.array(parallel(one, range(24, 106, 6)))
+    errors = np.array(parallel(one, [m for m in range(24, 106, 6) if PIANO.has(m, 1) and PIANO.has(m, 4)]))
     return float(errors.mean()), float(errors.std())
 
 
@@ -264,7 +285,7 @@ def onset_error() -> tuple[float, float, float]:
     def one(item):
         midi, layer = item
         return onset_features(*render(midi, layer, 0.4), midi), onset_features(*reference(midi, layer), midi)
-    pairs = parallel(one, items)
+    pairs = parallel(one, recorded(items))
     model = np.array([p[0] for p in pairs])
     ref = np.array([p[1] for p in pairs])
     return float(model[:, 0].mean()), float(model[:, 0].max()), float(np.mean(model[:, 1] - ref[:, 1]))
@@ -279,8 +300,8 @@ def brightness_by_layer() -> dict[int, float]:
         ref, floor = octave_bands(*reference(midi, layer), floor=True)
         diff = octave_bands(*render(midi, layer, 1.0)) - ref  # the key held through the window, as recorded
         return layer, [diff[i] for i in high if ref[i] > floor[i] + 6]
-    results = parallel(one, [(m, l) for m in (36, 48, 60, 72, 84) for l in (1, 2, 3, 4)])
-    return {layer: float(np.mean([d for l, v in results if l == layer for d in v])) for layer in (1, 2, 3, 4)}
+    results = parallel(one, recorded([(m, l) for m in (36, 48, 60, 72, 84) for l in (1, 2, 3, 4)]))
+    return {layer: float(np.mean([d for l, v in results if l == layer for d in v])) for layer in sorted(PIANO.layers)}
 
 
 def attack_share(rate: int, stereo: np.ndarray) -> float:
@@ -298,8 +319,8 @@ def attack_brightness() -> dict[int, float]:
     def one(item):
         midi, layer = item
         return layer, attack_share(*render(midi, layer, 0.4)) - attack_share(*reference(midi, layer))
-    results = parallel(one, [(m, l) for m in (36, 48, 60, 72, 84) for l in (1, 2, 3, 4)])
-    return {layer: float(np.mean([d for l, d in results if l == layer])) for layer in (1, 2, 3, 4)}
+    results = parallel(one, recorded([(m, l) for m in (36, 48, 60, 72, 84) for l in (1, 2, 3, 4)]))
+    return {layer: float(np.mean([d for l, d in results if l == layer])) for layer in sorted(PIANO.layers)}
 
 
 # --- closed-form refits ----------------------------------------------------------------------
@@ -352,8 +373,8 @@ def decay_laws() -> tuple[tuple[float, float], tuple[float, float], str]:
 
 def level_law_correction(current_knee: float, current_exponent: float) -> tuple[float, float]:
     """Refit the key level law (gain = max(1, f0/knee)^exponent) on layers 1, 3 and 4, fitting keys."""
-    fit = np.array([midi - 21 for midi in FIT_KEYS])
-    errors = np.mean([key_level_errors(layer) for layer in (1, 3, 4)], axis=0)[fit]
+    levels = [key_level_errors(layer) for layer in (1, 3, 4)]
+    errors = np.array([np.mean([level[m] for level in levels]) for m in FIT_KEYS])
     f0 = np.array([fundamental(m) for m in FIT_KEYS])
     current = 20 * current_exponent * np.log10(np.maximum(1, f0 / current_knee))
     def total(c):
@@ -366,10 +387,11 @@ def level_law_correction(current_knee: float, current_exponent: float) -> tuple[
 def main() -> None:
     if not RENDERER.is_file():
         sys.exit("Build the renderer first: cmake --build build")
-    print(f"Renderer: {RENDERER}")
+    print(f"Renderer: {RENDERER}; piano {PIANO.name} ({PIANO.title})")
     print(f"spectrum error, fitting layers 1/3/4: {spectrum_error([1, 3, 4]):5.2f} dB")
-    print(f"spectrum error, held-out layer 2:     {spectrum_error([2]):5.2f} dB")
-    levels = dict(zip(range(21, 109), key_level_errors(3)))
+    if 2 in PIANO.layers:
+        print(f"spectrum error, held-out layer 2:     {spectrum_error([2]):5.2f} dB")
+    levels = key_level_errors(3)
     print(f"key level error std, layer 3:         {np.std(list(levels.values())):5.2f} dB "
           f"(fitting keys {np.std([levels[m] for m in FIT_KEYS]):4.2f}, "
           f"split keys {np.std([levels[m] for m in HELD_OUT_KEYS]):4.2f}); worst "

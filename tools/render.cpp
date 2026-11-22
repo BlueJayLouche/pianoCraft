@@ -113,10 +113,12 @@ int main(int argc, char** argv) {
         samples.reserve(static_cast<std::size_t>(totalFrames * 2));
         std::array<float, blockSize> left{};
         std::array<float, blockSize> right{};
+        // At the level the pianos are calibrated and scored at: the plugin's playback level and the piano's trim undone.
+        const double calibration = 1.0 / engine.calibrationGain();
         auto append = [&](std::uint32_t count) {
             for (std::uint32_t index = 0; index < count; ++index) {
-                samples.push_back(left[index]);
-                samples.push_back(right[index]);
+                samples.push_back(static_cast<float>(left[index] * calibration));
+                samples.push_back(static_cast<float>(right[index] * calibration));
             }
         };
 

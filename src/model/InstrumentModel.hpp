@@ -1,5 +1,7 @@
 #pragma once
 
+#include "model/PianoData.hpp"
+
 #include <array>
 #include <cstddef>
 
@@ -138,7 +140,10 @@ struct Voicing {
 
 class InstrumentModel {
 public:
-    explicit InstrumentModel(double sampleRate);
+    // One piano's model: the default, or any of piano(index) (model/PianoData.hpp).
+    explicit InstrumentModel(double sampleRate, const PianoData& piano = pianocraft::piano(0));
+
+    const PianoData& pianoData() const { return *piano_; }
 
     const KeyModel& key(int midi) const;
     // Recomputes key panning and each partial's right-channel phase (one sin/cos per mode).
@@ -148,6 +153,7 @@ public:
     void setVoicing(const Voicing& voicing);
 
 private:
+    const PianoData* piano_;
     std::array<KeyModel, instrumentKeyCount> keys_{};
     double sampleRate_ = 48000.0;
     double measuredA4_ = 440.0;

@@ -30,11 +30,19 @@ enum class ParameterId : std::uint32_t {
     stretch = 15,
     age = 16,
     pedalNoise = 17,
+    piano = 18, // which built-in piano (model/PianoData.hpp) new notes play
 };
 
 class PianoEngine {
 public:
     static constexpr std::size_t voiceCapacity = pianocraft::voiceCapacity;
+    // The plugin's level over the level the pianos are calibrated and scored at (+8 dB): at the default Output Gain a
+    // velocity-127 C4 peaks near -18 dBFS and a pedalled ff chord of six notes near -5 (at the calibration level
+    // they peaked at -26 and -13, very quiet beside other instruments).
+    static constexpr double playbackLevel = 2.512;
+    // playbackLevel and the selected piano's trim (PianoData::outputTrim): what tools/render.cpp divides out to
+    // render at the calibration level.
+    double calibrationGain() const;
     PianoEngine();
     ~PianoEngine();
 

@@ -12,13 +12,14 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <vector>
 #include <utility>
 
 namespace pianocraft {
 namespace {
 
 constexpr std::size_t voiceCount = voiceCapacity;
-constexpr std::size_t parameterCount = 18;
+constexpr std::size_t parameterCount = 19;
 
 std::size_t parameterIndex(ParameterId id) {
     return static_cast<std::size_t>(id) < parameterCount ? static_cast<std::size_t>(id) : 0;
@@ -66,6 +67,8 @@ constexpr std::size_t blockFrames = 64;
 struct Voice {
     const KeyModel* key = nullptr;
     const ModeBank* bank = nullptr; // the key's modes as the loop runs them
+    std::size_t piano = 0;          // the piano it was struck on, which it keeps
+    double trim = 1.0;              // and that piano's output trim (PianoData::outputTrim)
     NoteAddress address{};
     ModeStates modes{};
     // While the hammer is on (and the board builds its sound), the part of each mode's motion this strike put there:
@@ -188,8 +191,14 @@ struct Voice {
 } // namespace
 
 struct PianoEngine::Impl {
-    std::unique_ptr<InstrumentModel> model;
-    std::array<ModeBank, instrumentKeyCount> banks{}; // the model's modes packed for the voice loop
+    // Every built-in piano's model and its modes packed for the voice loop; new notes play the selected one, and a
+    // note keeps the piano it was struck on. Voicing and the mic position reach the selected piano, and again
+    // whichever is selected next.
+    std::vector<std::unique_ptr<InstrumentModel>> models;
+    std::vector<std::array<ModeBank, instrumentKeyCount>> pianoBanks;
+    std::size_t pianoIndex = 0;
+    InstrumentModel* model = nullptr;
+    std::array<ModeBank, instrumentKeyCount>* banks = nullptr;
     std::array<Voice, voiceCount> voices{};
     // Damper contact per channel: 1 with the pedal up, 0 with it down.
     std::array<double, 16> damperContact{};
@@ -295,9 +304,19 @@ struct PianoEngine::Impl {
         soundboard.setMicPosition(micPosition);
     }
 
+    // Points new notes at another piano. Its voicing and mic position are brought up to date: the mic at once, the
+    // voicing at the next render (~0.5 ms, once; a setup choice, not a performance one).
+    void selectPiano(std::size_t index) {
+        pianoIndex = std::min(index, models.size() - 1);
+        model = models[pianoIndex].get();
+        banks = &pianoBanks[pianoIndex];
+        applyMicPosition();
+        voicingDirty = true;
+    }
+
     void packBanks() {
-        for (std::size_t index = 0; index < banks.size(); ++index) {
-            banks[index].pack(model->key(static_cast<int>(index) + 21));
+        for (std::size_t index = 0; index < banks->size(); ++index) {
+            (*banks)[index].pack(model->key(static_cast<int>(index) + 21));
         }
     }
 
@@ -376,7 +395,8 @@ struct PianoEngine::Impl {
             damperContact[channel] = contact;
         }
         const double level = parameters[parameterIndex(ParameterId::pedalNoise)] *
-            (1.0 + parameters[parameterIndex(ParameterId::age)]); // worn trapwork rattles more
+            (1.0 + parameters[parameterIndex(ParameterId::age)]) * // worn trapwork rattles more
+            model->pianoData().outputTrim;                          // the piano played, as its voices
         if (speed == 0.0 && pedalThump == 0.0 && releaseSlow == 0.0 && releaseThump == 0.0) {
             return {0.0, 0.0, moved};
         }
@@ -417,7 +437,7 @@ struct PianoEngine::Impl {
     void releaseKey(std::int16_t channel, bool hasDamper) {
         const double contact = damperContact[channel >= 0 && channel < 16 ? static_cast<std::size_t>(channel) : 0];
         const double kick = parameters[parameterIndex(ParameterId::hammerNoise)] *
-            (hasDamper && contact > 0.5 ? 1.0 : 0.5);
+            (hasDamper && contact > 0.5 ? 1.0 : 0.5) * model->pianoData().outputTrim;
         // Keys' thumps are separate noises: they add in power (a whole chord let go is sqrt(n) louder, not n).
         const double added = std::sqrt(releaseSlow * releaseSlow + kick * kick) - releaseSlow;
         releaseFast += added;
@@ -465,7 +485,7 @@ struct PianoEngine::Impl {
         Voice* candidate = nullptr;
         for (auto& voice : voices) {
             if (targets(voice, {-1, address.port, address.channel, address.key}) && !voice.keyDown &&
-                !voice.choking) {
+                !voice.choking && voice.piano == pianoIndex) {
                 if (candidate == nullptr || voice.age < candidate->age) {
                     candidate = &voice;
                 }
@@ -549,7 +569,9 @@ struct PianoEngine::Impl {
         constexpr double referenceVelocity = 80.0 / 127.0;
         const bool ringing = voice.key != nullptr; // restruck, not a fresh voice
         voice.key = &model->key(address.key);
-        voice.bank = &banks[static_cast<std::size_t>(address.key - 21)];
+        voice.bank = &(*banks)[static_cast<std::size_t>(address.key - 21)];
+        voice.piano = pianoIndex;
+        voice.trim = model->pianoData().outputTrim;
         voice.address = address;
         voice.active = true;
         voice.keyDown = true;
@@ -910,8 +932,12 @@ struct PianoEngine::Impl {
             sheenRight = 0.6 * out[0] + 0.8 * out[1];
         }
         const double radiatedLeft = (radiated(voice, bridge, 0) + sheen) * gain;
-        const VoiceSample sample{radiatedLeft * voice.panLeft, (radiated(voice, bridgeRight, 1) + sheenRight) * gain * voice.panRight,
-                                 radiatedLeft * 0.5 * (voice.panLeft + voice.panRight), drive * gain, voice.knockLow[1]};
+        // Scaled by its piano's trim, all of it: what it radiates, drives into the board and the sympathetic strings, and
+        // knocks.
+        const VoiceSample sample{radiatedLeft * voice.panLeft * voice.trim,
+                                 (radiated(voice, bridgeRight, 1) + sheenRight) * gain * voice.panRight * voice.trim,
+                                 radiatedLeft * 0.5 * (voice.panLeft + voice.panRight) * voice.trim, drive * gain * voice.trim,
+                                 voice.knockLow[1] * voice.trim};
         voice.level = std::max({std::abs(sample.left), std::abs(sample.right), voice.level * 0.99995});
         if (!voice.hammer.active && voice.level < 1.0e-8 && voice.age > sampleRate) {
             voice.active = false;
@@ -925,7 +951,12 @@ PianoEngine::PianoEngine() : impl_(std::make_unique<Impl>()) {}
 PianoEngine::~PianoEngine() = default;
 
 void PianoEngine::prepare(double sampleRate) {
-    impl_->model = std::make_unique<InstrumentModel>(sampleRate);
+    impl_->models.clear();
+    for (std::size_t index = 0; index < pianoCount(); ++index) {
+        impl_->models.push_back(std::make_unique<InstrumentModel>(sampleRate, piano(index)));
+    }
+    impl_->pianoBanks.clear();
+    impl_->pianoBanks.resize(pianoCount()); // in place: a temporary of 88 banks overflows MSVC's 1 MB stack
     impl_->sampleRate = sampleRate;
     impl_->highpassCoefficient = 1.0 / (1.0 + 2.0 * 3.141592653589793 * 100.0 / sampleRate);
     impl_->phantomGlide = 1.0 - std::exp(-1.0 / (0.001 * sampleRate));
@@ -936,10 +967,13 @@ void PianoEngine::prepare(double sampleRate) {
     impl_->releaseFastDecay = std::exp(-1.0 / (0.003 * sampleRate));
     impl_->releaseSlowDecay = std::exp(-1.0 / (0.030 * sampleRate));
     impl_->releaseLowpass = 1.0 - std::exp(-2.0 * 3.141592653589793 * 500.0 / sampleRate);
-    impl_->soundboard.prepare(sampleRate);
+    impl_->pianoIndex = static_cast<std::size_t>(impl_->parameters[parameterIndex(ParameterId::piano)]);
+    impl_->model = impl_->models[std::min(impl_->pianoIndex, impl_->models.size() - 1)].get();
+    // ponytail: the board takes the selected piano's body calibration here only (every piano's is flat so far);
+    // glide it on a switch if one is fitted.
+    impl_->soundboard.prepare(sampleRate, impl_->model->pianoData().body);
     impl_->sympathetic.prepare(sampleRate, *impl_->model);
-    impl_->applyMicPosition();
-    impl_->voicingDirty = true;
+    impl_->selectPiano(impl_->pianoIndex);
     impl_->resetVoices();
 }
 
@@ -1056,6 +1090,9 @@ void PianoEngine::setParameter(ParameterId id, double value) {
         case ParameterId::age:
             value = std::clamp(value, 0.0, 1.0);
             break;
+        case ParameterId::piano:
+            value = std::clamp(std::round(value), 0.0, static_cast<double>(pianoCount() - 1));
+            break;
     }
     const bool voicing = id == ParameterId::sustainLength || id == ParameterId::damperRelease ||
         id == ParameterId::unisonDetune || id == ParameterId::aftersound ||
@@ -1070,6 +1107,13 @@ void PianoEngine::setParameter(ParameterId id, double value) {
         static_cast<int>(value) != static_cast<int>(impl_->micPosition)) {
         impl_->applyMicPosition();
     }
+    if (id == ParameterId::piano && impl_->model != nullptr && static_cast<std::size_t>(value) != impl_->pianoIndex) {
+        impl_->selectPiano(static_cast<std::size_t>(value));
+    }
+}
+
+double PianoEngine::calibrationGain() const {
+    return playbackLevel * (impl_->model != nullptr ? impl_->model->pianoData().outputTrim : 1.0);
 }
 
 double PianoEngine::parameterValue(ParameterId id) const {
@@ -1176,8 +1220,8 @@ void PianoEngine::render(float* left, float* right, std::uint32_t frameCount) {
                 wideLeft = mid + side;
                 wideRight = mid - side;
             }
-            const double outputLeft = impl_->highpass(wideLeft, 0) * impl_->smoothedGain;
-            const double outputRight = impl_->highpass(wideRight, 1) * impl_->smoothedGain;
+            const double outputLeft = impl_->highpass(wideLeft, 0) * impl_->smoothedGain * playbackLevel;
+            const double outputRight = impl_->highpass(wideRight, 1) * impl_->smoothedGain * playbackLevel;
             left[frame] = std::abs(outputLeft) < 1.0e-20 ? 0.0F : static_cast<float>(outputLeft);
             right[frame] = std::abs(outputRight) < 1.0e-20 ? 0.0F : static_cast<float>(outputRight);
         }

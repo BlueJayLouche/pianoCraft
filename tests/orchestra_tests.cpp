@@ -222,6 +222,22 @@ void harpTests() {
         expect(left == right, "harp at Stereo Width 0 is exactly mono");
     }
     {
+        // Re-plucking a ringing C2: the rise crossfades from its old motion, so the output doesn't step.
+        HarpEngine harp;
+        harp.prepare(48000.0);
+        const auto x = render(harp, 0.6, 48000.0, [&](std::size_t f) {
+            if (f == 0 || f == 24000) harp.noteOn(note(36), 0.9);
+        });
+        const auto largestStep = [&](std::size_t from, std::size_t to) {
+            double step = 0.0;
+            for (std::size_t n = from; n < to; ++n) step = std::max(step, std::abs(static_cast<double>(x[n]) - x[n - 1]));
+            return step;
+        };
+        const double ringing = largestStep(14400, 24000), replucked = largestStep(24000, 24004);
+        expect(replucked < 0.5 * ringing, "a re-plucked string doesn't step: " + std::to_string(replucked) + " against " +
+                                              std::to_string(ringing) + " ringing");
+    }
+    {
         const auto take = [] {
             HarpEngine harp;
             harp.prepare(48000.0);

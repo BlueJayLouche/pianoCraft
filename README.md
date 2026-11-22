@@ -6,7 +6,8 @@ scaled modal strings, coupled unison strings (Weinreich), phantom partials from
 longitudinal string motion (Bank & Sujbert), damper and sustain behavior,
 sympathetic resonance, and regional soundboard filters. Each key's strike point,
 each partial's level, how it brightens with velocity and its two-stage decay are
-fitted to the CC0 Meta Piano recordings (`tools/fit_piano.py`). It does not play
+fitted to recordings (`tools/fit_piano.py`): PianoCraft Upright to the CC0 Meta Piano
+recordings, PianoCraft Grand to the University of Iowa's Steinway B (`docs/pianos.md`). It does not play
 reference samples or use Pianoteq data.
 
 ## Build
@@ -118,8 +119,18 @@ bass. Close is chosen by reasoning, not measured: a starting point to voice by
 ear, nearer the brighter, more focused presentation of commercial piano models.
 
 Bitwig's preset browser lists five built-in voicings: Calibrated Upright
-(stereo), Close and Bright (Close, 6 dB louder, a quarter more sustain) and, for
-mono bounces, Whole, Lightly Worn (Age 0.3) and Most Worn (Age 1). They ship as marker files in the bundle's `Contents/Resources/Presets`,
+(stereo), Close and Bright (Close, 2 dB louder, a quarter more sustain) and, for
+mono bounces, Whole, Lightly Worn (Age 0.3) and Most Worn (Age 1).
+
+PianoCraft Grand is the same instrument with the Steinway B: the same parameters,
+pages and editor. Its presets are Calibrated Grand (stereo), Grand (Mono) and
+Close Grand (Close, 2 dB louder). Both pianos peak alike on ff chords; the Grand's
+single notes span a wider range, softer at mf and louder at ff.
+
+Both play 8 dB louder than 0.2.0 at the same Output Gain: at the default a velocity-127
+C4 peaks near -18 dBFS and a pedalled six-note ff chord near -5 (they peaked at -26 and
+-13, very quiet beside other instruments). Set Output Gain to 0.28 (from 0.7) to match
+an older project's level. They ship as marker files in the bundle's `Contents/Resources/Presets`,
 because Bitwig lists preset files, not presets held inside a plugin; the values
 live in `src/host/ClapHost.cpp`. Save your own as Bitwig presets.
 
@@ -210,7 +221,8 @@ so they suit setting by hand more than fast automation.
 ## Calibration and provenance
 
 See `docs/clean-room.md`, `model/provenance.json`, and
-`model/calibration-report.json`. The CC0 Meta Piano recordings are used only to
+`model/calibration-report.json`, and for the Grand `model/iowa-provenance.json`. The CC0 Meta Piano recordings and
+Iowa's Steinway B are used only to
 derive synthesis coefficients. The `calibration/` directory and raw audio are
 not distributed with the plugin.
 
@@ -221,10 +233,12 @@ To score the current build against the corpus and check the fitted model laws
 .venv/bin/python tools/evaluate_model.py --refit
 ```
 
-Each partial's measured frequency (`src/model/PartialTuning.hpp`; the bass's wound strings run up to two
-semitones flat of the stiff-string law by their 50th partial) and the strike positions, radiation, velocity and
-decay tables in `src/model/SpectrumCalibration.hpp` are regenerated from the recordings (about 15 minutes; each
-spectrum round renders all 352 notes):
+Each piano's data lives in `src/model/pianos/<name>/` (`docs/pianos.md`, which also says how to add one), and
+`PIANOCRAFT_PIANO` picks which piano the tools work on (`meta`, the default, or `steinway`). Each partial's
+measured frequency (`PartialTuning.hpp`; the bass's wound strings run up to two semitones flat of the
+stiff-string law by their 50th partial) and the strike positions, radiation, velocity and decay tables in
+`SpectrumCalibration.hpp` are regenerated from the recordings (about 15 minutes; each spectrum round renders every
+recorded note):
 
 ```sh
 .venv/bin/python tools/fit_piano.py tune

@@ -5,13 +5,12 @@ their own in the PianoCraft bundle: PianoCraft Harp and PianoCraft Flute. Both f
 orchestral-library conventions there: CC11 trims the output, pitch bend is ±2 semitones, there are
 no keyswitches, and articulations are parameters and presets.
 
-The harp's decay law is fitted to VCSL's concert harp (CC0, one take per note, E1-F7 at mf and f;
-`tools/fit_harp.py`). Its other laws, and the flute's before the Iowa fit below, are analytic: published physics,
-with constants set by ear and by `tests/orchestra_tests.cpp`. The harp recordings' partial levels were measured
-but not fitted: single takes through one room colour each note on its own (a recording's 2nd and 3rd partials stand
-10-40 dB over its fundamental in the bass, and +10 dB at A4), and laws fitted to them improved the fitting notes
-(16.6 to 12 dB rms) but not the held-out ones (17.7 to 16). `tools/evaluate_model.py` scores only the
-piano. The clean-room policy applies unchanged: a calibration corpus needs a licence that permits analysis and
+The harp's decay law, pluck point, partial levels, string levels, rise and pluck noise are fitted to or selected
+against VCSL's concert harp (CC0, one take per note, E1-F7 at mf and f; `tools/fit_harp.py`, whose `score` renders
+every take against its recording). Its other laws, and the flute's before the Iowa fit below, are analytic: published
+physics, with constants set by ear and by `tests/orchestra_tests.cpp`. Single takes through one room colour each note
+on its own (a recording's 2nd and 3rd partials stand 10-40 dB over its fundamental in the bass), so per-note levels
+don't carry to held-out notes; smooth laws through all of them do. `tools/evaluate_model.py` scores only the piano. The clean-room policy applies unchanged: a calibration corpus needs a licence that permits analysis and
 derived-data distribution, recorded beside the others (`model/vcsl-provenance.json`, `model/iowa-provenance.json`).
 
 ## Harp
@@ -19,12 +18,16 @@ derived-data distribution, recorded beside the others (`model/vcsl-provenance.js
 One string per key, B0 to G#7. Each string is a bank of two-pole modes (up to 40 partials, the
 first 12 doubled as the weaker, slower polarization along the board, 0.05% sharp). They ring until
 they die away, so a glissando's strings keep sounding with no re-damping. A re-plucked string keeps
-a quarter of its motion.
+a quarter of its motion, crossfading from the old over the new pluck's rise.
 
 | Law | Status | Source and check |
 |---|---|---|
-| Pluck: released from the finger's triangle, partial n drives the board with sin(n pi beta) / n | Analytic | The ideal plucked string (Fletcher & Rossing, *The Physics of Musical Instruments*, ch. 2); harpists pluck near a third to a half of the string (Chadefaux, Le Carrou & Fabre on harp plucking, JASA 2012-13). Pluck Position default 0.35. |
-| Fingertip: -12 dB/octave above 3 kHz x Brightness x (0.55 + 0.65 velocity) | Chosen by ear | A Gaussian corner left the top octave nearly a sine (C7's second harmonic -43 dB). |
+| Pluck: released from the finger's triangle, partial n drives the board with sin(n pi beta), falling 8.1 dB an octave of partial number; Pluck Position default 0.425 | Fitted (`fit_harp.py levels`) | The ideal plucked string's comb (Fletcher & Rossing, *The Physics of Musical Instruments*, ch. 2). Each take's comb puts its pluck point at 0.43 (median; quartiles 0.24-0.48), where harpists pluck, near a third to a half of the string (Chadefaux, Le Carrou & Fabre, JASA 2012-13). The old 0.35 put the third partial in the comb's notch, where the recordings' is strong. |
+| Radiation: the board, box and microphones, the same for every note, dB on half-octave knots from 30 Hz (`HarpCalibration.hpp`): highest at 300-700 Hz, a bass fundamental 20-30 dB down, falling 12-14 dB an octave above 2 kHz | Fitted (`levels`, then 4 rendered `rounds`) | Partial levels, each take level-matched: 9.4 dB rms per partial on the held-out (odd) keys, 10.4 with the old by-ear law; the bass 12.5 to 10.4. |
+| Fingertip: -12 dB/octave above 3 kHz x Brightness x (0.55 + 0.65 velocity), as a tilt about its mf place | Chosen by ear | At mf and Brightness 1 the fitted spectrum plays as measured; harder or brighter lifts the top. A Gaussian corner left the top octave nearly a sine. |
+| String level: 2.10 x - 1.45 x^2 dB, x octaves from C4: E1 15 dB under C4, C5-C6 a dB or two over, G7 7 under | Fitted (`score`) | Each take's 50-150 ms level, each dynamic about its mean: the odd keys' spread 6.5 dB at one level, 4.4 with it. |
+| Rise: the output comes in as 1 - (1 - t / 3 tau)^3, tau 8 ms at C2, 3.5 at C4, 2.2 at C6, the string leaving the fingertip | Selected (`score`) | Every note jumped in at once, its partials aligned: 6-11 dB over the recordings in its first 2 ms. The first 50 ms against the recordings', rms: middle 7.0 to 5.8 dB, treble 6.4 to 6.3; the bass's 8.6 is unmoved (its recordings build over 50 ms, as no rise of the whole does). |
+| Pluck noise: white, low-passed at 400 Hz and 3 kHz, dying with a 30 ms time constant, scaled with the note, into the voice so the board and the other strings hear it; x Pluck Noise, default 0.06 | Selected (`score`), level by ear | The finger and the board between the partials: with none the model stood 14-44 dB cleaner than the recordings there (a bare, synthetic pluck); at Pluck Noise 1 within 4 dB in every octave band 250 Hz-16 kHz to 80 ms (from G4 up, where 20 ms windows part the partials). That was too much by ear: it defaults to 0.06 (-24 dB). |
 | Près de la table: pluck point moves to 0.06, corner x2.5, level -3 dB | Chosen by ear | Thin and guitar-like, as the articulation is described. |
 | Harmonics: the string an octave down, touched at its middle; only its even partials ring (odd ones at 6% for 50 ms) | Analytic | The key names the sounding pitch. Test: the string's own fundamental is >40 dB below the sounding one. |
 | Decay T60 = 5.63 s (f / 440 Hz)^-0.922 x 2^(-0.256 (key - 60) / 12) x Sustain Length | Fitted | VCSL's concert harp (CC0, `model/vcsl-provenance.json`; `tools/fit_harp.py`): 405 partials' decays over their first 1-2 s, 23 keys at mf and f. A lighter string loses more to the soundboard at the same frequency, so the key term: a C4 fundamental 10 s, C7 1 s, G1's 35 s (the clamp). Mean error a factor of 1.5 (log2 0.58); fitted on even keys, the odd ones score 0.63. The old law with its wire loss was off by a factor of 3 (1.57). |
@@ -70,6 +73,6 @@ only if trills need it. Timbre moves Brightness continuously; it is a sustained 
 
 ## Next
 
-- The harp's partial levels: several takes per note (or a second corpus) to average the room out of them; VCSL's
-  single takes fit the decays but not the levels.
+- The harp's partial levels: several takes per note (or a second corpus) would average the room out of them; VCSL's
+  single takes leave 9-10 dB rms per partial about the smooth laws. The bass's slow 50 ms build-up is not modelled.
 - By ear first: the harp's soundbox, the flute's breath level, and its top octave.

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Calibrate the orchestral voices against the University of Iowa Musical Instrument Samples (model/iowa-provenance.json).
 
-    tools/iowa_calibration.py fetch                    download, check and convert the recordings (macOS: afconvert)
+    tools/iowa_calibration.py fetch [instrument]       download, check and convert the recordings (macOS: afconvert);
+                                                       piano is the Steinway B the Grand is fitted to (tools/pianos.py)
     tools/iowa_calibration.py reference <instrument>   analyse the recordings: calibration/iowa-mis/<instrument>/reference.json
     tools/iowa_calibration.py score <instrument>       render the model at the same notes and dynamics, and compare
     tools/iowa_calibration.py fit <brass>              fit a brass bell's high-pass and tone low-pass to the recordings
@@ -195,9 +196,11 @@ def read(path):
     return rate, x.mean(axis=1) if x.ndim > 1 else x
 
 
-def fetch():
+def fetch(only=None):
     record = json.loads(PROVENANCE.read_text())
     for source in record["sources"]:
+        if only is not None and source["instrument"] != only:
+            continue
         folder = CORPUS / source["instrument"]
         folder.mkdir(parents=True, exist_ok=True)
         if "files" in source:  # the strings: a file per string and range, no archive
@@ -232,6 +235,9 @@ def fetch_files(source, folder):
         digest = hashlib.sha256(aiff.read_bytes()).hexdigest()
         if digest != entry["sha256"]:
             sys.exit(f"{aiff}: sha256 {digest}, the provenance record says {entry['sha256']}")
+        if source["instrument"] == "piano":  # the Steinway B: PianoCraft's Grand (tools/pianos.py), named as Iowa names it
+            subprocess.run(["afconvert", "-f", "WAVE", "-d", "LEI16", str(aiff), str(folder / "wav" / f"{aiff.stem}.wav")], check=True)
+            continue
         if source["instrument"] in STRUCK:  # 24-bit, decays to the noise: kept at 32 bits
             subprocess.run(["afconvert", "-f", "WAVE", "-d", "LEI32", str(aiff), str(folder / "wav" / f"{aiff.stem}.wav")], check=True)
             continue
@@ -607,8 +613,8 @@ def modes(name):
 
 if __name__ == "__main__":
     command, *args = sys.argv[1:] or ["help"]
-    if command == "fetch" and not args:
-        fetch()
+    if command == "fetch" and len(args) <= 1:
+        fetch(*args)
     elif command == "modes" and len(args) == 1 and args[0] in STRUCK:
         modes(args[0])
     elif command in ("reference", "score") and len(args) == 1 and args[0] in INSTRUMENTS or command == "fit" and args and args[0] in BRASS:
