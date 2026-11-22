@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Fit the upright's spectrum to the Meta Piano corpus: each key's strike position, the radiation (board and
-microphones) and how the hammer brightens with velocity. Writes src/model/SpectrumCalibration.hpp.
+microphones) and how the hammer brightens with velocity. Writes src/model/SpectrumCalibration.hpp, and with tune,
+src/model/PartialTuning.hpp.
 
+    .venv/bin/python tools/fit_piano.py tune          each partial's frequency, followed up the recordings' series
     .venv/bin/python tools/fit_piano.py neutral       the analytic strike law and flat tables
     .venv/bin/python tools/fit_piano.py strike        fit each key's strike position from its recordings' notches
     .venv/bin/python tools/fit_piano.py decays        fit each partial's two-stage decay to its recorded envelope
@@ -30,6 +32,7 @@ import evaluate_model as ev  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 HEADER = ROOT / "src" / "model" / "SpectrumCalibration.hpp"
+TUNING = ROOT / "src" / "model" / "PartialTuning.hpp"
 CACHE = ROOT / "calibration" / "spectrum-reference.npz"
 KEYS = list(range(21, 109))
 FIT_LAYERS = (1, 4)  # layer 3 is the reference (0 dB); layer 2 is held out
@@ -52,13 +55,26 @@ def calibration():
 CAL = calibration()
 
 
-def partials(midi):
-    """The model's partial series: the calibrated partials, then the inharmonic law to TOP (InstrumentModel)."""
+def read_tuning():
+    if not TUNING.exists():
+        return np.zeros((88, PARTIALS))
+    body = TUNING.read_text().split("partialCents{")[1].split(";")[0]
+    values = [float(v) for v in re.findall(r"-?\d+(?:\.\d+)?", body)]
+    return np.array(values).reshape(88, PARTIALS) if values else np.zeros((88, PARTIALS))
+
+
+TUNE = read_tuning()
+
+
+def partials(midi, tuned=True):
+    """The model's partial series: the calibrated partials, then the inharmonic law, each moved by its measured
+    tuning (a partial past the table keeps the last one's), to TOP (InstrumentModel)."""
     f1, b, calibrated = CAL[midi]
-    series = {k: f for k, f in calibrated.items() if 0 < f <= TOP}
+    shift = (lambda k: 2 ** (TUNE[midi - 21, min(k, PARTIALS) - 1] / 1200)) if tuned else (lambda k: 1.0)
+    series = {k: f * shift(k) for k, f in calibrated.items() if 0 < f * shift(k) <= TOP}
     k = max(calibrated) + 1
     while len(series) < 112:
-        f = k * f1 * np.sqrt((1 + b * k * k) / (1 + b))
+        f = k * f1 * np.sqrt((1 + b * k * k) / (1 + b)) * shift(k)
         if f > TOP:
             break
         series[k] = f
@@ -132,6 +148,133 @@ def model(ref):
 
 def analytic_strike(midi):
     return float(np.clip(0.115 + (midi - 60) * 0.00045, 0.075, 0.145))
+
+
+def spectrum(midi, window):
+    """Layers 3 and 4's power spectra over window (s after the onset) summed, dB; None if the files are shorter."""
+    total = None
+    for layer in (3, 4):
+        rate, x = ev.reference(midi, layer)
+        mono = x.astype(float).mean(axis=1)
+        seg = mono[ev.onset(mono):][int(window[0] * rate):int(window[1] * rate)]
+        if len(seg) < rate // 2:
+            return None, None
+        n = 1 << 19
+        power = np.abs(np.fft.rfft(seg * np.hanning(len(seg)), n)) ** 2
+        total = power if total is None else total + power
+    return np.fft.rfftfreq(n, 1 / rate), 10 * np.log10(total + 1e-30)
+
+
+def track(midi, window):
+    """Each partial's frequency in the recording, layers 3 and 4's power spectra over window (s) summed: followed up
+    the series from the fundamental, partial k searched +-0.2 f1 about where the last two found ones extrapolate it
+    (along the model's own spacing), and taken at the strongest peak there if it stands 12 dB over that span's
+    median and within 0.15 f1 of the guess."""
+    f, s = spectrum(midi, window)
+    if f is None:
+        return {}
+    ks, base = partials(midi, tuned=False)
+    model, f1, found = dict(zip(ks, base)), CAL[midi][0], {}
+    for k in ks:
+        guess = model[k]
+        if len(found) >= 2:
+            a, b = sorted(found)[-2:]
+            guess = found[b] + (model[k] - model[b]) * (found[b] - found[a]) / (model[b] - model[a])
+        span = np.flatnonzero(np.abs(f - guess) < 0.2 * f1)
+        i = span[np.argmax(s[span])]
+        if s[i] > np.median(s[span]) + 12 and abs(f[i] - guess) < 0.15 * f1:
+            left, mid, right = s[i - 1], s[i], s[i + 1]
+            found[k] = f[i] + 0.5 * (left - right) / (left - 2 * mid + right) * (f[1] - f[0])
+    return found
+
+
+def fit_tuning():
+    """Each key's partials, cents on the series the model would play (partials(tuned=False)), from the late
+    spectrum (1-3 s), where phantoms and longitudinal modes have died and the transverse partials ring on; gaps
+    between them from the early one (0.05-1.55 s), and short notes (under 8 late partials) from it alone. A partial
+    more than 12 cents a partial off the last one kept (or a first one 30 cents off) was lost, and is dropped. Between
+    kept partials linear in k. A key moves only if 15 of its partials stand 6 dB stronger in the recording at their
+    tracked frequencies than at the model's (a track hopping between a unison's strings, from C2 up, finds both on a
+    peak); the others keep the model's series, which the calibration measured. Above the last kept partial, if past
+    the 25th, the law (f/k)^2 = a + b k^2 fitted to the upper half of those off the model's peaks, continuous with it
+    and never sharper; otherwise its offset holds. A key 45 cents off its moved neighbours at the 30th or 40th
+    partial keeps the model's series too. The bass's wound strings run flat of the stiff-string law, which the calibration
+    held above its 16th-or-so measured partial: D1 -20 cents at its 20th partial, -77 at the 30th, -214 at the
+    50th (a stiff beam's shear and rotary inertia, which the law leaves out)."""
+    table = np.zeros((88, PARTIALS))
+    for midi in KEYS:
+        late, early = track(midi, (1.0, 3.0)), track(midi, (0.05, 1.55))
+        found = late if len(late) >= 8 else early
+        if len(found) < 2:
+            continue
+        last = max(found)
+        found = {**{k: v for k, v in early.items() if k < last}, **found}
+        f1, b, calibrated = CAL[midi]
+        base = lambda k: calibrated.get(k, 0) or k * f1 * np.sqrt((1 + b * k * k) / (1 + b))
+        kept = {}
+        for k in sorted(found):  # a lost partial jumps; the real series drifts ~6 cents a partial at most
+            c = 1200 * np.log2(found[k] / base(k))
+            previous = max(kept) if kept else None
+            if (abs(c) <= 30 if previous is None else abs(c - kept[previous]) <= 12 * (k - previous)):
+                kept[k] = c
+        # A partial moves only where the recording holds it there and not where the model has it, 6 dB more: a
+        # track hopping to a unison's other string finds both on a peak, and leaves it.
+        f, s_ = spectrum(midi, (1.0, 3.0) if len(late) >= 8 else (0.05, 1.55))
+        level = lambda hz: s_[np.abs(f - hz) <= 0.5].max()
+        moved = {k for k, c in kept.items() if level(found[k]) >= level(base(k)) + 6}
+        if len(moved) < 15:
+            print(f"{ev.note_name(midi):4s} {len(moved):3d} partials off the model's peaks: the model's series")
+            continue
+        kept.setdefault(1, 0.0)  # the fundamental is calibrated
+        found = {k: base(k) * 2 ** (c / 1200) for k, c in kept.items()}
+        known, last = np.array(sorted(kept)), max(kept)
+        cents = np.array([kept[k] for k in known])
+        upper = np.array(sorted(k for k in moved if k >= last / 2))
+        law = None
+        if last >= 25 and len(upper) >= 4:
+            y = (np.array([found[k] for k in upper]) / upper) ** 2
+            slope, intercept = np.polyfit(upper.astype(float) ** 2, y, 1)
+            law = lambda k: k * np.sqrt(intercept + max(slope, 0.0) * k * k)
+        for k in range(1, PARTIALS + 1):
+            if k <= last:
+                table[midi - 21, k - 1] = np.interp(k, known, cents)
+            elif law is not None:  # never sharper than the last: the wound strings only drift flat
+                table[midi - 21, k - 1] = min(1200 * np.log2(law(k) / law(last) * found[last] / base(k)), cents[-1])
+            else:
+                table[midi - 21, k - 1] = cents[-1]
+        row = table[midi - 21]
+        print(f"{ev.note_name(midi):4s} {len(found):3d} partials to k{last}, {len(moved)} off the model's; cents at k10/20/30/40/60/100: " +
+              " ".join(f"{row[k - 1]:+6.1f}" for k in (10, 20, 30, 40, 60, 100)))
+    # Neighbouring strings drift alike. A key 45 cents off its moved neighbours' median (+-3 keys) at the 30th or 40th
+    # partial followed something else, as C#1-E1 do where their longitudinal resonances (13.06 f0 and its multiples)
+    # crowd the series.
+    moved = [i for i in range(88) if table[i].any()]
+    for i in list(moved):
+        near = [j for j in moved if j != i and abs(j - i) <= 3]
+        if near and np.max(np.abs(table[i, [29, 39]] - np.median(table[near][:, [29, 39]], axis=0))) > 45:
+            print(f"{ev.note_name(i + 21):4s} off its neighbours: the model's series")
+            table[i] = 0.0
+    return np.clip(table, -600, 100)
+
+
+def write_tuning(table):
+    rows = ",\n".join("    {{" + ", ".join(f"{v:.1f}" for v in row) + "}}" for row in table)
+    TUNING.write_text(f"""#pragma once
+
+// Generated by tools/fit_piano.py (tune). Do not edit.
+#include <array>
+#include <cstddef>
+
+namespace pianocraft {{
+
+// Each key's partials 1-{PARTIALS}, cents on the series the model would otherwise play (its calibrated partials, then
+// the stiff-string law), where the recordings hold them. A partial past the table keeps the last one's.
+inline constexpr std::size_t tuningPartials = {PARTIALS};
+inline constexpr std::array<std::array<float, tuningPartials>, 88> partialCents{{{{
+{rows}}}}};
+
+}} // namespace pianocraft
+""")
 
 
 def read_header():
@@ -409,8 +552,10 @@ def fit_spectrum(rounds):
     - the radiation: a smooth surface (knots every 6 keys, 1/6 octave) through layer 3's level differences,
       recording minus model, less their median, so the instrument's loudness stays the engine's. Each partial weighs
       by the square root of its amplitude re the note's strongest (at least 0.05);
-    - each key's partials: what is left of its own differences, in full where the recording holds the partial 20 dB
-      over its floor, fading to none at 10 dB, within +-25 dB;
+    - each key's partials: what is left of its own differences, in full where the recording holds the partial 10 dB
+      over its floor (the floor then biases its level by 0.4 dB), fading to none at 6 dB, within +-40 dB. At 20 dB and
+      +-25 the low bass's partials above 2 kHz, 14-19 dB over the floor and needing ~30 dB over the smooth surface,
+      stayed 7-14 dB weak at every velocity;
     - the velocity law: smooth surfaces (knots every 12 keys, uniform weights) through each partial's difference at
       layers 1 and 4 less its difference at layer 3;
     A partial the recording doesn't hold over its floor mustn't sound over that floor: it pulls down to it. The
@@ -459,11 +604,11 @@ def fit_spectrum(rounds):
         for midi in KEYS:
             ks, fs = partials(midi)
             surface = bilinear(np.full(len(fs), midi), fs, key_knots, band_knots) @ coef
-            trust = np.clip((lv[midi, 3] - fl[midi, 3] - 10) / 10, 0, 1)
-            left = np.clip(diff[midi, 3] - offset - surface, -25, 25) * trust
+            trust = np.clip((lv[midi, 3] - fl[midi, 3] - 6) / 4, 0, 1)
+            left = np.clip(diff[midi, 3] - offset - surface, -40, 40) * trust
             for k, v in zip(ks, left):
                 if k <= PARTIALS:
-                    partial[midi - 21, k - 1] = np.clip(partial[midi - 21, k - 1] + v, -25, 25)
+                    partial[midi - 21, k - 1] = np.clip(partial[midi - 21, k - 1] + v, -40, 40)
         # The velocity law, layers 1 and 4.
         for i, layer in enumerate(FIT_LAYERS):
             rows = []
@@ -510,7 +655,12 @@ def score(result=None, quiet=False):
 
 if __name__ == "__main__":
     command, *args = sys.argv[1:] or ["help"]
-    if command == "neutral":
+    if command == "tune":
+        write_tuning(fit_tuning())
+        CACHE.unlink(missing_ok=True)  # measured at the old frequencies
+        subprocess.run(["cmake", "--build", str(ROOT / "build"), "--target", "pianocraft-render"], check=True,
+                       capture_output=True)
+    elif command == "neutral":
         write_header([analytic_strike(m) for m in KEYS], 0.0, *flat(), "neutral")
     elif command == "strike":
         write_header(*fit_strike(), *read_header()[2:], "strike positions")

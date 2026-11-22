@@ -82,7 +82,7 @@ Strings, Tuning, Age, Mix) and maps three remote-control pages onto its device k
 - **Voicing:** Age, Unison Detune (how far each unison's strings are apart: more
   beating and more aftersound, as on a real piano; 0 is perfectly in tune and
   leaves a single decay), Aftersound (level of the long second-stage tail),
-  Damper Release, Hammer Noise, Mic Position,
+  Damper Release, Hammer Noise (the hammer's knock, and the thump of a key let go), Mic Position,
   Master Tune (A4 in Hz), Stretch (1 is the recorded piano's octave stretch,
   0 equal temperament, 2 double).
 - **Pedal:** Pedal Noise, Damper Release, Sympathetic Level.
@@ -95,11 +95,16 @@ dampers land and 49 dB as they lift, with the strings' shimmer fainter still. A
 pedal moved over 300 ms knocks 20 dB quieter. The dampers ride the pedal's
 motion, a full stroke taking about 25 ms. Age makes it up to twice as loud. The
 levels are chosen, not measured: the reference recordings have no pedal noise.
+A key let go thumps too, as its key, jack and damper fall back: about 42 dB under
+a mf C4's peak and gone within 100 ms (half as loud with the pedal down), set from
+VCSL's Yamaha upright release samples and scaled by Hammer Noise.
 
 Age (0 to 1) wears the piano as one control, a little differently on every key
-but identically on every render: pitch slackens about 25 cents with uneven
-tuning and stretch, unisons drift apart, some dampers leak, hammers harden
-unevenly, and key response turns uneven. At 0 it is the calibrated piano.
+but identically on every render: pitch slackens about 35 cents with uneven
+tuning and stretch, unisons drift 6-38 cents apart, some dampers leak, hammers
+harden unevenly, and key response turns uneven. The pitch and the unisons are
+those of the old upright recorded for the score (C4-A4: 35 cents flat, unisons
+11-38 cents apart). At 0 it is the calibrated piano.
 
 Stereo Width 0 is a true mono render: one coherent microphone, so summing to
 mono can't comb-filter at any Mic Position. Use it for mono bounces; widths
@@ -209,10 +214,13 @@ To score the current build against the corpus and check the fitted model laws
 .venv/bin/python tools/evaluate_model.py --refit
 ```
 
-The strike positions, radiation, velocity and decay tables in `src/model/SpectrumCalibration.hpp` are
-regenerated from the recordings (about 15 minutes; each spectrum round renders all 352 notes):
+Each partial's measured frequency (`src/model/PartialTuning.hpp`; the bass's wound strings run up to two
+semitones flat of the stiff-string law by their 50th partial) and the strike positions, radiation, velocity and
+decay tables in `src/model/SpectrumCalibration.hpp` are regenerated from the recordings (about 15 minutes; each
+spectrum round renders all 352 notes):
 
 ```sh
+.venv/bin/python tools/fit_piano.py tune
 .venv/bin/python tools/fit_piano.py neutral
 .venv/bin/python tools/fit_piano.py strike
 .venv/bin/python tools/fit_piano.py decays

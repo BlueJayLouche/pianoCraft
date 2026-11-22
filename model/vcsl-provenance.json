@@ -1,50 +1,374 @@
 {
-  "schema_version": 1,
-  "instrument": "PianoCraft Upright: the dampers' two-stage release (KeyModel::residualRatio, residualDelay; the release law's partial slope)",
-  "corpus": "Versilian Community Sample Library (VCSL), Upright Piano, Knight (sampled by Simon Dalzell of Ivy Audio for VSCO 2 Pro)",
-  "license": "CC0-1.0 (https://github.com/sgossner/VCSL, repository licence read 2026-11-22)",
-  "usage": "Analysis and selected synthesis constants only (src/model/InstrumentModel.cpp); raw audio stays in calibration/vcsl (git-ignored) and is never bundled or played",
-  "note": "File tags name the octave one low: Knight 'A3' sounds at 441 Hz (MIDI 69). Releases hold the note ~0.3 s, then the damper lands.",
-  "sources": [
+  "schema_version": 2,
+  "corpus": "Versilian Community Sample Library (VCSL), https://github.com/sgossner/VCSL",
+  "license": "CC0-1.0 (repository licence read 2026-11-22)",
+  "usage": "Analysis and selected synthesis constants only; raw audio stays in calibration/vcsl (git-ignored) and is never bundled or played",
+  "calibrations": [
     {
-      "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Releases/Player_rel_rr1_A0.wav",
-      "file": "calibration/vcsl/knight/rel_A0.wav",
-      "sha256": "4099b59f2bc8dd0fdcd9b6d6821346203433f4ac19da9f27a73da3d011fc2ade"
+      "instrument": "PianoCraft Upright: the dampers' two-stage release (KeyModel::residualRatio, residualDelay; the release law's partial slope)",
+      "source": "Upright Piano, Knight (sampled by Simon Dalzell of Ivy Audio for VSCO 2 Pro)",
+      "note": "File tags name the octave one low: Knight 'A3' sounds at 441 Hz (MIDI 69). Releases hold the note ~0.3 s, then the damper lands.",
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Releases/Player_rel_rr1_A0.wav",
+          "file": "calibration/vcsl/knight/rel_A0.wav",
+          "sha256": "4099b59f2bc8dd0fdcd9b6d6821346203433f4ac19da9f27a73da3d011fc2ade"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Releases/Player_rel_rr1_A1.wav",
+          "file": "calibration/vcsl/knight/rel_A1.wav",
+          "sha256": "d5dccc85819b4b8920f0c106bf95367344df2b28107f3c3aa93f1c1ecdd17658"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Releases/Player_rel_rr1_A2.wav",
+          "file": "calibration/vcsl/knight/rel_A2.wav",
+          "sha256": "34f54900748a67dd645ab953a30784b67445a6932df4d9a798a57d23b5f012b8"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Releases/Player_rel_rr1_A3.wav",
+          "file": "calibration/vcsl/knight/rel_A3.wav",
+          "sha256": "be910c14267d368c5a4b4cc91ec2f3b2d49213c6bd201d3b2e186e1f770e4ed5"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Releases/Player_rel_rr1_A4.wav",
+          "file": "calibration/vcsl/knight/rel_A4.wav",
+          "sha256": "521c0e32b6c94b4eceb437669beb67cd2aba8d8f3b51e884e0762bc0d35c4996"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Sustains/Player_vl2_rr1_A1.wav",
+          "file": "calibration/vcsl/knight/sus_A1.wav",
+          "sha256": "ac6644ffc1aa25d194f024d3abdae4f06d6dff1ae42ba2a7e8edc1fddcdff12b"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Sustains/Player_vl2_rr1_A2.wav",
+          "file": "calibration/vcsl/knight/sus_A2.wav",
+          "sha256": "0914913456c74ec906e7cfed81a4b2986658c8a006e2f278dfa49784215b1a4b"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Sustains/Player_vl2_rr1_A3.wav",
+          "file": "calibration/vcsl/knight/sus_A3.wav",
+          "sha256": "cc8b22d1779248f6edc88fa5d072b8ce8b51b06fbe62be3d3d19a324d1da9030"
+        }
+      ]
     },
     {
-      "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Releases/Player_rel_rr1_A1.wav",
-      "file": "calibration/vcsl/knight/rel_A1.wav",
-      "sha256": "d5dccc85819b4b8920f0c106bf95367344df2b28107f3c3aa93f1c1ecdd17658"
+      "instrument": "PianoCraft Upright: the key-release thump (PianoEngine releaseKnockLevel and its envelope)",
+      "source": "Upright Piano, Yamaha ('Upright No. 1', VSCO 2 CE, cleaned and recut)",
+      "note": "Releases are unpitched, 100 Hz-1 kHz, peak ~8 ms in, 20 dB down 50-80 ms later. A vl2 release peaks 37/42/32 dB under its vl2 note (C2/C4/C6, 5 ms frames); the release layers' levels don't follow velocity.",
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano%2C%20Yamaha/Sustains/Upright1_Sus_C2_vl1_rr1.wav",
+          "file": "calibration/vcsl/yamaha/Sus_C2_vl1.wav",
+          "sha256": "355a8143f827a30f58f1a5102b9f3b980bd743ab0e22009e016ff237781e8d01"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano%2C%20Yamaha/Sustains/Upright1_Sus_C2_vl2_rr1.wav",
+          "file": "calibration/vcsl/yamaha/Sus_C2_vl2.wav",
+          "sha256": "d2dee43a796d36a1e58d958ba850ed2db87080ca86c0b7c584c2ff00eaf8a449"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano%2C%20Yamaha/Sustains/Upright1_Sus_C2_vl3_rr1.wav",
+          "file": "calibration/vcsl/yamaha/Sus_C2_vl3.wav",
+          "sha256": "067d188abc22d9b09430d83196e745acedd89e097f28b1581f84a89249a941aa"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano%2C%20Yamaha/Sustains/Upright1_Sus_C4_vl1_rr1.wav",
+          "file": "calibration/vcsl/yamaha/Sus_C4_vl1.wav",
+          "sha256": "4c8ae105fe25cee84c27b61a92a863bd0bb1ed05b40561d2c99557dd2cd598b5"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano%2C%20Yamaha/Sustains/Upright1_Sus_C4_vl2_rr1.wav",
+          "file": "calibration/vcsl/yamaha/Sus_C4_vl2.wav",
+          "sha256": "39fdc55747ce7c0bd09215a357b577274c4c02928bf48972441ba6f47ec6e0a4"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano%2C%20Yamaha/Sustains/Upright1_Sus_C4_vl3_rr1.wav",
+          "file": "calibration/vcsl/yamaha/Sus_C4_vl3.wav",
+          "sha256": "8562da511e27d0b5dec5e2264e81b71e54638f994ffc4582a61a6154f33f779d"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano%2C%20Yamaha/Sustains/Upright1_Sus_C6_vl2_rr1.wav",
+          "file": "calibration/vcsl/yamaha/Sus_C6_vl2.wav",
+          "sha256": "79c10a36a4dddd5bb118ebac9ec73af83d05f49c771401bfaaf90c1e66667b19"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano%2C%20Yamaha/Sustains/Upright1_Sus_C6_vl3_rr1.wav",
+          "file": "calibration/vcsl/yamaha/Sus_C6_vl3.wav",
+          "sha256": "00296652329e502e0a16ff36425602f45e14c3cdc0609976b1ee166a77460b54"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano%2C%20Yamaha/Releases/Upright1_Rel_C2_vl1_rr1.wav",
+          "file": "calibration/vcsl/yamaha/Rel_C2_vl1.wav",
+          "sha256": "641c2329aa60e90004c4d28c21954ccadb05304b71f517a0bbdcd1d3b53bd80d"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano%2C%20Yamaha/Releases/Upright1_Rel_C2_vl2_rr1.wav",
+          "file": "calibration/vcsl/yamaha/Rel_C2_vl2.wav",
+          "sha256": "e1d0981faeea8e5d31d2efa9421971a3b319264342a95ecbc265851fb3115308"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano%2C%20Yamaha/Releases/Upright1_Rel_C2_vl3_rr1.wav",
+          "file": "calibration/vcsl/yamaha/Rel_C2_vl3.wav",
+          "sha256": "cd1957479279b2ac95e6a11f28d87a7a64177cb55ba426f61ff27f7480b99fe5"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano%2C%20Yamaha/Releases/Upright1_Rel_C4_vl1_rr1.wav",
+          "file": "calibration/vcsl/yamaha/Rel_C4_vl1.wav",
+          "sha256": "94882eebcf2b9fb795ba7ed740e49766eb8bef682975a9b892cc9c3a0cd3852a"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano%2C%20Yamaha/Releases/Upright1_Rel_C4_vl2_rr1.wav",
+          "file": "calibration/vcsl/yamaha/Rel_C4_vl2.wav",
+          "sha256": "d491b4229ab28c5877a2b39d0f4f842ace2e7f34c86297d79f720abc106b9f01"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano%2C%20Yamaha/Releases/Upright1_Rel_C4_vl3_rr1.wav",
+          "file": "calibration/vcsl/yamaha/Rel_C4_vl3.wav",
+          "sha256": "9235030ed7bb64bd7b5f779de7a164d6e648b93d4476069d959c840c6751244d"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano%2C%20Yamaha/Releases/Upright1_Rel_C6_vl2_rr1.wav",
+          "file": "calibration/vcsl/yamaha/Rel_C6_vl2.wav",
+          "sha256": "c66b36ac657f1a54ddddcb844c408cce5b944d9c6fcb6b107e3188e92f8da9bf"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano%2C%20Yamaha/Releases/Upright1_Rel_C6_vl3_rr1.wav",
+          "file": "calibration/vcsl/yamaha/Rel_C6_vl3.wav",
+          "sha256": "c97c2941eb2b8f8758d2fb826d7fb859a43f4e7455f279eb663bcb85d129427c"
+        }
+      ]
     },
     {
-      "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Releases/Player_rel_rr1_A2.wav",
-      "file": "calibration/vcsl/knight/rel_A2.wav",
-      "sha256": "34f54900748a67dd645ab953a30784b67445a6932df4d9a798a57d23b5f012b8"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Releases/Player_rel_rr1_A3.wav",
-      "file": "calibration/vcsl/knight/rel_A3.wav",
-      "sha256": "be910c14267d368c5a4b4cc91ec2f3b2d49213c6bd201d3b2e186e1f770e4ed5"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Releases/Player_rel_rr1_A4.wav",
-      "file": "calibration/vcsl/knight/rel_A4.wav",
-      "sha256": "521c0e32b6c94b4eceb437669beb67cd2aba8d8f3b51e884e0762bc0d35c4996"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Sustains/Player_vl2_rr1_A1.wav",
-      "file": "calibration/vcsl/knight/sus_A1.wav",
-      "sha256": "ac6644ffc1aa25d194f024d3abdae4f06d6dff1ae42ba2a7e8edc1fddcdff12b"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Sustains/Player_vl2_rr1_A2.wav",
-      "file": "calibration/vcsl/knight/sus_A2.wav",
-      "sha256": "0914913456c74ec906e7cfed81a4b2986658c8a006e2f278dfa49784215b1a4b"
-    },
-    {
-      "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Zithers/Upright%20Piano,%20Knight/Sustains/Player_vl2_rr1_A3.wav",
-      "file": "calibration/vcsl/knight/sus_A3.wav",
-      "sha256": "cc8b22d1779248f6edc88fa5d072b8ce8b51b06fbe62be3d3d19a324d1da9030"
+      "instrument": "PianoCraft Harp: the decay law (HarpEngine partial(); tools/fit_harp.py)",
+      "source": "Concert Harp (KSHarp), one take per note, E1-F7, mf and f (p/mp at the extremes)",
+      "note": "File names give the sounding pitch (within ~15 cents; the instrument sits ~10 cents flat).",
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_A2_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_A2_f1.wav",
+          "sha256": "c58aae0c0eec982c4cb45034d63b00567266fdbb9351354f916703ac4bc51b4e"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_A2_mf1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_A2_mf1.wav",
+          "sha256": "1df9f4d138ca3931fcb458bcdf01304cadf2e5f4eef67bbc17b0e42c0e60fce6"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_A4_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_A4_f1.wav",
+          "sha256": "dd5cc854f4e7a01b9903cc49645e54905b06ed844a5164c0693224b60a862833"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_A4_mf1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_A4_mf1.wav",
+          "sha256": "3665f3975cad4a33f46784aa4f896f4b4319ba2b7831e892d975bc38c9f09f23"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_A6_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_A6_f1.wav",
+          "sha256": "60fd5298274faabdbcda48f3ccf05de5a5abaaa037e337d88f1b583ea421e929"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_A6_mf1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_A6_mf1.wav",
+          "sha256": "4605355d22fae6f58190bf0d033d2ebdd745d63e2e43204d6f41ad27e4f09af0"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_B1_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_B1_f1.wav",
+          "sha256": "3ffa4eefa4113c132c376afbc38d1d6765cd516f15ee61b3e4980005f0436124"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_B1_mf1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_B1_mf1.wav",
+          "sha256": "284034807efbb429cb63f6fb744834b18e6281a4914e6460de0a5818b5d0d0e6"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_B3_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_B3_f1.wav",
+          "sha256": "f4e218e04bd27b3e56edb8bb34d41cb5b9960b21acaafb2a8553bea2b402ef66"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_B3_mf1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_B3_mf1.wav",
+          "sha256": "f6f71be8c640822ef48a448b245585659acdfcc7ed5774e10f37be2fc02fcab4"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_B5_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_B5_f1.wav",
+          "sha256": "f9433c5820187b1b9ad2ad347cbc4a5db4fa0fa8f36be010b650ee9e3edc6dd1"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_B5_mf1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_B5_mf1.wav",
+          "sha256": "f2757b674c6b7301bed52e17a1ae3e3d34d628b3f7edc5773ebb25798d2541f7"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_B6_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_B6_f1.wav",
+          "sha256": "0130701b9f7344b18938def457ccc1f91e2e11b00a65ffe141ed199642ac4331"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_B6_mf1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_B6_mf1.wav",
+          "sha256": "720e56b99f84d4ef1b9bc8cd3c217170320f523edb68488af3da76d2217e16f7"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_C3_f2.wav",
+          "file": "calibration/vcsl/harp/KSHarp_C3_f2.wav",
+          "sha256": "706e586007e07771a97ef97888c23c99aed163503b38878ac5b8ffa437bed5a0"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_C3_mf3.wav",
+          "file": "calibration/vcsl/harp/KSHarp_C3_mf3.wav",
+          "sha256": "18e6222e8fc11a8106e8d7a875d208835eb5b45598f010b21c786b1482e09869"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_C5_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_C5_f1.wav",
+          "sha256": "52a002ae0359257f02b972a62f05e86a4bdbeed272820f934c356408e100cda8"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_C5_mf1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_C5_mf1.wav",
+          "sha256": "7c8b862f6fd3f1442ed87537af976d84bda8c05a5b4900e8907d570b5202a517"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_D2_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_D2_f1.wav",
+          "sha256": "2c9a8cf6b68ddd24ae012624bd5b02436ccfa76443204f2b3d580f8e05bdeb62"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_D2_mf1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_D2_mf1.wav",
+          "sha256": "b9cbdc08e43fc0b28ac70246df991cb390f5cbd7f31519b3cc7f70d283b70566"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_D4_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_D4_f1.wav",
+          "sha256": "e81cba502669ecb390b02b803302f8492c29a1714893a16a342551b00bab6456"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_D4_mf1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_D4_mf1.wav",
+          "sha256": "ebfde8aab4411019e37e3426f4dd88d6a52a38c2d0261d7f10ec63d8ff584dc7"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_D6_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_D6_f1.wav",
+          "sha256": "40828e75a36574f0ac1ddb57da3fc18355a5ee5f88c2b1fa397412034985055d"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_D6_mf1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_D6_mf1.wav",
+          "sha256": "b040b61fb279efa1a9b9c60dcbd8626a37f57ffb30f3b50747a2123ee4db5bd2"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_D7_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_D7_f1.wav",
+          "sha256": "682b95338233c09889f50e6b71429780dabe0314fb11638cbdd04a735323dfd1"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_D7_p1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_D7_p1.wav",
+          "sha256": "18daf8340c9279fbd2ec12799b868408641ad1e6b4f96fed959f78dc572c71e3"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_E1_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_E1_f1.wav",
+          "sha256": "af372f9d4b218455884cb37201a6a14664f9cc7cf3016bfc28f36146915a370a"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_E3_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_E3_f1.wav",
+          "sha256": "8a803bd6b96a121e83b4ad7e2e0ed40d9b93540f530e89d1a454957121b95f72"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_E3_mf1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_E3_mf1.wav",
+          "sha256": "aafa9d41ec0f77da8f2891055af8b3f9557e0ba1f1df93d53ae6e1fda07afae5"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_E5_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_E5_f1.wav",
+          "sha256": "354bd7ee7d468171593adb6c48a735c4666ec8b2b8c88f611247ac3aa5ce9060"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_E5_mf1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_E5_mf1.wav",
+          "sha256": "95dd9ddb0bd15bee7687906e00f25aafcaa43020cc9501f0e8b6cabf0e9a53ec"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_F2_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_F2_f1.wav",
+          "sha256": "e41629bbb8d3fce5068234e9fa488348fc639dbf952e458321262dddba2d855c"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_F2_mf1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_F2_mf1.wav",
+          "sha256": "d5c0fb42c176af334fd6f6d1b97858556619c51e177efb5b0c6c23bc19ce6dad"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_F4_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_F4_f1.wav",
+          "sha256": "990a38119a68a4b84166080be13027cfbbb4eb17333f8914c9e1a89884521155"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_F4_mf1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_F4_mf1.wav",
+          "sha256": "db27ebbb37334c10e06f2ae63f4d9ff555e4d11704fcc6f0bcf503863867e577"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_F6_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_F6_f1.wav",
+          "sha256": "66d37fe819ca6088966a88c018b50febf76f68edd76f137d40ec89ef5057251b"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_F6_mf1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_F6_mf1.wav",
+          "sha256": "7cf4c012542df737be39900af262fdd980681956e734f43af106718184f34213"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_F7_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_F7_f1.wav",
+          "sha256": "638b40d6c6c674257daa89b0b1e5108973ccbf13d7cc282e21266d3fb71500c5"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_F7_p1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_F7_p1.wav",
+          "sha256": "99b247290c6b9ee1234de0e5b8a40b6dfbc89b5bcfde84f20903e0dbb515fbed"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_G1_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_G1_f1.wav",
+          "sha256": "47a5ea6c3ec629e9f7f40410b36e6dad15213aa660f5f53b436d484cd2e9319d"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_G1_mp1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_G1_mp1.wav",
+          "sha256": "f9fa1a6ea784320125fef31495ff223ceea675641d0728c2a33b431c06a78bfb"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_G3_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_G3_f1.wav",
+          "sha256": "90f1db1b266b37d2fa991cddb4c077b45f3fddf1be628a16be2fd833e5d32ebd"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_G3_mf1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_G3_mf1.wav",
+          "sha256": "62600eb1b37bc2829ca65351f7ca7e506c9ae472abd5bea0765a8b8fa7df2772"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_G5_f1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_G5_f1.wav",
+          "sha256": "32ad10059918ed0f60d40c1c35c28031d19e4356edceacf1dcf539279ac822c1"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sgossner/VCSL/master/Chordophones/Composite%20Chordophones/Concert%20Harp/KSHarp_G5_mf1.wav",
+          "file": "calibration/vcsl/harp/KSHarp_G5_mf1.wav",
+          "sha256": "f2004dfc617997fbabc6f849add2af06f4f859361c44a8fca0f993dc7f999540"
+        }
+      ]
     }
   ]
 }

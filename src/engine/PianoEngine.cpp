@@ -97,6 +97,11 @@ struct Voice {
     std::array<double, 4> knockState{};
     std::array<double, 2> knockLow{};
     double knockLowpass = 1.0;
+    // The strings' partials above 9 kHz, which aren't synthesized, while the hammer is on them: the force times
+    // noise, through two one-pole high-passes at 5 kHz (input, output per stage).
+    std::array<double, 4> sheen{};
+    std::uint32_t sheenNoise = 0x9E3779B9u;
+    double sheenGain = 0.0;
     // Per-note CLAP modulation and expressions.
     double hardnessModulation = 0.0;
     double brightness = 0.0; // Timbre's share of the hardness offset
@@ -144,6 +149,9 @@ struct Voice {
         knockState = {};
         knockLow = {};
         knockLowpass = 1.0;
+        sheen = {};
+        sheenNoise = 0x9E3779B9u;
+        sheenGain = 0.0;
         neutralExpressions();
         volume = 1.0;
         panLeft = 1.0;
@@ -168,6 +176,15 @@ struct PianoEngine::Impl {
     double pedalOmega = 1.0;
     double pedalThumpLowpass = 1.0;
     double pedalThump = 0.0; // the knock's low-pass state
+    // A key let go thumps as its key, jack and damper fall back (VCSL's Yamaha upright release samples: unpitched,
+    // the case's 100 Hz-1 kHz, peaking ~8 ms in and 20 dB down 50-80 ms later, the same at every key). Every
+    // release kicks one envelope, the difference of a 3 ms and a 30 ms exponential, so it starts from nothing.
+    double releaseFast = 0.0;
+    double releaseSlow = 0.0;
+    double releaseThump = 0.0; // its low-pass state
+    double releaseFastDecay = 0.0;
+    double releaseSlowDecay = 0.0;
+    double releaseLowpass = 1.0;
     std::uint32_t pedalNoiseState = 0x6C8E9CF5u;
     // How free each string is to ring sympathetically, 0 (damped) to 1.
     std::array<double, instrumentKeyCount> undamped{};
@@ -197,6 +214,10 @@ struct PianoEngine::Impl {
     std::array<double, 2 * highpassStages> highpassOutput{};
     double highpassCoefficient = 1.0;
     double phantomGlide = 1.0;  // and its phantom drive moves over 1 ms, before the hammer lands
+    double sheenHighpass = 1.0;
+    // Selected: 0.015 brings the first 6 ms above 4 kHz within 3 dB of Meta at velocity 40, 80 and 120 (from -8, -5
+    // and -5 dB); 0.02 brightens mf by +2.6. Erring dark, as the attack is what was first heard as a click.
+    static constexpr double sheenLevel = 0.015;
 
     Impl() {
         parameters.fill(0.0);
@@ -252,6 +273,7 @@ struct PianoEngine::Impl {
         pedalPosition.fill(0.0);
         pedalSpeed.fill(0.0);
         pedalThump = 0.0;
+        releaseFast = releaseSlow = releaseThump = 0.0;
         undamped.fill(0.0);
         if (model != nullptr) {
             updateUndamped();
@@ -314,7 +336,7 @@ struct PianoEngine::Impl {
         }
         const double level = parameters[parameterIndex(ParameterId::pedalNoise)] *
             (1.0 + parameters[parameterIndex(ParameterId::age)]); // worn trapwork rattles more
-        if (speed == 0.0 && pedalThump == 0.0) {
+        if (speed == 0.0 && pedalThump == 0.0 && releaseSlow == 0.0 && releaseThump == 0.0) {
             return {0.0, 0.0};
         }
         // A full stroke's peak speed is omega / e: that stamp is 1.
@@ -328,8 +350,28 @@ struct PianoEngine::Impl {
         if (std::abs(pedalThump) < 1.0e-20) {
             pedalThump = 0.0;
         }
-        return {pedalThump * pedalKnockLevel, drive * noise * pedalBrushLevel};
+        releaseFast *= releaseFastDecay;
+        releaseSlow *= releaseSlowDecay;
+        releaseThump += releaseLowpass * ((releaseSlow - releaseFast) * noise - releaseThump);
+        if (releaseSlow < 1.0e-12 && std::abs(releaseThump) < 1.0e-20) {
+            releaseFast = releaseSlow = releaseThump = 0.0;
+        }
+        return {pedalThump * pedalKnockLevel + releaseThump * releaseKnockLevel, drive * noise * pedalBrushLevel};
     }
+    // A key let go: its damper landing (or, the pedal holding it off, the key and jack alone at half).
+    void releaseKey(std::int16_t channel, bool hasDamper) {
+        const double contact = damperContact[channel >= 0 && channel < 16 ? static_cast<std::size_t>(channel) : 0];
+        const double kick = parameters[parameterIndex(ParameterId::hammerNoise)] *
+            (hasDamper && contact > 0.5 ? 1.0 : 0.5);
+        // Keys' thumps are separate noises: they add in power (a whole chord let go is sqrt(n) louder, not n).
+        const double added = std::sqrt(releaseSlow * releaseSlow + kick * kick) - releaseSlow;
+        releaseFast += added;
+        releaseSlow += added;
+    }
+    // Selected: a mf C4's release 42 dB under its peak, as the Yamaha's C4 (vl2 release re vl2 note, 5 ms frames;
+    // C2 37, C6 32). ponytail: their files' levels don't follow velocity (vl3's are quieter than vl2's), so this
+    // doesn't either.
+    static constexpr double releaseKnockLevel = 0.022;
     // ponytail: chosen, not fitted (see pedalNoise); refit if licensed pedal recordings turn up.
     // 20 dB under the first choice, which sounded far too loud by ear (20 Nov 2026).
     static constexpr double pedalKnockLevel = 0.005;
@@ -499,6 +541,9 @@ struct PianoEngine::Impl {
         // A heavy bass hammer thumps the board low and a light treble one knocks higher: two poles at 16 f0, at
         // most 4 kHz. Open above C5, the treble's knock clicked: its notes peaked in 2-4 ms and fell 10-15 dB by
         // 30 ms, where the recordings rise over 10 ms and hold.
+        // A low string has the most partials above 9 kHz: 3 dB more an octave down (selected on Meta's attacks).
+        voice.sheenGain = sheenLevel * std::exp2(-(address.key - 60) / 24.0);
+        voice.sheenNoise = 0x9E3779B9u ^ (static_cast<std::uint32_t>(address.key + 1) * 0x85EBCA6Bu); // each string its own
         voice.knockLowpass = 1.0 - std::exp(-2.0 * 3.141592653589793 *
             std::min({16.0 * voice.key->fundamental, 4000.0, 0.45 * sampleRate}) / sampleRate);
         voice.struckModes = {};
@@ -688,8 +733,24 @@ struct PianoEngine::Impl {
                                     force * voice.knockGain * voice.chokeGain * voice.volume * 0.03 * noise);
         voice.knockLow[0] += voice.knockLowpass * (knock - voice.knockLow[0]);
         voice.knockLow[1] += voice.knockLowpass * (voice.knockLow[0] - voice.knockLow[1]);
-        const double radiatedLeft = radiated(voice, bridge, 0) * gain;
-        const VoiceSample sample{radiatedLeft * voice.panLeft, radiated(voice, bridgeRight, 1) * gain * voice.panRight,
+        // The attack's top end: Meta's first 6 ms hold 3-14 dB (7 on average) more above 4 kHz than the partials
+        // to 9 kHz give. It lasts as the force does, rising and falling with the felt, so it can't step.
+        double sheen = 0.0;
+        if (force != 0.0 || voice.sheen[3] != 0.0) {
+            voice.sheenNoise ^= voice.sheenNoise << 13;
+            voice.sheenNoise ^= voice.sheenNoise >> 17;
+            voice.sheenNoise ^= voice.sheenNoise << 5;
+            double x = force * (static_cast<double>(voice.sheenNoise) / 2147483648.0 - 1.0) * voice.sheenGain;
+            for (std::size_t stage = 0; stage < 2; ++stage) {
+                const double y = sheenHighpass * (voice.sheen[2 * stage + 1] + x - voice.sheen[2 * stage]);
+                voice.sheen[2 * stage] = x;
+                voice.sheen[2 * stage + 1] = std::abs(y) < 1.0e-30 ? 0.0 : y;
+                x = y;
+            }
+            sheen = x * voice.chokeGain;
+        }
+        const double radiatedLeft = (radiated(voice, bridge, 0) + sheen) * gain;
+        const VoiceSample sample{radiatedLeft * voice.panLeft, (radiated(voice, bridgeRight, 1) + sheen) * gain * voice.panRight,
                                  radiatedLeft * 0.5 * (voice.panLeft + voice.panRight), drive * gain, voice.knockLow[1]};
         voice.level = std::max({std::abs(sample.left), std::abs(sample.right), voice.level * 0.99995});
         if (!voice.hammer.active && voice.level < 1.0e-8 && voice.age > sampleRate) {
@@ -708,8 +769,12 @@ void PianoEngine::prepare(double sampleRate) {
     impl_->sampleRate = sampleRate;
     impl_->highpassCoefficient = 1.0 / (1.0 + 2.0 * 3.141592653589793 * 100.0 / sampleRate);
     impl_->phantomGlide = 1.0 - std::exp(-1.0 / (0.001 * sampleRate));
+    impl_->sheenHighpass = 1.0 / (1.0 + 2.0 * 3.141592653589793 * std::min(5000.0, 0.4 * sampleRate) / sampleRate);
     impl_->pedalOmega = 1.0 / 0.006; // peak speed 6 ms in, 90% there by 24 ms
     impl_->pedalThumpLowpass = 1.0 - std::exp(-2.0 * 3.141592653589793 * 400.0 / sampleRate);
+    impl_->releaseFastDecay = std::exp(-1.0 / (0.003 * sampleRate));
+    impl_->releaseSlowDecay = std::exp(-1.0 / (0.030 * sampleRate));
+    impl_->releaseLowpass = 1.0 - std::exp(-2.0 * 3.141592653589793 * 500.0 / sampleRate);
     impl_->soundboard.prepare(sampleRate);
     impl_->sympathetic.prepare(sampleRate, *impl_->model);
     impl_->applyMicPosition();
@@ -746,11 +811,18 @@ void PianoEngine::noteOn(const NoteAddress& address, double velocity) {
 
 void PianoEngine::noteOff(const NoteAddress& address, double velocity) {
     (void)velocity;
+    bool released = false;
+    bool hasDamper = false;
     for (auto& voice : impl_->voices) {
         if (!Impl::matches(voice, address)) {
             continue;
         }
+        released = released || voice.keyDown;
+        hasDamper = hasDamper || (voice.key != nullptr && voice.key->hasDamper);
         voice.keyDown = false;
+    }
+    if (released) {
+        impl_->releaseKey(address.channel, hasDamper);
     }
     impl_->updateUndamped();
 }

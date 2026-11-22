@@ -1,5 +1,6 @@
 #include "model/InstrumentModel.hpp"
 #include "model/CalibrationData.hpp"
+#include "model/PartialTuning.hpp"
 #include "model/SpectrumCalibration.hpp"
 
 #include <algorithm>
@@ -274,15 +275,24 @@ InstrumentModel::InstrumentModel(double sampleRate) {
             ++key.primaryModeCount;
         };
 
+        // Each partial where the recordings hold it (tools/fit_piano.py tune): the calibration measured the bass's
+        // only to about its 16th and the stiff-string law above ran sharp, D1's 50th partial by 214 cents.
+        const auto tuned = [&](double k, double frequency) {
+            const auto partial = std::min(static_cast<std::size_t>(k), tuningPartials);
+            return frequency * std::exp2(partialCents[index][partial - 1] / 1200.0);
+        };
         double highestPartial = 0.0;
         for (std::size_t partialIndex = 0; partialIndex < calibration.partialCount; ++partialIndex) {
             const auto& calibrated = calibration.partials[partialIndex];
-            if (calibrated.partial == 0 || calibrated.frequency <= 0.0 ||
-                calibrated.frequency > maximumFrequency || calibrated.decaySeconds <= 0.0) {
+            if (calibrated.partial == 0 || calibrated.frequency <= 0.0 || calibrated.decaySeconds <= 0.0) {
+                continue;
+            }
+            const double frequency = tuned(calibrated.partial, calibrated.frequency);
+            if (frequency > maximumFrequency) {
                 continue;
             }
             primaryIndices[partialIndex] = key.modeCount;
-            addPrimary(calibrated.partial, calibrated.frequency);
+            addPrimary(calibrated.partial, frequency);
             highestPartial = std::max<double>(highestPartial, calibrated.partial);
         }
 
@@ -292,8 +302,8 @@ InstrumentModel::InstrumentModel(double sampleRate) {
         // normalization stays tied to the calibrated count so levels hold.
         const double extensionLimit = std::min(9000.0, maximumFrequency);
         for (double k = highestPartial + 1.0; key.primaryModeCount < primaryModeLimit; k += 1.0) {
-            const double frequency = k * key.fundamental *
-                std::sqrt((1.0 + key.inharmonicity * k * k) / (1.0 + key.inharmonicity));
+            const double frequency = tuned(k, k * key.fundamental *
+                std::sqrt((1.0 + key.inharmonicity * k * k) / (1.0 + key.inharmonicity)));
             if (frequency > extensionLimit) {
                 break;
             }
@@ -364,7 +374,7 @@ InstrumentModel::InstrumentModel(double sampleRate) {
         for (std::size_t partialIndex = 0; partialIndex < calibration.partialCount; ++partialIndex) {
             const auto& calibrated = calibration.partials[partialIndex];
             if (calibrated.secondaryAccepted || calibrated.partial == 0 || calibrated.frequency <= 0.0 ||
-                calibrated.frequency > maximumFrequency || calibrated.decaySeconds <= 0.0 ||
+                tuned(calibrated.partial, calibrated.frequency) > maximumFrequency || calibrated.decaySeconds <= 0.0 ||
                 secondaryCount >= secondaryModeLimit || key.modeCount >= modeLimit) {
                 continue;
             }
@@ -404,7 +414,7 @@ InstrumentModel::InstrumentModel(double sampleRate) {
                 unison.reactance = -unison.reactance; // the slow mode sits above instead
             }
             auto& mode = key.modes[key.modeCount++];
-            mode.baseFrequency = calibrated.frequency;
+            mode.baseFrequency = primary.baseFrequency;
             mode.baseReleaseSeconds = releaseSeconds(k);
             mode.baseExcitation = primary.baseExcitation;
             mode.output = primary.output;
@@ -423,16 +433,17 @@ InstrumentModel::InstrumentModel(double sampleRate) {
 void InstrumentModel::setVoicing(const Voicing& voicing) {
     for (std::size_t keyIndex = 0; keyIndex < keys_.size(); ++keyIndex) {
         auto& key = keys_[keyIndex];
-        // Age wears the piano per key, all at Age 1 (Analytic: chosen by ear for an old home
-        // upright, not measured):
-        // - pitch slackened 25 cents with +-6 cents of unevenness, which also makes the stretch uneven;
-        // - unisons drifted 1.5-4.5x apart;
+        // Age wears the piano per key, all at Age 1. Pitch and unisons are the old upright recorded for the score
+        // (calibration of 22 Nov 2026, C4-A4: 35 cents flat, unisons 11-38 cents apart, the strings within 1-3 dB);
+        // the rest is chosen by ear:
+        // - pitch slackened 35 cents with +-6 cents of unevenness, which also makes the stretch uneven;
+        // - unisons drifted 6-38 cents apart (median 14), in cents as strings drift, on top of Unison Detune's;
         // - dampers leaking: release 1.5x on most keys, up to 5.5x on a few;
         // - hammers hardened 15% on average, +-35% key to key;
         // - key response uneven by +-2.5 dB.
         const double age = voicing.age;
-        const double sag = age * (-25.0 + 6.0 * (2.0 * wear(key.midi, 0) - 1.0));
-        const double unisonWear = 1.0 + age * (0.5 + 3.0 * wear(key.midi, 1));
+        const double sag = age * (-35.0 + 6.0 * (2.0 * wear(key.midi, 0) - 1.0));
+        const double unisonCents = age * (6.0 + 32.0 * std::pow(wear(key.midi, 1), 2.0));
         const double damperWear = 1.0 + age * (0.5 + 4.0 * std::pow(wear(key.midi, 2), 3.0));
         key.wearHardness = 1.0 + age * (0.15 + 0.35 * (2.0 * wear(key.midi, 3) - 1.0));
         key.wearGain = std::pow(10.0, age * 2.5 * (2.0 * wear(key.midi, 4) - 1.0) / 20.0);
@@ -451,8 +462,9 @@ void InstrumentModel::setVoicing(const Voicing& voicing) {
         // normal modes' frequency difference and both carry their share's phase.
         for (std::size_t index = 0; index < key.unisonCount; ++index) {
             const auto& unison = key.unisons[index];
-            const auto modes = unisonModes(unison.damping, unison.reactance, unison.mistuning * voicing.detune * unisonWear);
             auto& prompt = key.modes[unison.prompt];
+            const double drift = 2.0 * pi * prompt.baseFrequency * (std::exp2(unisonCents / 1200.0) - 1.0);
+            const auto modes = unisonModes(unison.damping, unison.reactance, unison.mistuning * voicing.detune + drift);
             auto& partner = key.modes[unison.partner];
             setPole(prompt, prompt.baseFrequency * tuning, ln1000 / (unison.loss + modes.fast.imag()) * voicing.sustain,
                     prompt.baseReleaseSeconds * release, prompt.baseReleaseSeconds * release * key.residualRatio, sampleRate_);

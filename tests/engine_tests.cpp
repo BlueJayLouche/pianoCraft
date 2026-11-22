@@ -697,7 +697,7 @@ void ageWearsUnevenly() {
     }
     const double mean = sum / 88.0;
     const double spread = std::sqrt(squares / 88.0 - mean * mean);
-    require(mean < -20.0 && mean > -30.0 && spread > 2.0,
+    require(mean < -30.0 && mean > -40.0 && spread > 2.0,
             "Age 1 does not slacken pitch unevenly: mean " + std::to_string(mean) + " spread " + std::to_string(spread));
     require(hardest / softest > 1.4, "Age 1 does not vary hammer hardness from key to key");
     require(leastLeak >= 1.0 && mostLeak > 3.0, "Age 1 does not make some dampers leak");
@@ -870,6 +870,38 @@ void dampersLeaveAResidual() {
     require(later < residual - 10.0, "C4's residual didn't fade: " + std::to_string(later) + " dB at 1.5 s");
 }
 
+// A key let go thumps: ~42 dB under the note's peak (VCSL's Yamaha upright), gone within 100 ms; Hammer Noise 0
+// silences it. The strike's knock (also Hammer Noise) has died by the release, so the difference is the thump.
+void releasesThump() {
+    const auto play = [](double hammerNoise) {
+        pianocraft::PianoEngine engine;
+        engine.setParameter(pianocraft::ParameterId::hammerNoise, hammerNoise);
+        engine.prepare(48000.0);
+        engine.noteOn(note(60, 1), 0.63);
+        auto samples = render(engine, 96000, 256);
+        engine.noteOff(note(60, 1), 0.5);
+        const auto released = render(engine, 24000, 256);
+        samples.insert(samples.end(), released.begin(), released.end());
+        return samples;
+    };
+    const auto with = play(1.0), without = play(0.0);
+    const auto window = [](const std::vector<float>& x, double from, double to) {
+        return std::vector<float>(x.begin() + 2 * static_cast<std::size_t>(from * 48000.0),
+                                  x.begin() + 2 * static_cast<std::size_t>(to * 48000.0));
+    };
+    std::vector<float> difference(with.size());
+    for (std::size_t i = 0; i < with.size(); ++i) {
+        difference[i] = with[i] - without[i];
+    }
+    const double peak = rms(window(with, 0.0, 0.1));
+    const double thump = 20.0 * std::log10(rms(window(difference, 2.0, 2.06)) / peak);
+    const double after = 20.0 * std::log10(rms(window(difference, 2.3, 2.5)) / peak + 1.0e-12);
+    const double before = 20.0 * std::log10(rms(window(difference, 1.9, 2.0)) / peak + 1.0e-12);
+    require(thump > -55.0 && thump < -35.0, "C4's release thump: " + std::to_string(thump) + " dB re its first 100 ms");
+    require(after < thump - 20.0 && before < thump - 20.0, "the release thump isn't confined to the release: " +
+                                                               std::to_string(before) + " before, " + std::to_string(after) + " after");
+}
+
 int main() {
     try {
         modelIsStable();
@@ -894,6 +926,7 @@ int main() {
         phantomsSound();
         nothingRunsAway();
         dampersLeaveAResidual();
+        releasesThump();
         std::cout << "All engine tests passed\n";
         return 0;
     } catch (const std::exception& error) {
