@@ -28,7 +28,7 @@ constexpr StruckModel crotales{
       {8.027, -0.851, 27.0, -33.5, -0.806, 0.248, 0.0},
       {10.504, -0.947, 18.8, -42.2, -0.525, -0.299, 0.0},
       {13.464, -1.887, 7.5, -24.3, -0.656, -0.156, 0.0}}},
-    16.0, 8.0, 16.0, false, {0.0, 2.0}, 6.0, 9.0, 0.3, 0.0, 0.003};
+    16.0, 8.0, 16.0, false, {0.0, 2.0}, {6.0, 1.2}, 9.0, 0, 0.3, 0.0, 0.003};
 
 // The celesta, C4-C9: steel bars, their modes and decay measured on the Iowa orchestra bells (steel bars,
 // plastic mallets, C5-E8; tools/iowa_calibration.py modes bells). By judgment, as there is no celesta corpus: the
@@ -44,7 +44,38 @@ constexpr StruckModel celesta{
       {15.06, 0.0, -46.0, 0.0, 0.0, 0.0, 0.0},
       {},
       {}}},
-    0.0, 26.0, 16.0, true, {-1.0, 2.333}, 8.0, 0.0, 0.2, 1.0, 0.55};
+    0.0, 26.0, 16.0, true, {-1.0, 2.333}, {8.0, 1.6}, 0.0, 0, 0.2, 1.0, 0.55};
+
+// The vibraphone, C3-F6: aluminium bars tuned 1:4:10 over resonators, fitted to the Iowa vibraphone
+// (pedal down, motor off; tools/iowa_calibration.py modes vibraphone): the tuned 4th and 10th, a torsional mode
+// falling through them and the 4th bending mode, strong only in the low bars. From pp to ff, 30 dB at the
+// fundamental by judgment (the recordings: mf 8 dB under ff, pp 46 dB), the upper modes softening 8.4 dB an
+// octave above it (fitted at mf). The motor and its depth are by judgment: the recordings have none.
+constexpr StruckModel vibraphone{
+    48, 89, 84,
+    {{{1.0, 0.0, 0.0, 0.0, 2.451, -0.176, -0.006},
+      {3.932, -0.034, -29.1, -2.7, -0.149, -0.683, 0.0},
+      {9.791, -0.084, -48.0, -18.3, -1.392, -0.432, 0.0},
+      {2.035, -2.644, -61.0, -11.7, 1.947, 0.219, 0.0},
+      {10.163, -1.973, -100.6, -32.7, -2.626, -1.347, 0.0},
+      {},
+      {}}},
+    2.8, 30.0, 8.4, true, {-3.0, 0.417}, {10.0, 0.3}, 0.0, 0, 0.3, 1.0, 0.37};
+
+// The handpan, C3-C6 and chromatic (a real one has eight or nine of these notes): a hammered steel tone field per
+// key, tuned so its first three modes stand at 1:2:3, struck by the fingers. By judgment, after Rossing et al. on
+// the Hang: the octave a little under the fundamental, the twelfth well under, the fundamental ringing longest. The
+// octave and twelfth each beat gently against a near twin; the fundamental is clean.
+constexpr StruckModel handpan{
+    48, 84, 62,
+    {{{1.0, 0.0, 0.0, 0.0, 1.6, -0.35, 0.0},
+      {2.0, 0.0, -6.0, 0.0, 1.1, -0.35, 0.0},
+      {3.0, 0.0, -14.0, 0.0, 0.4, -0.35, 0.0},
+      {},
+      {},
+      {},
+      {}}},
+    0.0, 24.0, 10.0, true, {-1.167, 1.833}, {3.0, 0.2}, 1.5, 1, 0.15, 0.0, 0.35};
 
 // The same bar or disc every time: a uniform number in [-1, 1) from the key and a slot.
 double scatter(int key, int slot) {
@@ -64,11 +95,16 @@ StruckEngine::StruckEngine(const StruckModel& model) : model_(model) {
     parameters_[index(StruckParameterId::sustainLength)] = 1.0;
     parameters_[index(StruckParameterId::stereoWidth)] = 1.0;
     parameters_[index(StruckParameterId::masterTune)] = 440.0;
+    parameters_[index(StruckParameterId::motorDepth)] = 0.7;
 }
 
 CelestaEngine::CelestaEngine() : StruckEngine(celesta) {}
 
 CrotalesEngine::CrotalesEngine() : StruckEngine(crotales) {}
+
+VibraphoneEngine::VibraphoneEngine() : StruckEngine(vibraphone) {}
+
+HandpanEngine::HandpanEngine() : StruckEngine(handpan) {}
 
 void StruckEngine::prepare(double sampleRate) {
     sampleRate_ = sampleRate;
@@ -82,6 +118,9 @@ void StruckEngine::reset() {
     bend_ = {};
     sustain_ = {};
     expression_ = expressionTarget_ = 1.0;
+    motorPhase_ = 0.0;
+    motorRate_ = parameters_[index(StruckParameterId::motorSpeed)];
+    motorDepth_ = motorRate_ > 0.0 ? parameters_[index(StruckParameterId::motorDepth)] : 0.0;
     endedCount_ = 0;
 }
 
@@ -134,17 +173,17 @@ void StruckEngine::strike(Voice& voice, double velocity) {
             break;
         }
         const double u = n == 0 ? 0.0 : scatter(key, static_cast<int>(n));
-        const double frequency = fundamental * (law.r0 + law.r1 * reach) * (1.0 + 0.002 * model_.scatter * scatter(key, 10 + static_cast<int>(n)) * (n > 0));
+        const double frequency = fundamental * (law.r0 + law.r1 * reach) * (1.0 + 0.01 * model_.scatter[1] * scatter(key, 10 + static_cast<int>(n)) * (n > 0));
         if (frequency > limit) {
             break;
         }
         const double t60 = std::clamp(sustain * std::exp(law.t0 + law.t1 * reach + law.t2 * reach * reach), 0.05, 60.0);
         const double radius = std::exp(-ln1000 / (t60 * sampleRate_));
-        const double db = base + law.l0 + law.l1 * x + model_.scatter * u - darker * model_.softening * std::log2(frequency / fundamental);
+        const double db = base + law.l0 + law.l1 * x + model_.scatter[0] * u - darker * model_.softening * std::log2(frequency / fundamental);
         modes[count] = {frequency, radius};
         amplitude[count++] = std::pow(10.0, db / 20.0);
         // A disc's modes come in near-degenerate pairs, split by its imperfections: they beat.
-        if (model_.beating > 0.0 && n < 3 && count < modeLimit) {
+        if (model_.beating > 0.0 && static_cast<int>(n) >= model_.beatingFrom && n < 3 && count < modeLimit) {
             const double split = 0.4 * std::pow(model_.beating / 0.4, 0.5 + 0.5 * scatter(key, 20 + static_cast<int>(n)));
             const double partner = -14.0 + 11.0 * scatter(key, 30 + static_cast<int>(n));
             modes[count] = {frequency + (scatter(key, 40 + static_cast<int>(n)) < 0.0 ? -split : split), radius};
@@ -195,6 +234,9 @@ void StruckEngine::noteOn(const NoteAddress& address, double velocity) {
     if (address.key < model_.lowestKey || address.key > model_.highestKey) {
         endNote(address);
         return;
+    }
+    if (activeVoiceCount() == 0) {
+        motorPhase_ = 0.0; // unheard while all is still: a passage from silence renders the same every time
     }
     Voice* voice = nullptr;
     for (auto& candidate : voices_) {
@@ -378,8 +420,17 @@ void StruckEngine::render(float* left, float* right, std::uint32_t frameCount) {
     }
     const double glide = 100.0 / sampleRate_;
     const double release = 0.05 * sampleRate_;
+    // The vibraphone's motor turns a disc in the top of each resonator, which reinforces only the bar's
+    // fundamental (and its beating partner): the upper modes ring on unmodulated. Stopped, the discs stand open.
+    const double speed = std::clamp(parameters_[index(StruckParameterId::motorSpeed)], 0.0, 12.0);
+    const double depth = speed > 0.0 ? std::clamp(parameters_[index(StruckParameterId::motorDepth)], 0.0, 1.0) : 0.0;
+    const std::size_t resonated = model_.beating > 0.0 && model_.beatingFrom == 0 ? 2 : 1;
     for (std::uint32_t frame = 0; frame < frameCount; ++frame) {
         frame_ = frame;
+        motorRate_ += glide * (speed - motorRate_);
+        motorDepth_ += glide * (depth - motorDepth_);
+        motorPhase_ = std::fmod(motorPhase_ + 2.0 * pi * motorRate_ / sampleRate_, 2.0 * pi);
+        const double motor = 1.0 - motorDepth_ * 0.5 * (1.0 - std::cos(motorPhase_));
         double sumLeft = 0.0;
         double sumRight = 0.0;
         for (std::size_t v = 0; v < voiceCapacity; ++v) {
@@ -393,7 +444,7 @@ void StruckEngine::render(float* left, float* right, std::uint32_t frameCount) {
                 const double y = mode.a1 * mode.y1 - mode.a2 * mode.y2;
                 mode.y2 = mode.y1;
                 mode.y1 = std::abs(y) < 1.0e-30 ? 0.0 : y;
-                sample += mode.y1;
+                sample += i < resonated ? motor * mode.y1 : mode.y1;
             }
             voice.volume += glide * (voice.volumeTarget - voice.volume);
             sample *= voice.volume;

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "instrument": "PianoCraft horn, trumpet, trombone, tuba, flute, oboe, clarinet, strings, celesta and crotales",
+  "instrument": "PianoCraft horn, trumpet, trombone, tuba, flute, oboe, clarinet, strings, celesta, crotales and vibraphone",
   "corpus": "University of Iowa Electronic Music Studios, Musical Instrument Samples (MIS)",
   "license": "Public: \"may be downloaded and used for any projects, without restrictions\" (https://theremin.music.uiowa.edu/MIS.html, read 2026-11-02)",
   "usage": "Analysis and fitted synthesis constants only (src/engine); raw audio stays in calibration/ (git-ignored) and is never bundled or played",
@@ -921,6 +921,61 @@
         {
           "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Bells/bells.plastic.pp.C8E8.aif",
           "sha256": "020841c7e2d01c1fe899c72db737fb8e0b439c72979d672c11ab2c27395fdf0b"
+        }
+      ]
+    },
+    {
+      "instrument": "vibraphone",
+      "page": "https://theremin.music.uiowa.edu/MISvibraphone.html",
+      "recording": "Vibraphone (\"sustain\": pedal down; the motor off, as measured: no tremolo in any fundamental; mallets not stated), Andrew Thierauf, 10 June 2013, anechoic chamber, Earthworks QTC40 at 5 feet, 24-bit 44.1 kHz stereo; one stroke per bar, pp, mf, ff, C3-F6 (some pp and mf runs too faint to split). The set is tuned about 10 cents above A = 440",
+      "files": [
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Vibraphone/Vibraphone.sustain.pp.C3B3.aif",
+          "sha256": "8325e8b84bb8d4c69a0b4db33b53ff7bfc63cb2d60d2d0974e6e636fcf0b844f"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Vibraphone/Vibraphone.sustain.pp.C4B4.aif",
+          "sha256": "eca8e7391ac5e9f016baf95810f83d8e3684ba01a8c3c8bd235ff1cacda042b9"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Vibraphone/Vibraphone.sustain.pp.C5B5.aif",
+          "sha256": "b611eb45f1b223d0390f971e1ab2c12e69eda1184bf0ace02aefc6f14fdc4f3a"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Vibraphone/Vibraphone.sustain.pp.C6F6.aif",
+          "sha256": "6b53c8297e98e09ac83cf694d9e0932a32a3b1a74dc02812269422cd0fe8589b"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Vibraphone/Vibraphone.sustain.mf.C3B3.aif",
+          "sha256": "c972e9c06cac9ce9c161d2324b9c3a5e6f9988d305abffb8559917824bc6a71d"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Vibraphone/Vibraphone.sustain.mf.C4B4.aif",
+          "sha256": "ca311594e031bb877c52190f59c3612889471c81e72f0afce20203ff1c0eaff4"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Vibraphone/Vibraphone.sustain.mf.C5B5.aif",
+          "sha256": "05f1d32091fc90c8645e4b2988ebb580a79123b0b981f6ea179c739adf226514"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Vibraphone/Vibraphone.sustain.mf.C6F6.aif",
+          "sha256": "52f1236edcdc36d0aa360a9f3f7b7db6c04213a752c47e1297bd9af21eccb83c"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Vibraphone/Vibraphone.sustain.ff.C3B3.aif",
+          "sha256": "2870d61dc23d4a1f2c9e9a78fb648a09e83492ba29186d9502160d9fd516039a"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Vibraphone/Vibraphone.sustain.ff.C4B4.aif",
+          "sha256": "7ac70e55507372026eea85b5d40240c12b3225a76b9bcba914c17d8fc8aed521"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Vibraphone/Vibraphone.sustain.ff.C5B5.aif",
+          "sha256": "765fdce45420f327b167cca6924a57b3c0a3d48e02118327f54840a24240c219"
+        },
+        {
+          "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Vibraphone/Vibraphone.sustain.ff.C6F6.aif",
+          "sha256": "c58490a74dddb888e32a795bb7cb327220ceb2a1a215c311a6a46403851be04f"
         }
       ]
     }

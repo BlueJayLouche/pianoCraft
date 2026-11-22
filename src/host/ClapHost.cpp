@@ -444,6 +444,50 @@ struct Crotales : Struck<pianocraft::CrotalesEngine> {
     }};
 };
 
+// The vibraphone adds its motor: the discs in the resonators turn at Motor Speed (0 stops them open) and
+// swell the fundamental by Motor Depth (docs/vibraphone-and-handpan.md).
+struct Vibraphone : Struck<pianocraft::VibraphoneEngine> {
+    static constexpr const char* id = "com.pianocraft.vibraphone";
+    static constexpr const char* name = "PianoCraft Vibraphone";
+    static constexpr const char* description = "Original vibraphone instrument";
+    static constexpr const char* section = "Vibraphone";
+    static constexpr std::array<ParameterSpec, 8> parameters{{
+        {pid(StruckParameterId::brightness), "Brightness", "Mallets", 0.25, 2.0, 1.0, perNoteFlags},
+        {pid(StruckParameterId::damping), "Note-Off Damping", "Mallets", 0.0, 1.0, 1.0, continuousFlags},
+        {pid(StruckParameterId::sustainLength), "Sustain Length", "Mallets", 0.25, 4.0, 1.0, continuousFlags},
+        {pid(StruckParameterId::motorSpeed), "Motor Speed", "Motor", 0.0, 12.0, 0.0, continuousFlags},
+        {pid(StruckParameterId::motorDepth), "Motor Depth", "Motor", 0.0, 1.0, 0.7, continuousFlags},
+        {pid(StruckParameterId::masterTune), "Master Tune", "Tuning", 415.0, 466.0, 440.0, continuousFlags},
+        {pid(StruckParameterId::stereoWidth), "Stereo Width", "Mix", 0.0, 1.0, 1.0, continuousFlags},
+        {pid(StruckParameterId::outputGain), "Output Gain", "Mix", 0.0, 2.0, 0.7, continuousFlags},
+    }};
+    static constexpr std::array<RemotePage, 1> pages{{
+        {"Main", {pid(StruckParameterId::brightness), pid(StruckParameterId::damping), pid(StruckParameterId::sustainLength),
+                  pid(StruckParameterId::motorSpeed), pid(StruckParameterId::motorDepth), pid(StruckParameterId::masterTune),
+                  pid(StruckParameterId::stereoWidth), pid(StruckParameterId::outputGain)}},
+    }};
+    static constexpr std::array<Preset, 3> presets{{
+        {"Vibraphone", "vibraphone", "Mallets on aluminium bars, motor off, dampers at note-off (CC64 lifts them), stereo", {}},
+        {"Vibraphone (Mono)", "vibraphone-mono", "Mono-safe for a single emitter",
+         {{{pid(StruckParameterId::stereoWidth), 0.0}}}},
+        {"Vibraphone, Slow Motor (Mono)", "vibraphone-slow-motor-mono", "The discs turning at 3.5 Hz: a slow, soft shimmer, mono",
+         {{{pid(StruckParameterId::stereoWidth), 0.0}, {pid(StruckParameterId::motorSpeed), 3.5}, {pid(StruckParameterId::motorDepth), 0.5}}}},
+    }};
+};
+
+struct Handpan : Struck<pianocraft::HandpanEngine> {
+    static constexpr const char* id = "com.pianocraft.handpan";
+    static constexpr const char* name = "PianoCraft Handpan";
+    static constexpr const char* description = "Original handpan instrument, every key a tone field";
+    static constexpr const char* section = "Handpan";
+    static constexpr auto parameters = parametersWith("Hands", 0.0);
+    static constexpr std::array<Preset, 2> presets{{
+        {"Handpan", "handpan", "Steel tone fields tuned 1:2:3, struck by the fingers and let ring, stereo", {}},
+        {"Handpan (Mono)", "handpan-mono", "Mono-safe for a single emitter",
+         {{{pid(StruckParameterId::stereoWidth), 0.0}}}},
+    }};
+};
+
 // Set once in entryInit: the folder of preset marker files inside this bundle.
 std::string presetDirectory;
 
@@ -1468,11 +1512,12 @@ const clap_plugin_preset_load_t Adapter<I>::presetLoad_ = {
     &Adapter<I>::presetLoad,
 };
 
-const std::array<const clap_plugin_descriptor_t*, 12> descriptors{
+const std::array<const clap_plugin_descriptor_t*, 14> descriptors{
     Adapter<Piano>::descriptor(), Adapter<Harp>::descriptor(), Adapter<Flute>::descriptor(),
     Adapter<Strings>::descriptor(), Adapter<Horn>::descriptor(), Adapter<Trumpet>::descriptor(),
     Adapter<Trombone>::descriptor(), Adapter<Tuba>::descriptor(), Adapter<Oboe>::descriptor(),
-    Adapter<Clarinet>::descriptor(), Adapter<Celesta>::descriptor(), Adapter<Crotales>::descriptor()};
+    Adapter<Clarinet>::descriptor(), Adapter<Celesta>::descriptor(), Adapter<Crotales>::descriptor(),
+    Adapter<Vibraphone>::descriptor(), Adapter<Handpan>::descriptor()};
 
 std::uint32_t pluginCount(const clap_plugin_factory_t*) noexcept
 {
@@ -1512,6 +1557,12 @@ const clap_plugin_t* createPlugin(const clap_plugin_factory_t*, const clap_host_
     }
     if (std::strcmp(pluginId, Crotales::id) == 0) {
         return create<Crotales>(host);
+    }
+    if (std::strcmp(pluginId, Vibraphone::id) == 0) {
+        return create<Vibraphone>(host);
+    }
+    if (std::strcmp(pluginId, Handpan::id) == 0) {
+        return create<Handpan>(host);
     }
     if (std::strcmp(pluginId, Flute::id) == 0) {
         return create<Flute>(host);
@@ -1599,7 +1650,9 @@ bool presetProviderGetMetadata(const clap_preset_discovery_provider_t*, std::uin
                                    describePreset<Oboe>(locationKind, location, receiver) ||
                                    describePreset<Clarinet>(locationKind, location, receiver) ||
                                    describePreset<Celesta>(locationKind, location, receiver) ||
-                                   describePreset<Crotales>(locationKind, location, receiver));
+                                   describePreset<Crotales>(locationKind, location, receiver) ||
+                                   describePreset<Vibraphone>(locationKind, location, receiver) ||
+                                   describePreset<Handpan>(locationKind, location, receiver));
 }
 
 const void* presetProviderGetExtension(const clap_preset_discovery_provider_t*, const char*) noexcept

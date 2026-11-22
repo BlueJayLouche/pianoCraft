@@ -15,6 +15,8 @@ enum class StruckParameterId : std::uint32_t {
     sustainLength = 4,
     stereoWidth = 5,
     masterTune = 6,
+    motorSpeed = 7, // the vibraphone's: Hz, 0 stops the motor with the discs open
+    motorDepth = 8,
 };
 
 // One mode of a struck bar or disc, by octaves x from the model's reference key: its frequency
@@ -32,15 +34,17 @@ struct StruckModel {
     double softening;        // and more, dB an octave above it: a soft stroke's longer contact
     bool keyed;              // a keyboard: every key's fundamental has the whole dynamicRange, its upper modes soften
     double reach[2];         // the octaves (from the reference) the recordings cover; laws hold their ends beyond
-    double scatter;          // each bar or disc differs: its upper modes' levels +-dB, ratios +-%/5
+    double scatter[2];       // each bar or disc differs: its upper modes' levels +-dB and ratios +-%
     double beating;          // modes split into beating pairs, up to this many Hz apart (0: none)
+    int beatingFrom;         // from this mode up to the 3rd
     double spread;           // how far the low and high ends sit apart in the stereo image
     double damping;          // Note-Off Damping's default: 1, the celesta's dampers; 0, crotales let ring
     double level;
 };
 
-// Struck metal: a celesta's steel bars and the crotales' bronze discs, struck from rest into modes
-// measured from the University of Iowa recordings. See docs/celesta-and-crotales.md.
+// Struck metal: a celesta's steel bars, the crotales' bronze discs, a vibraphone's aluminium bars and a
+// handpan's tone fields, struck from rest into modes measured from the University of Iowa recordings where
+// they exist. See docs/celesta-and-crotales.md and docs/vibraphone-and-handpan.md.
 class StruckEngine {
 public:
     static constexpr std::size_t voiceCapacity = 64;
@@ -71,7 +75,7 @@ public:
 
 private:
     static constexpr std::size_t modeLimit = 10;
-    static constexpr std::size_t parameterCount = 7;
+    static constexpr std::size_t parameterCount = 9;
 
     struct Mode {
         double frequency = 0.0; // at A4 = 440 Hz and no bend
@@ -114,6 +118,9 @@ private:
     std::array<bool, 16> sustain_{};
     double expression_ = 1.0;
     double expressionTarget_ = 1.0;
+    double motorPhase_ = 0.0; // one shaft turns every resonator's disc
+    double motorRate_ = 0.0;
+    double motorDepth_ = 0.0;
     std::array<EndedNote, 2 * voiceCapacity> ended_{};
     std::size_t endedCount_ = 0;
     std::uint32_t frame_ = 0;
@@ -127,6 +134,16 @@ public:
 class CrotalesEngine : public StruckEngine {
 public:
     CrotalesEngine();
+};
+
+class VibraphoneEngine : public StruckEngine {
+public:
+    VibraphoneEngine();
+};
+
+class HandpanEngine : public StruckEngine {
+public:
+    HandpanEngine();
 };
 
 } // namespace pianocraft

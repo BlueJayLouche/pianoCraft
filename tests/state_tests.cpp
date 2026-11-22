@@ -138,15 +138,16 @@ int main(int argc, char** argv) {
                                                                 file.path().string().c_str(), &receiver);
     }
     const auto presetsFor = [&](const char* id) { return std::count(discovered.pluginIds.begin(), discovered.pluginIds.end(), id); };
-    check(everyFileRead && discovered.names.size() == 34 && discovered.pluginIds.size() == 34 && !discovered.keyed &&
+    check(everyFileRead && discovered.names.size() == 39 && discovered.pluginIds.size() == 39 && !discovered.keyed &&
           presetsFor("com.pianocraft.upright") == 4 && presetsFor("com.pianocraft.harp") == 4 &&
           presetsFor("com.pianocraft.flute") == 2 && presetsFor("com.pianocraft.strings") == 7 &&
           presetsFor("com.pianocraft.horn") == 3 && presetsFor("com.pianocraft.trumpet") == 2 &&
           presetsFor("com.pianocraft.trombone") == 2 && presetsFor("com.pianocraft.tuba") == 2 &&
           presetsFor("com.pianocraft.oboe") == 2 && presetsFor("com.pianocraft.clarinet") == 2 &&
-          presetsFor("com.pianocraft.celesta") == 2 && presetsFor("com.pianocraft.crotales") == 2,
-          "34 preset files, one unkeyed preset each: 4 piano, 4 harp, 2 flute, 7 strings, 3 horn, 2 trumpet, 2 trombone, "
-          "2 tuba, 2 oboe, 2 clarinet, 2 celesta, 2 crotales");
+          presetsFor("com.pianocraft.celesta") == 2 && presetsFor("com.pianocraft.crotales") == 2 &&
+          presetsFor("com.pianocraft.vibraphone") == 3 && presetsFor("com.pianocraft.handpan") == 2,
+          "39 preset files, one unkeyed preset each: 4 piano, 4 harp, 2 flute, 7 strings, 3 horn, 2 trumpet, 2 trombone, "
+          "2 tuba, 2 oboe, 2 clarinet, 2 celesta, 2 crotales, 3 vibraphone, 2 handpan");
     provider->destroy(provider);
     auto* presetLoad = static_cast<const clap_plugin_preset_load_t*>(plugin->get_extension(plugin, CLAP_EXT_PRESET_LOAD));
     auto loadPreset = [&](const char* file) {
@@ -232,8 +233,9 @@ int main(int argc, char** argv) {
     plugin->destroy(plugin);
 
     // The other voices: state round trip, a preset over defaults, choice text, and NOTE_END.
-    check(factory->get_plugin_count(factory) == 12,
-          "the bundle holds piano, harp, flute, strings, horn, trumpet, trombone, tuba, oboe, clarinet, celesta and crotales");
+    check(factory->get_plugin_count(factory) == 14,
+          "the bundle holds piano, harp, flute, strings, horn, trumpet, trombone, tuba, oboe, clarinet, celesta, crotales, "
+          "vibraphone and handpan");
     struct Other { const char* id; const char* preset; clap_id changed; double expected; clap_id choice; const char* choiceText; int16_t key = 60; };
     for (const Other& other : {Other{"com.pianocraft.harp", "/harp-harmonics-mono.pianocraft", 4, 1.0, 4, "On"},
                                Other{"com.pianocraft.flute", "/flute-veiled.pianocraft", 2, 1.8, CLAP_INVALID_ID, nullptr},
@@ -245,7 +247,9 @@ int main(int argc, char** argv) {
                                Other{"com.pianocraft.oboe", "/oboe-dolce.pianocraft", 5, 0.75, CLAP_INVALID_ID, nullptr},
                                Other{"com.pianocraft.clarinet", "/clarinet-dolce.pianocraft", 5, 0.75, CLAP_INVALID_ID, nullptr},
                                Other{"com.pianocraft.celesta", "/celesta-mono.pianocraft", 5, 0.0, CLAP_INVALID_ID, nullptr},
-                               Other{"com.pianocraft.crotales", "/crotales-mono.pianocraft", 5, 0.0, CLAP_INVALID_ID, nullptr, 96}}) {
+                               Other{"com.pianocraft.crotales", "/crotales-mono.pianocraft", 5, 0.0, CLAP_INVALID_ID, nullptr, 96},
+                               Other{"com.pianocraft.vibraphone", "/vibraphone-slow-motor-mono.pianocraft", 7, 3.5, CLAP_INVALID_ID, nullptr},
+                               Other{"com.pianocraft.handpan", "/handpan-mono.pianocraft", 5, 0.0, CLAP_INVALID_ID, nullptr, 62}}) {
         auto* instance = factory->create_plugin(factory, &host, other.id);
         instance->init(instance);
         auto* otherState = static_cast<const clap_plugin_state_t*>(instance->get_extension(instance, CLAP_EXT_STATE));

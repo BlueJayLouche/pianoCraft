@@ -5,8 +5,9 @@
     tools/iowa_calibration.py reference <instrument>   analyse the recordings: calibration/iowa-mis/<instrument>/reference.json
     tools/iowa_calibration.py score <instrument>       render the model at the same notes and dynamics, and compare
     tools/iowa_calibration.py fit <brass>              fit a brass bell's high-pass and tone low-pass to the recordings
-    tools/iowa_calibration.py modes <crotales|bells>   struck metal: fit each mode's ratio, level and decay; crotales also
-                                                       scores the model
+    tools/iowa_calibration.py modes <crotales|bells|vibraphone>
+                                                       struck metal: fit each mode's ratio, level and decay; crotales and
+                                                       vibraphone also score the model
 
 <instrument> is horn, trumpet, trombone, tuba, flute, oboe, clarinet, violin, viola, cello or bass; the bells stand in
 for the celesta's bars, which the collection lacks. The recordings are analysis inputs only:
@@ -377,7 +378,13 @@ def fit(brass):
 STRUCK = {"crotales": {"keys": (84, 108), "velocity": {"pp": 0.35, "ff": 0.9},
                        "trend": lambda k: [1.0, 2.14 - 0.0098 * (k - 84), 3.74 - 0.0233 * (k - 84), 5.70 - 0.0425 * (k - 84),
                                            7.98 - 0.067 * (k - 84), 10.7 - 0.107 * (k - 84), 13.8 - 0.15 * (k - 84)]},
-          "bells": {"keys": (72, 112), "bins": [(2.9, 3.4), (6.0, 7.9), (9.0, 11.5), (13.0, 17.0)]}}
+          "bells": {"keys": (72, 112), "bins": [(2.9, 3.4), (6.0, 7.9), (9.0, 11.5), (13.0, 17.0)]},
+          # Aluminium bars tuned 1:4:10, a torsional mode falling through them and the 4th bending mode (both traced
+          # while clear of the tuned ones), x octaves from C6. The exact 2nd and 3rd harmonics, 40 dB down and dying
+          # at 2 and 3 times the fundamental's rate, are distortion, not modes.
+          "vibraphone": {"keys": (48, 89), "velocity": {"pp": 0.35, "mf": 0.6, "ff": 0.9},
+                         "families": [(lambda x: 4.0, 89), (lambda x: 10.0, 89), (lambda x: 2.05 - 2.6 * x, 70),
+                                      (lambda x: 9.1 - 2.3 * x, 64)]}}
 
 
 def peak(f, db, lo, hi):
@@ -459,8 +466,10 @@ def struck_reference(name):
         starts = strokes(x, rate)
         if len(starts) != len(keys):
             continue  # a stray knock: this run's strokes can't be told apart
+        families = STRUCK[name].get("families")
         for key, a, b in zip(keys, starts, starts[1:] + [len(x)]):
-            rows.append({**stroke(x[max(a - int(0.05 * rate), 0):b], rate, key), "dyn": dyn})
+            ratios = None if families is None else [1.0] + [law((key - 84) / 12) for law, top in families if key <= top]
+            rows.append({**stroke(x[max(a - int(0.05 * rate), 0):b], rate, key, ratios), "dyn": dyn})
     return [r for r in rows if np.isfinite(r["t60"])]
 
 
@@ -504,6 +513,45 @@ def struck_laws(name, rows):
                   f"level {np.median([m['level'] for m in found]):+.0f} dB, T60 {np.median(t60):.1f} s")
 
 
+def vibraphone_laws(rows):
+    """The vibraphone's laws: each family's ratio, ff level and T60 against x, and from pp to ff how much its level
+    re the fundamental falls an octave above it (the yarn's softening)."""
+    families = STRUCK["vibraphone"]["families"]
+    def family(r):
+        x = (r["key"] - 84) / 12
+        out = {}
+        for m in (m for m in r["modes"] if np.isfinite(m["t60"]) and m["level"] > -50):  # a mode, not the window's noise
+            n = int(np.argmin([abs(np.log(m["ratio"] / law(x))) if r["key"] <= top else np.inf for law, top in families]))
+            if abs(np.log(m["ratio"] / families[n][0](x))) < 0.07 and n not in out:
+                out[n] = m
+        return out
+    by = {(r["key"], r["dyn"]): r for r in rows}
+    ff = [r for r in rows if r["dyn"] == "ff"]
+    x = np.array([(r["key"] - 84) / 12 for r in ff])
+    t = np.log([r["t60"] for r in ff])
+    fit = np.polyfit(x, t, 2)
+    print(f"vibraphone: fundamental T60 = exp({fit[2]:.3f} {fit[1]:+.3f} x {fit[0]:+.3f} x^2), scatter x{np.exp(np.std(t - np.polyval(fit, x))):.2f}; "
+          f"ff level {np.polyfit(x, [r['level'] for r in ff], 1)[0]:+.1f} dB an octave")
+    for n, (law, top) in enumerate(families):
+        sel = [((r["key"] - 84) / 12, family(r)[n]) for r in ff if n in family(r)]
+        xs = np.array([a for a, _ in sel])
+        ratio = np.polyfit(xs, [m["ratio"] for _, m in sel], 1)
+        level = np.polyfit(xs, [m["level"] for _, m in sel], 1)
+        spread = np.std([m["level"] - np.polyval(level, a) for a, m in sel])
+        ok = [(a, m["t60"]) for a, m in sel if np.isfinite(m["t60"])]
+        life = np.polyfit([a for a, _ in ok], np.log([v for _, v in ok]), 1)
+        print(f"  mode {n + 2}: ratio {ratio[1]:.3f} {ratio[0]:+.3f} x, ff level {level[1]:+.1f} {level[0]:+.1f} x dB (+-{spread:.1f}), "
+              f"T60 exp({life[1]:.3f} {life[0]:+.3f} x), in {len(sel)} of {len(ff)} bars")
+    for soft in ("mf", "pp"):
+        fund = [by[r["key"], "ff"]["level"] - r["level"] for r in rows if r["dyn"] == soft and (r["key"], "ff") in by]
+        tilt = [(np.log2(a["ratio"]), (family(by[r["key"], "ff"])[n]["level"] - a["level"]))
+                for r in rows if r["dyn"] == soft and (r["key"], "ff") in by
+                for n, a in family(r).items() if n in family(by[r["key"], "ff"])]
+        o, d = np.array(tilt).T
+        print(f"  ff over {soft}: fundamental {np.median(fund):.1f} dB ({len(fund)} bars); upper modes a further "
+              f"{np.sum(o * d) / np.sum(o * o):.1f} dB an octave above it ({len(d)} modes)")
+
+
 def whole(x, rate):
     """A stroke's level over its first 0.3 s and its share above 3 kHz, dB."""
     from scipy.signal import butter, sosfilt
@@ -515,6 +563,8 @@ def whole(x, rate):
 
 def modes(name):
     rows = struck_reference(name)
+    if name == "vibraphone":
+        return vibraphone_laws(rows)
     struck_laws(name, rows)
     if name != "crotales":
         return

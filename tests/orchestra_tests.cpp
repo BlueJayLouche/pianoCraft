@@ -39,6 +39,8 @@ using pianocraft::OboeEngine;
 using pianocraft::ReedParameterId;
 using pianocraft::CelestaEngine;
 using pianocraft::CrotalesEngine;
+using pianocraft::HandpanEngine;
+using pianocraft::VibraphoneEngine;
 using pianocraft::StruckParameterId;
 
 constexpr double pi = 3.141592653589793;
@@ -738,6 +740,38 @@ void struckTests(const std::string& name, int key, bool dampers) {
     expect(left == right && left == again, name + ": Stereo Width 0 is exact mono, and renders repeat");
 }
 
+// The vibraphone's motor swells only the fundamental, at its speed; stopped, the bar decays steadily. Its phase
+// starts again from silence, so a note after a silent gap sounds as the first one did.
+void motorTests() {
+    using S = StruckParameterId;
+    const double rate = 48000.0;
+    const auto swing = [&](const std::vector<float>& x, double f) { // the fundamental's level, max - min over 1-2 s, 50 ms frames
+        double lo = 1.0e9, hi = -1.0e9;
+        for (double t = 1.0; t < 2.0; t += 0.05) {
+            const double db = 10.0 * std::log10(powerAt(x, t, t + 0.05, rate, f));
+            lo = std::min(lo, db);
+            hi = std::max(hi, db);
+        }
+        return hi - lo;
+    };
+    const double f = frequency(53);
+    const auto still = strike<VibraphoneEngine>(53, 0.9, 2.0, rate, 2.0);
+    const auto turning = strike<VibraphoneEngine>(53, 0.9, 2.0, rate, 2.0, {{S::motorSpeed, 4.0}, {S::motorDepth, 0.7}});
+    const double off = swing(still, f), on = swing(turning, f), upper = swing(turning, 4.0 * f) - swing(still, 4.0 * f);
+    expect(on - off > 6.0 && std::abs(upper) < 1.0, "vibraphone motor: the fundamental swings " + std::to_string(on) +
+                                                                " dB turning, " + std::to_string(off) + " still; its 4th mode " +
+                                                                std::to_string(upper) + " dB more");
+    VibraphoneEngine engine;
+    engine.setParameter(S::motorSpeed, 4.0);
+    engine.prepare(rate);
+    const std::size_t again = 172800; // 3.6 s, once the first has died away: 14.4 turns of the motor
+    const auto x = render(engine, 4.2, rate, [&](std::size_t frame) {
+        if (frame == 0 || frame == again) engine.noteOn(note(53), 0.7);
+        if (frame == 4800 || frame == again + 4800) engine.noteOff(note(53), 0.0);
+    });
+    expect(std::equal(x.begin(), x.begin() + 24000, x.begin() + again), "vibraphone motor: a note after silence repeats the first");
+}
+
 int main() {
     harpTests();
     fluteTests();
@@ -829,6 +863,9 @@ int main() {
     pressureTests();
     struckTests<CelestaEngine>("celesta", 72, true);
     struckTests<CrotalesEngine>("crotales", 96, false);
+    struckTests<VibraphoneEngine>("vibraphone", 65, true);
+    struckTests<HandpanEngine>("handpan", 62, false);
+    motorTests();
     std::printf("%s\n", failures ? "FAILED" : "all orchestra checks passed");
     return failures != 0;
 }

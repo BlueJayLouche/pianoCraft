@@ -1,5 +1,5 @@
-// Renders one harp, flute, strings, horn, trumpet, trombone, tuba, oboe, clarinet, celesta or crotales note to a 24-bit stereo WAV at 48 kHz:
-//   pianocraft-render-voice <harp|flute|strings|horn|trumpet|trombone|tuba|oboe|clarinet|celesta|crotales> out.wav key velocity seconds [hold] [id=value ...]
+// Renders one harp, flute, strings, horn, trumpet, trombone, tuba, oboe, clarinet, celesta, crotales, vibraphone or handpan note to a 24-bit stereo WAV at 48 kHz:
+//   pianocraft-render-voice <harp|flute|strings|horn|trumpet|trombone|tuba|oboe|clarinet|celesta|crotales|vibraphone|handpan> out.wav key velocity seconds [hold] [id=value ...]
 // hold is when the key is released (default: 40% of the length); id=value sets a parameter by id,
 // ccN=value sends MIDI controller N (0-1) before the note; slurK=seconds presses key K then, the
 // sounding note released 10 ms later (a slur), and the last note is released at hold.
@@ -122,7 +122,7 @@ std::vector<float> renderNote(int argc, char** argv, int key, double velocity, d
 int main(int argc, char** argv) {
     try {
         if (argc < 6) {
-            std::cerr << "Usage: pianocraft-render-voice <harp|flute|strings|horn|trumpet|trombone|tuba|oboe|clarinet|celesta|crotales> out.wav key velocity seconds [hold] [id=value ...]\n";
+            std::cerr << "Usage: pianocraft-render-voice <harp|flute|strings|horn|trumpet|trombone|tuba|oboe|clarinet|celesta|crotales|vibraphone|handpan> out.wav key velocity seconds [hold] [id=value ...]\n";
             return 2;
         }
         const std::string instrument = argv[1];
@@ -155,7 +155,11 @@ int main(int argc, char** argv) {
             ? renderNote<pianocraft::CelestaEngine, pianocraft::StruckParameterId>(argc, argv, key, velocity, seconds, hold)
             : instrument == "crotales"
             ? renderNote<pianocraft::CrotalesEngine, pianocraft::StruckParameterId>(argc, argv, key, velocity, seconds, hold)
-            : throw std::runtime_error("Instrument must be harp, flute, strings, horn, trumpet, trombone, tuba, oboe, clarinet, celesta or crotales");
+            : instrument == "vibraphone"
+            ? renderNote<pianocraft::VibraphoneEngine, pianocraft::StruckParameterId>(argc, argv, key, velocity, seconds, hold)
+            : instrument == "handpan"
+            ? renderNote<pianocraft::HandpanEngine, pianocraft::StruckParameterId>(argc, argv, key, velocity, seconds, hold)
+            : throw std::runtime_error("Instrument must be harp, flute, strings, horn, trumpet, trombone, tuba, oboe, clarinet, celesta, crotales, vibraphone or handpan");
         writeWav(argv[2], samples, 48000);
         return 0;
     } catch (const std::exception& error) {

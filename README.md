@@ -32,6 +32,8 @@ ctest --test-dir build --output-on-failure
 ./build/pianocraft-render-voice oboe renders/oboe-a4.wav 69 0.7 4 3.5 cc1=0.6
 ./build/pianocraft-render-voice celesta renders/celesta-c5.wav 72 0.7 4 1
 ./build/pianocraft-render-voice crotales renders/crotale-e6.wav 88 0.7 8
+./build/pianocraft-render-voice vibraphone renders/vibraphone-f4.wav 65 0.7 6 6 7=3.5
+./build/pianocraft-render-voice handpan renders/handpan-d4.wav 62 0.7 6
 ./build/pianocraft-benchmark
 ```
 
@@ -107,17 +109,17 @@ Bitwig's preset browser lists four built-in voicings: Calibrated Upright
 because Bitwig lists preset files, not presets held inside a plugin; the values
 live in `src/host/ClapHost.cpp`. Save your own as Bitwig presets.
 
-## Harp, flute, oboe, clarinet, strings, brass, celesta and crotales
+## Harp, flute, oboe, clarinet, strings, brass and struck metal
 
 The bundle also holds PianoCraft Harp, Flute, Oboe, Clarinet, Strings, Horn, Celesta and Crotales, for the final
-act of *The Old House on the Corner*, and Trumpet, Trombone and Tuba. They follow the orchestral-library conventions: CC11 is an expression trim,
+act of *The Old House on the Corner*, and Trumpet, Trombone, Tuba, Vibraphone and Handpan. They follow the orchestral-library conventions: CC11 is an expression trim,
 pitch bend ±2 semitones, no keyswitches. On the winds, strings and brass a note's Pressure is its
 dynamic too, as CC1 is: `piano.py` writes each CC1 curve again as Pressure, which Bitwig imports
 from a `.dawproject`. Their physics and what is still set by ear are in
 `docs/harp-and-flute.md`, `docs/oboe-and-clarinet.md`, `docs/strings-and-horn.md` and
-`docs/brass.md` and `docs/celesta-and-crotales.md`. The brass, woodwinds, strings and crotales are calibrated
-against the University of Iowa's recordings (`tools/iowa_calibration.py`), and the celesta's bars against its
-orchestra bells; the harp has no reference corpus yet.
+`docs/brass.md`, `docs/celesta-and-crotales.md` and `docs/vibraphone-and-handpan.md`. The brass, woodwinds, strings,
+crotales and vibraphone are calibrated against the University of Iowa's recordings (`tools/iowa_calibration.py`),
+and the celesta's bars against its orchestra bells; the harp and handpan have no reference corpus yet.
 
 - **Harp:** one string per key (B0-G#7). Strings ring after note-off, so glissandi keep sounding.
   The strings the pedals sound (set by what you play) ring in sympathy. Controls: Pluck Position,
@@ -155,10 +157,15 @@ orchestra bells; the harp has no reference corpus yet.
   sounding) ring until they die away: the low discs strike bright and settle to their fundamental, and some
   beat. Controls: Brightness (Timbre moves it), Note-Off Damping, Sustain Length, Master Tune, Stereo Width
   (0 is exact mono). Presets: Celesta and Crotales, each in stereo and mono.
+- **Vibraphone and handpan:** struck metal too, with the same controls. The vibraphone (C3-F6) has aluminium bars
+  tuned 1:4:10 and dampers, as the celesta's. Motor Speed (0 is off) and Motor Depth turn the resonators' discs,
+  which swell only the fundamental. The handpan (C3-C6, chromatic, a tone field per key) is tuned 1:2:3, and its
+  octave and fifth shimmer. It rings on after note-off. Presets: Vibraphone in stereo and mono, and with a slow
+  motor in mono; Handpan in stereo and mono.
 
 Bitwig's voice stacking plays one key as several notes. On the brass and strings each stacked voice
 is another player: its own detune (3-8 cents from the first), entry, breath or bowing, and place. The
-piano, harp, celesta and crotales have one string, bar or disc per key, so a stacked voice re-strikes
+piano, harp, celesta, crotales, vibraphone and handpan have one string, bar, disc or tone field per key, so a stacked voice re-strikes
 it; the flute, oboe and clarinet are one player each (their slurs need it), so Bitwig offers no
 stacking. Stacked voices accept per-voice Volume, Pan and Brightness; pitch spread comes from the
 players' own detune.
